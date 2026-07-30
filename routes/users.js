@@ -276,17 +276,13 @@ router.get('/fleet-status', authMiddleware, adminOnly, async (req, res) => {
         
         const query = `
             WITH active_drivers AS (
-                -- Drivers with packages assigned for today
+                -- Conductores con paquetes programados o asignados para la fecha objetivo
                 SELECT DISTINCT "driverId" as driver_id FROM packages
                 WHERE "driverId" IS NOT NULL
-                AND "estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2
-                
-                UNION
-                
-                -- Drivers with packages updated today
-                SELECT DISTINCT "driverId" as driver_id FROM packages
-                WHERE "driverId" IS NOT NULL
-                AND "updatedAt" >= $1 AND "updatedAt" <= $2
+                AND (
+                    ("estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2)
+                    OR ("assignedAt" >= $1 AND "assignedAt" <= $2)
+                )
             )
             SELECT 
                 u.id as driver_id, 
@@ -310,8 +306,8 @@ router.get('/fleet-status', authMiddleware, adminOnly, async (req, res) => {
                 FROM packages
                 WHERE "driverId" IS NOT NULL
                 AND (
-                    "estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2
-                    OR "updatedAt" >= $1 AND "updatedAt" <= $2
+                    ("estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2)
+                    OR ("assignedAt" >= $1 AND "assignedAt" <= $2)
                 )
                 GROUP BY "driverId"
             ) p_stats ON u.id = p_stats."driverId"
