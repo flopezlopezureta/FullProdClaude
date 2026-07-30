@@ -1,9 +1,13 @@
 # Fullenvios Workspace Rules and Context
 
-## Project Architecture & Environments
-* **Production Workspace:** `Test1` (Git remote `origin` -> `flopezlopezureta/Test1`)
-* **Staging Workspace:** `Fullenvios2` / `CLIENTE2` (Git remote `clon` -> `flopezlopezureta/Fullenvios2`)
-* **Deployment Platform:** Self-hosted VPS managed with **Coolify** (deploys automatically via Docker container builds on git push).
+## Project Architecture & Environments (REGLAS STRICTAS Y DEFINITIVAS)
+* **PRODUCCIÓN (Test1):** `c:\IA ANTIGRAVITY\FULLENVIOS\Test1`
+  * Git Remote `origin`: `https://github.com/flopezlopezureta/Test1.git`
+  * Servidor: Coolify Producción (Despliegue automático con git push a `origin/main`).
+* **STAGING / PRUEBAS (Fullenvios2 / CLIENTE2):** `c:\IA ANTIGRAVITY\FULLENVIOS\CLIENTE2`
+  * Git Remote `origin_fullenvios2`: `https://github.com/flopezlopezureta/Fullenvios2.git`
+  * Servidor: Coolify Staging.
+* **PROHIBICIÓN EXPLICITA:** Queda prohibido el uso o referencia del remoto `qwen3.7` o `FullenviosQwen3.7`. Todo cambio debe pasar primero por Staging (Fullenvios2) y luego ser promovido a Producción (Test1).
 
 ## Database Configuration
 * **Host:** `191.113.87.123`
