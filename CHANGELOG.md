@@ -4,6 +4,13 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 
 ---
 
+## 🔖 CONTEXTO DE SESIÓN — 30-07-2026
+
+### ✅ Completado hoy
+- **v2.7.5:** Gestión de Paquetes — corregido el conteo masivo inflado (31,000+ paquetes). Se eliminó la cláusula `p."updatedAt"` en el filtro por defecto por fecha de creación (`dateType = 'created'`) en `routes/packages.js`, dejando la coincidencia únicamente por `createdAt` y `estimatedDelivery`. Subido a los repositorios `Fullenvios2` (CLIENTE2) y `Test1`.
+
+---
+
 ## 🔖 CONTEXTO DE SESIÓN — 29-07-2026
 
 ### ✅ Completado hoy
