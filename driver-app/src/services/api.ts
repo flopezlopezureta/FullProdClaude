@@ -72,6 +72,26 @@ export const api = {
     }
   },
 
+  // Paquetes del día para la pantalla de Entregas (solo activos de hoy)
+  // Usa /mobile/entregas que filtra por estimatedDelivery=hoy + estados activos
+  getMobileEntregas: async () => {
+    try {
+      const isOnline = await OfflineManager.isConnected();
+      if (!isOnline) {
+        console.log('Modo Offline: Cargando entregas desde cache');
+        return await OfflineManager.getPackagesFromCache();
+      }
+      const response = await apiInstance.get('/entregas');
+      if (response.data) {
+        await OfflineManager.savePackagesToCache(response.data);
+      }
+      return response.data;
+    } catch (error) {
+      console.log('Error de red: Intentando cargar desde cache');
+      return await OfflineManager.getPackagesFromCache();
+    }
+  },
+
   confirmDelivery: async (pkgId: string, data: any) => {
     try {
       const isOnline = await OfflineManager.isConnected();
