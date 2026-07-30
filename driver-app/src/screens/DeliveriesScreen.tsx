@@ -38,8 +38,7 @@ export default function DeliveriesScreen({ navigation }: any) {
     try {
       const online = await OfflineManager.isConnected();
       setIsOnline(!!online);
-      // Usamos el endpoint correcto que solo trae paquetes activos del día
-      const data = await api.getMobileEntregas();
+      const data = await api.getDriverPackages(user.id);
       setPackages(data || []);
     } catch (error) {
       console.error("Error fetching packages", error);

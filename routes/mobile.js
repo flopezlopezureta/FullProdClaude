@@ -52,28 +52,20 @@ router.get('/entregas', authMiddleware, async (req, res) => {
         const { rows: entregas } = await db.query(
             `SELECT 
                 id, 
-                "recipientName",
                 "recipientName" as cliente, 
-                "recipientAddress",
-                "recipientCommune",
                 "recipientAddress" || ', ' || "recipientCommune" as direccion, 
                 "recipientPhone" as telefono, 
-                status,
                 status as estado, 
                 "destLatitude" as latitud, 
-                "destLongitude" as longitud,
-                "meliOrderId",
-                "meliFlexCode",
-                "estimatedDelivery",
-                "createdAt",
-                "updatedAt"
+                "destLongitude" as longitud 
              FROM packages 
-             WHERE "driverId" = $1 AND status IN ('PENDIENTE', 'EN_TRANSITO', 'ASIGNADO', 'RETIRADO', 'PROBLEMA', 'REPROGRAMADO', 'CANCELADO')
-             ORDER BY "estimatedDelivery" ASC, "createdAt" ASC`,
+             WHERE "driverId" = $1 AND status IN ('PENDIENTE', 'EN_TRANSITO', 'ASIGNADO', 'PROBLEMA')
+             ORDER BY "createdAt" ASC`,
             [driverId]
         );
 
         res.json(entregas);
+
     } catch (err) {
         console.error('Error en GET /api/entregas:', err);
         res.status(500).json({ message: 'Error al obtener las entregas.' });
