@@ -223,7 +223,6 @@ async function buildPackageQuery(req) {
         } else {
             whereClauses.push(`(
                 p."createdAt" >= $${paramIndex} AND p."createdAt" < $${paramIndex + 1} OR 
-                p."updatedAt" >= $${paramIndex} AND p."updatedAt" < $${paramIndex + 1} OR
                 p."estimatedDelivery" >= $${paramIndex} AND p."estimatedDelivery" < $${paramIndex + 1}
             )`);
         }
