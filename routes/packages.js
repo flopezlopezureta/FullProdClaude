@@ -199,12 +199,23 @@ async function buildPackageQuery(req) {
         } else if (driverFilter && req.user.role === 'DRIVER') {
             // [v2.6.5] Separar lógica: El Dashboard (hoy) usa filtro estricto, el Historial (rango de fechas) usa el filtro laxo original.
             if (startDate === endDate) {
-                // Dashboard principal: Solo paquetes de hoy (creados, asignados, actualizados o estimados hoy)
+                // Dashboard principal del conductor: paquetes programados para HOY o activos hoy.
+                // IMPORTANTE: updatedAt por sí solo NO es suficiente porque el polling de Meli
+                // actualiza paquetes históricos, haciéndolos aparecer como si fueran de hoy.
+                // Regla: se incluye un paquete si:
+                //   a) Su estimatedDelivery es hoy (programado para hoy) → siempre válido
+                //   b) Fue asignado hoy (assignedAt = hoy)
+                //   c) Fue creado hoy (createdAt = hoy)
+                //   d) Fue actualizado hoy (updatedAt = hoy) PERO solo si está en estado activo
+                //      (evita traer paquetes cerrados de días anteriores tocados por polling de Meli)
                 whereClauses.push(`(
-                    p."createdAt" >= $${paramIndex} AND p."createdAt" < $${paramIndex + 1} OR 
-                    p."assignedAt" >= $${paramIndex} AND p."assignedAt" < $${paramIndex + 1} OR
-                    p."updatedAt" >= $${paramIndex} AND p."updatedAt" < $${paramIndex + 1} OR
                     p."estimatedDelivery" >= $${paramIndex} AND p."estimatedDelivery" < $${paramIndex + 1}
+                    OR p."assignedAt" >= $${paramIndex} AND p."assignedAt" < $${paramIndex + 1}
+                    OR p."createdAt" >= $${paramIndex} AND p."createdAt" < $${paramIndex + 1}
+                    OR (
+                        p."updatedAt" >= $${paramIndex} AND p."updatedAt" < $${paramIndex + 1}
+                        AND p.status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO')
+                    )
                 )`);
             } else {
                 // Historial de Entregas: Comportamiento exacto de ayer + Búsqueda en historial interno
