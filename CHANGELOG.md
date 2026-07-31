@@ -4,6 +4,13 @@ Todos los cambios notables en este proyecto serán documentados en este archivo.
 
 ---
 
+## 🔖 CONTEXTO DE SESIÓN — 31-07-2026
+
+### ✅ Completado hoy
+- **v2.8.0:** Centro de Control Multimodal de Flotas — Implementación de 4 modalidades de visualización (Auditoría de Cierres, Cadencia & Tiempos, Cronometría de Jornada, SLA & Rendimiento), notificador 1-click a choferes en mora, y control de visibilidad exclusivo para el Superadministrador en Ajustes (Setup). Auto-migración de BD incluida (`fleetControlEnabled`).
+
+---
+
 ## 🔖 CONTEXTO DE SESIÓN — 30-07-2026
 
 ### ✅ Completado hoy
