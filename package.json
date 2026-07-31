@@ -1,7 +1,7 @@
 {
   "name": "full-envios-app",
-  "version": "2.7.4",
-  "versionComment": "Versión 2.7.4: Corregido conteo de pendientes en el Análisis Logístico BI (fleet-status incluye estimatedDelivery OR updatedAt).",
+  "version": "2.8.0",
+  "versionComment": "Versión 2.8.0: Centro de Control Multimodal de Flotas (Auditoría de Cierres, Cadencia, Cronometría, SLA) y regla de visibilidad para Superadmin.",
   "private": true,
   "description": "Fixed ML auto-import type mismatch (sellerId), corrected Import Orders navigation ID, fixed mobile sidebar rendering above blur overlay, Added JSON QR Scan support.",
   "scripts": {
