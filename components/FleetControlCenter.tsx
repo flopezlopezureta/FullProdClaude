@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { api } from '../services/api';
+import { AuthContext } from '../contexts/AuthContext';
+import { getLocalDateString } from '../utils/dateUtils';
 import { 
   IconRefresh, IconUser, IconCheckCircle, IconAlertTriangle, 
   IconClock, IconAward, IconChevronDown, IconChevronUp, IconBell
@@ -11,6 +13,10 @@ import {
 type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA';
 
 export const FleetControlCenter: React.FC = () => {
+  const auth = useContext(AuthContext);
+  const tz = auth?.systemSettings?.timezone || 'America/Santiago';
+
+  const [selectedDate, setSelectedDate] = useState<string>(getLocalDateString());
   const [viewMode, setViewMode] = useState<ControlViewMode>('CLOSURES');
   const [isLoading, setIsLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -23,10 +29,11 @@ export const FleetControlCenter: React.FC = () => {
   const [notifyingDriverId, setNotifyingDriverId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = async (targetDate?: string) => {
+    const dateToFetch = targetDate || selectedDate;
     try {
       setIsLoading(true);
-      const res = await api.getFleetControlCenter();
+      const res = await api.getFleetControlCenter(dateToFetch);
       setData(res);
     } catch (err) {
       console.error('Error fetching fleet control center:', err);
@@ -36,10 +43,10 @@ export const FleetControlCenter: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 20000); // Live refresh every 20 seconds
+    fetchData(selectedDate);
+    const interval = setInterval(() => fetchData(selectedDate), 20000); // Refresh every 20s
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedDate]);
 
   const handleNotifyClosure = async (driverId: string, driverName: string) => {
     try {
@@ -147,10 +154,22 @@ export const FleetControlCenter: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-black text-slate-600 uppercase">
-              <span>Conductores Activos: {totalDrivers}</span>
-              <span>•</span>
-              <span className="text-emerald-700">Cerraron: {closedInAppCount}</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-black text-slate-500 uppercase">📅 Fecha:</span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-900 border-none outline-none focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-lg text-[10px] font-black text-slate-600 uppercase">
+                <span>Conductores Activos: {totalDrivers}</span>
+                <span>•</span>
+                <span className="text-emerald-700">Cerraron: {closedInAppCount}</span>
+              </div>
             </div>
           </div>
 
