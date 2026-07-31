@@ -28,6 +28,7 @@ export const FleetControlCenter: React.FC = () => {
   }>({ date: '', closures: [], cadence: [], chronometry: [] });
   const [notifyingDriverId, setNotifyingDriverId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('ALL');
 
   const fetchData = async (targetDate?: string) => {
     const dateToFetch = targetDate || selectedDate;
@@ -61,9 +62,13 @@ export const FleetControlCenter: React.FC = () => {
     }
   };
 
-  const totalDrivers = data.closures.length;
-  const closedInAppCount = data.closures.filter(c => c.hasClosedInApp).length;
-  const pendingClosureCount = data.closures.filter(c => !c.hasClosedInApp && c.totalPackages > 0).length;
+  const filteredClosures = selectedDriverId === 'ALL' ? data.closures : data.closures.filter((c: any) => c.driverId === selectedDriverId);
+  const filteredCadence = selectedDriverId === 'ALL' ? data.cadence : data.cadence.filter((c: any) => c.driverId === selectedDriverId);
+  const filteredChronometry = selectedDriverId === 'ALL' ? data.chronometry : data.chronometry.filter((c: any) => c.driverId === selectedDriverId);
+
+  const totalDrivers = filteredClosures.length;
+  const closedInAppCount = filteredClosures.filter(c => c.hasClosedInApp).length;
+  const pendingClosureCount = filteredClosures.filter(c => !c.hasClosedInApp && c.totalPackages > 0).length;
 
   return (
     <div className="mb-6 overflow-hidden bg-white border border-slate-200 rounded-2xl shadow-sm transition-all hover:shadow-md">
@@ -165,6 +170,20 @@ export const FleetControlCenter: React.FC = () => {
                 />
               </div>
 
+              <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] font-black text-slate-500 uppercase">👤 Chofer:</span>
+                <select
+                  value={selectedDriverId}
+                  onChange={(e) => setSelectedDriverId(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-900 border-none outline-none focus:ring-0 cursor-pointer max-w-[150px] truncate"
+                >
+                  <option value="ALL">Todos los Conductores</option>
+                  {data.closures.map(d => (
+                    <option key={d.driverId} value={d.driverId}>{d.driverName}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-lg text-[10px] font-black text-slate-600 uppercase">
                 <span>Conductores Activos: {totalDrivers}</span>
                 <span>•</span>
@@ -221,14 +240,14 @@ export const FleetControlCenter: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {data.closures.length === 0 ? (
+                    {filteredClosures.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="px-5 py-8 text-center text-slate-400 font-bold uppercase">
                           No hay actividad de conductores registrada para el día de hoy
                         </td>
                       </tr>
                     ) : (
-                      data.closures.map((driver) => {
+                      filteredClosures.map((driver) => {
                         const isClosed = driver.hasClosedInApp;
                         const isPending = !isClosed && driver.pending > 0;
                         return (
@@ -300,7 +319,7 @@ export const FleetControlCenter: React.FC = () => {
                 </h3>
                 <div className="h-[260px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.cadence}>
+                    <BarChart data={filteredCadence}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                       <XAxis dataKey="driverName" tick={{ fontSize: 10, fontWeight: 'bold' }} />
                       <YAxis tick={{ fontSize: 10, fontWeight: 'bold' }} unit=" min" />
@@ -308,7 +327,7 @@ export const FleetControlCenter: React.FC = () => {
                         contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
                       />
                       <Bar dataKey="avgMinutesBetweenDeliveries" name="Minutos Promedio" radius={[6, 6, 0, 0]}>
-                        {data.cadence.map((entry, index) => (
+                        {filteredCadence.map((entry, index) => (
                           <Cell 
                             key={`cell-${index}`} 
                             fill={entry.avgMinutesBetweenDeliveries > 30 ? '#ef4444' : entry.avgMinutesBetweenDeliveries > 18 ? '#f59e0b' : '#10b981'} 
@@ -332,14 +351,14 @@ export const FleetControlCenter: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {data.cadence.length === 0 ? (
+                    {filteredCadence.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="px-5 py-6 text-center text-slate-400 font-bold uppercase">
                           No hay suficientes entregas secuenciales hoy para calcular la cadencia
                         </td>
                       </tr>
                     ) : (
-                      data.cadence.map((c) => (
+                      filteredCadence.map((c) => (
                         <tr key={c.driverId} className="hover:bg-slate-50 transition-colors">
                           <td className="px-5 py-3 font-bold text-slate-900 uppercase">{c.driverName}</td>
                           <td className="px-5 py-3 text-center font-bold text-slate-700">{c.deliveredCount} entregas</td>
@@ -380,14 +399,14 @@ export const FleetControlCenter: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {data.chronometry.length === 0 ? (
+                    {filteredChronometry.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="px-5 py-6 text-center text-slate-400 font-bold uppercase">
                           No hay registros de jornada para el día seleccionado
                         </td>
                       </tr>
                     ) : (
-                      data.chronometry.map((chrono) => {
+                      filteredChronometry.map((chrono) => {
                         const first = chrono.firstActivity ? new Date(chrono.firstActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
                         const last = chrono.lastActivity ? new Date(chrono.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
                         return (
@@ -410,7 +429,7 @@ export const FleetControlCenter: React.FC = () => {
           {/* VISTA 4: SLA Y RENDIMIENTO */}
           {viewMode === 'SLA' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {data.closures.map((d) => {
+              {filteredClosures.map((d) => {
                 const total = d.totalPackages || 1;
                 const effRate = Math.round((d.delivered / total) * 100);
                 return (

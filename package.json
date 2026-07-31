@@ -1,7 +1,7 @@
 {
   "name": "full-envios-app",
-  "version": "2.8.3",
-  "versionComment": "Versión 2.8.3: Corrección final de error SQL en chronometryQuery ($1 missing).",
+  "version": "2.8.5",
+  "versionComment": "Versión 2.8.5: Filtro de conductor agregado al Centro de Control de Flotas.",
   "private": true,
   "description": "Fixed ML auto-import type mismatch (sellerId), corrected Import Orders navigation ID, fixed mobile sidebar rendering above blur overlay, Added JSON QR Scan support.",
   "scripts": {
