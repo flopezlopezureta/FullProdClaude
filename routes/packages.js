@@ -230,49 +230,48 @@ async function buildPackageQuery(req) {
         paramIndex += 2;
     } else if (!isHistoricalSearch) {
         if (startDate) {
+            const { start } = await timeService.getLogicalRange(startDate, startDate);
             if (dateType === 'egress') {
-                whereClauses.push(`(p."assignedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp`);
+                whereClauses.push(`p."assignedAt" >= $${paramIndex}`);
             } else if (dateType === 'updated') {
                 if (assignmentFilter === 'reassigned') {
-                    whereClauses.push(`(p."assignedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."assignedAt" >= $${paramIndex}`);
                 } else if (req.query.isDuplicate === 'true') {
-                    whereClauses.push(`(p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."createdAt" >= $${paramIndex}`);
                 } else {
-                    whereClauses.push(`(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."updatedAt" >= $${paramIndex}`);
                 }
             } else {
                 whereClauses.push(`(
-                    (p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp OR 
-                    (p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp OR 
-                    (p."estimatedDelivery" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') >= $${paramIndex}::timestamp
+                    p."createdAt" >= $${paramIndex} OR 
+                    p."updatedAt" >= $${paramIndex} OR 
+                    p."estimatedDelivery" >= $${paramIndex}
                 )`);
             }
-            queryParams.push(startDate);
+            queryParams.push(start);
             paramIndex++;
         }
 
         if (endDate) {
-            const end = new Date(endDate);
-            end.setDate(end.getDate() + 1);
-            const endStr = end.toISOString().split('T')[0];
+            const { nextDayStart } = await timeService.getLogicalRange(endDate, endDate);
             if (dateType === 'egress') {
-                whereClauses.push(`(p."assignedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp`);
+                whereClauses.push(`p."assignedAt" < $${paramIndex}`);
             } else if (dateType === 'updated') {
                 if (assignmentFilter === 'reassigned') {
-                    whereClauses.push(`(p."assignedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."assignedAt" < $${paramIndex}`);
                 } else if (req.query.isDuplicate === 'true') {
-                    whereClauses.push(`(p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."createdAt" < $${paramIndex}`);
                 } else {
-                    whereClauses.push(`(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp`);
+                    whereClauses.push(`p."updatedAt" < $${paramIndex}`);
                 }
             } else {
                 whereClauses.push(`(
-                    (p."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp OR 
-                    (p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp OR 
-                    (p."estimatedDelivery" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Santiago') < $${paramIndex}::timestamp
+                    p."createdAt" < $${paramIndex} OR 
+                    p."updatedAt" < $${paramIndex} OR 
+                    p."estimatedDelivery" < $${paramIndex}
                 )`);
             }
-            queryParams.push(endStr);
+            queryParams.push(nextDayStart);
             paramIndex++;
         }
     }
