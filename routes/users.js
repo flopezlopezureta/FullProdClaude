@@ -456,7 +456,7 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
                     LAG(p."updatedAt") OVER (PARTITION BY p."driverId" ORDER BY p."updatedAt") as prev_delivery
                 FROM packages p
                 WHERE p.status = 'ENTREGADO'
-                AND p."updatedAt" >= $2 AND p."updatedAt" <= $3
+                AND p."updatedAt" >= $1 AND p."updatedAt" <= $2
             )
             SELECT 
                 u.id as "driverId",
