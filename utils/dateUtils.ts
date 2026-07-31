@@ -52,7 +52,10 @@ export const getLocalDateString = (dateObj: Date = new Date(), timezone: string 
             month: '2-digit',
             day: '2-digit'
         });
-        return formatter.format(dateObj);
+        const parts = formatter.formatToParts(dateObj);
+        const map: any = {};
+        parts.forEach(p => map[p.type] = p.value);
+        return `${map.year}-${map.month}-${map.day}`;
     } catch (e) {
         // Fallback to simple local date if timezone is invalid
         const year = dateObj.getFullYear();

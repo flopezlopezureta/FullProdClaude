@@ -403,7 +403,14 @@ router.get('/analytics', authMiddleware, adminOnly, async (req, res) => {
 // GET /api/users/fleet-control-center - Datos multimodales unificados para el Centro de Control
 router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (req, res) => {
     try {
-        const targetDate = req.query.date || await timeService.getLogicalDate();
+        let targetDate = req.query.date || await timeService.getLogicalDate();
+        
+        // Normalize DD-MM-YYYY to YYYY-MM-DD if necessary
+        if (/^\d{2}-\d{2}-\d{4}$/.test(targetDate)) {
+            const parts = targetDate.split('-');
+            targetDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+        
         const { start, nextDayStart } = await timeService.getLogicalRange(targetDate, targetDate);
 
         // Fetch timezone settings
