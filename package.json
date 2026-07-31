@@ -1,7 +1,7 @@
 {
   "name": "full-envios-app",
-  "version": "2.8.2",
-  "versionComment": "Versión 2.8.2: Corrección de formato de fecha en Control de Flotas.",
+  "version": "2.8.3",
+  "versionComment": "Versión 2.8.3: Corrección final de error SQL en chronometryQuery ($1 missing).",
   "private": true,
   "description": "Fixed ML auto-import type mismatch (sellerId), corrected Import Orders navigation ID, fixed mobile sidebar rendering above blur overlay, Added JSON QR Scan support.",
   "scripts": {

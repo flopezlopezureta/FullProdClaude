@@ -484,14 +484,14 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             SELECT 
                 u.id as "driverId",
                 u.name as "driverName",
-                MIN(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $4) as "firstActivity",
-                MAX(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $4) as "lastActivity",
+                MIN(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $3) as "firstActivity",
+                MAX(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $3) as "lastActivity",
                 ROUND(EXTRACT(EPOCH FROM (MAX(p."updatedAt") - MIN(p."updatedAt")))/3600::numeric, 2) as "totalHoursActive",
                 COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "deliveredCount"
             FROM users u
             JOIN packages p ON p."driverId" = u.id
             WHERE u.role = 'DRIVER'
-            AND p."updatedAt" >= $2 AND p."updatedAt" <= $3
+            AND p."updatedAt" >= $1 AND p."updatedAt" <= $2
             GROUP BY u.id, u.name
             ORDER BY "firstActivity" ASC
         `;
@@ -499,7 +499,7 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
         const [closuresRes, cadenceRes, chronometryRes] = await Promise.all([
             db.query(closureQuery, [targetDate, start, nextDayStart]),
             db.query(cadenceQuery, [start, nextDayStart]),
-            db.query(chronometryQuery, [targetDate, start, nextDayStart, systemTZ])
+            db.query(chronometryQuery, [start, nextDayStart, systemTZ])
         ]);
 
         res.json({
