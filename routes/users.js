@@ -436,7 +436,6 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             FROM users u
             JOIN packages p ON p."driverId" = u.id
             WHERE u.role = 'DRIVER'
-            AND u.status NOT IN ('ELIMINADO', 'DESHABILITADO', 'PENDIENTE')
             AND (
                 (p."estimatedDelivery" >= $2 AND p."estimatedDelivery" <= $3)
                 OR (p."assignedAt" >= $2 AND p."assignedAt" <= $3)
@@ -467,7 +466,7 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
                 COALESCE(COUNT(dt."updatedAt") FILTER (WHERE EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60 > 45), 0)::int as "idleAlertsCount"
             FROM users u
             LEFT JOIN delivery_times dt ON u.id = dt."driverId" AND dt.prev_delivery IS NOT NULL
-            WHERE u.role = 'DRIVER' AND u.status NOT IN ('ELIMINADO', 'DESHABILITADO')
+            WHERE u.role = 'DRIVER'
             GROUP BY u.id, u.name
             HAVING COUNT(dt."updatedAt") > 0
             ORDER BY "avgMinutesBetweenDeliveries" ASC
