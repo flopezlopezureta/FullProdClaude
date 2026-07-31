@@ -54,6 +54,7 @@ export interface SystemSettings {
     showPendingPaymentAlert?: boolean;
     multiSelectEnabled?: boolean;
     gisSectorsEnabled?: boolean;
+    fleetControlEnabled?: boolean;
     pendingNotificationsEnabled?: boolean;
     adminWhatsappNumber?: string;
     adminCallmebotApiKey?: string;

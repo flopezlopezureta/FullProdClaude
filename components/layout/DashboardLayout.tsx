@@ -31,6 +31,7 @@ import DriverFlexDiscrepancyPage from '../admin/DriverFlexDiscrepancyPage';
 import ClientSettingsPage from '../client/ClientSettingsPage';
 import ActivityAuditReport from '../admin/ActivityAuditReport';
 import SuperAdminBillingReportPage from '../admin/SuperAdminBillingReportPage';
+import { FleetControlCenter } from '../FleetControlCenter';
 
 const DashboardLayout: React.FC = () => {
   const { user, systemSettings } = useContext(AuthContext)!;
@@ -223,6 +224,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'activity-audit':
         if (isAdmin || isFact) return { title: 'Auditoría de Actividad Diaria', content: <ActivityAuditReport /> };
+        break;
+
+      case 'fleet-control':
+        if ((isAdmin || isOp) && (isSuperUser || systemSettings?.fleetControlEnabled !== false)) return { title: 'Control de Flotas & Cierres (Multimodal)', content: <FleetControlCenter /> };
         break;
 
       case 'delivery-analytics':

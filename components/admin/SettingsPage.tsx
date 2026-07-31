@@ -44,6 +44,7 @@ interface SettingsState {
     showPendingPaymentAlert: boolean;
     multiSelectEnabled: boolean;
     gisSectorsEnabled: boolean;
+    fleetControlEnabled: boolean;
     pendingNotificationsEnabled: boolean;
     adminWhatsappNumber: string;
     adminCallmebotApiKey: string;
@@ -74,6 +75,7 @@ const SettingsPage: React.FC = () => {
         showPendingPaymentAlert: false,
         multiSelectEnabled: true,
         gisSectorsEnabled: true,
+        fleetControlEnabled: true,
         pendingNotificationsEnabled: false,
         adminWhatsappNumber: '',
         adminCallmebotApiKey: '',
@@ -92,6 +94,8 @@ const SettingsPage: React.FC = () => {
     const auth = useContext(AuthContext);
     const { theme, setTheme } = useTheme();
     const [activeTab, setActiveTab] = useState<'general' | 'impresion' | 'botones' | 'retiro' | 'mensajeria' | 'comunas' | 'apariencia' | 'seguridad'>('general');
+
+    const isSuperUser = auth?.user?.email === 'admin' || auth?.user?.email === 'admin@admin.cl';
 
     useEffect(() => {
         if (auth?.systemSettings) {
@@ -119,6 +123,7 @@ const SettingsPage: React.FC = () => {
                 showPendingPaymentAlert: auth.systemSettings.showPendingPaymentAlert ?? false,
                 multiSelectEnabled: auth.systemSettings.multiSelectEnabled ?? true,
                 gisSectorsEnabled: auth.systemSettings.gisSectorsEnabled ?? true,
+                fleetControlEnabled: auth.systemSettings.fleetControlEnabled ?? true,
                 pendingNotificationsEnabled: auth.systemSettings.pendingNotificationsEnabled ?? false,
                 adminWhatsappNumber: auth.systemSettings.adminWhatsappNumber || '',
                 adminCallmebotApiKey: auth.systemSettings.adminCallmebotApiKey || '',
@@ -195,6 +200,7 @@ const SettingsPage: React.FC = () => {
                 showPendingPaymentAlert: settings.showPendingPaymentAlert,
                 multiSelectEnabled: settings.multiSelectEnabled,
                 gisSectorsEnabled: settings.gisSectorsEnabled,
+                fleetControlEnabled: settings.fleetControlEnabled,
                 pendingNotificationsEnabled: settings.pendingNotificationsEnabled,
                 adminWhatsappNumber: settings.adminWhatsappNumber,
                 adminCallmebotApiKey: settings.adminCallmebotApiKey,
@@ -330,6 +336,7 @@ const SettingsPage: React.FC = () => {
             settings.showPendingPaymentAlert !== originalSettings.showPendingPaymentAlert ||
             settings.multiSelectEnabled !== originalSettings.multiSelectEnabled ||
             settings.gisSectorsEnabled !== originalSettings.gisSectorsEnabled ||
+            settings.fleetControlEnabled !== originalSettings.fleetControlEnabled ||
             settings.pendingNotificationsEnabled !== originalSettings.pendingNotificationsEnabled ||
             settings.adminWhatsappNumber !== originalSettings.adminWhatsappNumber ||
             settings.adminCallmebotApiKey !== originalSettings.adminCallmebotApiKey
@@ -683,6 +690,30 @@ const SettingsPage: React.FC = () => {
                                             </div>
                                         </label>
                                     </div>
+
+                                    {isSuperUser && (
+                                        <div className="pt-4 border-t border-indigo-200 bg-indigo-50/40 p-4 rounded-xl dark:bg-indigo-950/20 my-3">
+                                            <label className="flex items-center justify-between cursor-pointer">
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className="text-base font-bold text-indigo-900 dark:text-indigo-300">Control de Flotas & Cierres (Informes Operativos)</h3>
+                                                        <span className="px-2 py-0.5 text-[9px] font-black bg-indigo-600 text-white rounded-full uppercase tracking-wider">Superadmin Exclusivo</span>
+                                                    </div>
+                                                    <p className="text-xs text-indigo-700 dark:text-indigo-400 mt-1 max-w-md">Habilita o deshabilita la visibilidad de la opción "Control de Flotas & Cierres" dentro del menú de Informes Operativos para todos los Administradores del sistema.</p>
+                                                </div>
+                                                <div className="relative">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="fleetControlEnabled"
+                                                        checked={settings.fleetControlEnabled ?? true}
+                                                        onChange={handleSettingsChange}
+                                                        className="sr-only peer"
+                                                    />
+                                                    <div className="w-14 h-8 bg-gray-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-indigo-500 dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    )}
 
                                     {auth?.user?.role === Role.Admin && (
                                         <div className="pt-4 border-t border-[var(--border-primary)] py-3">

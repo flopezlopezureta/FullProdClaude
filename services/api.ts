@@ -459,4 +459,13 @@ export const api = {
 
   // Test WhatsApp
   testWhatsapp: (phone: string, apikey: string) => post<{message: string}>('/settings/test-whatsapp', { phone, apikey }),
+
+  // Fleet Control Center (Multimodal)
+  getFleetControlCenter: (date?: string) => get<{
+    date: string;
+    closures: any[];
+    cadence: any[];
+    chronometry: any[];
+  }>(`/users/fleet-control-center${date ? `?date=${date}` : ''}`),
+  notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
 };

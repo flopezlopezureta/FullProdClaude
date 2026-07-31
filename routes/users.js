@@ -400,4 +400,147 @@ router.get('/analytics', authMiddleware, adminOnly, async (req, res) => {
     }
 });
 
+// GET /api/users/fleet-control-center - Datos multimodales unificados para el Centro de Control
+router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (req, res) => {
+    try {
+        const targetDate = req.query.date || await timeService.getLogicalDate();
+        const { start, nextDayStart } = await timeService.getLogicalRange(targetDate, targetDate);
+
+        // Fetch timezone settings
+        const { rows: settingsRows } = await db.query('SELECT timezone FROM system_settings WHERE id = 1');
+        const systemTZ = settingsRows.length > 0 ? settingsRows[0].timezone : 'America/Santiago';
+
+        // 1. Auditoría de Cierres
+        const closureQuery = `
+            SELECT 
+                u.id as "driverId",
+                u.name as "driverName",
+                u.phone as "driverPhone",
+                COUNT(p.id)::int as "totalPackages",
+                COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "delivered",
+                COUNT(p.id) FILTER (WHERE p.status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO'))::int as "pending",
+                COUNT(p.id) FILTER (WHERE p.status IN ('PROBLEMA', 'REPROGRAMADO', 'DEVUELTO'))::int as "failed",
+                EXISTS (
+                    SELECT 1 FROM daily_closures dc 
+                    WHERE dc."driverId" = u.id AND dc."date" = $1
+                ) as "hasClosedInApp",
+                (
+                    SELECT dc."createdAt" FROM daily_closures dc 
+                    WHERE dc."driverId" = u.id AND dc."date" = $1 
+                    LIMIT 1
+                ) as "closureTimestamp",
+                (
+                    SELECT COUNT(*)::int FROM daily_closures dc
+                    WHERE dc."driverId" = u.id AND dc."createdAt" >= NOW() - INTERVAL '30 days'
+                ) as "closuresLast30Days"
+            FROM users u
+            JOIN packages p ON p."driverId" = u.id
+            WHERE u.role = 'DRIVER'
+            AND u.status NOT IN ('ELIMINADO', 'DESHABILITADO', 'PENDIENTE')
+            AND (
+                (p."estimatedDelivery" >= $2 AND p."estimatedDelivery" <= $3)
+                OR (p."assignedAt" >= $2 AND p."assignedAt" <= $3)
+            )
+            GROUP BY u.id, u.name, u.phone
+            ORDER BY "pending" DESC, "hasClosedInApp" ASC, u.name ASC
+        `;
+
+        // 2. Cadencia y Tiempos entre Entregas
+        const cadenceQuery = `
+            WITH delivery_times AS (
+                SELECT 
+                    p."driverId",
+                    p."updatedAt",
+                    LAG(p."updatedAt") OVER (PARTITION BY p."driverId" ORDER BY p."updatedAt") as prev_delivery
+                FROM packages p
+                WHERE p.status = 'ENTREGADO'
+                AND p."updatedAt" >= $2 AND p."updatedAt" <= $3
+            )
+            SELECT 
+                u.id as "driverId",
+                u.name as "driverName",
+                COUNT(dt."updatedAt")::int as "deliveredCount",
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60)::numeric, 1), 0) as "avgMinutesBetweenDeliveries",
+                COALESCE(MAX(ROUND(EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60)::numeric), 0) as "maxMinutesGap",
+                COALESCE(COUNT(dt."updatedAt") FILTER (WHERE EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60 > 45), 0)::int as "idleAlertsCount"
+            FROM users u
+            LEFT JOIN delivery_times dt ON u.id = dt."driverId" AND dt.prev_delivery IS NOT NULL
+            WHERE u.role = 'DRIVER' AND u.status NOT IN ('ELIMINADO', 'DESHABILITADO')
+            GROUP BY u.id, u.name
+            HAVING COUNT(dt."updatedAt") > 0
+            ORDER BY "avgMinutesBetweenDeliveries" ASC
+        `;
+
+        // 3. Cronometría de Jornada (Horarios de inicio, fin y duración)
+        const chronometryQuery = `
+            SELECT 
+                u.id as "driverId",
+                u.name as "driverName",
+                MIN(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $4) as "firstActivity",
+                MAX(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $4) as "lastActivity",
+                ROUND(EXTRACT(EPOCH FROM (MAX(p."updatedAt") - MIN(p."updatedAt")))/3600::numeric, 2) as "totalHoursActive",
+                COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "deliveredCount"
+            FROM users u
+            JOIN packages p ON p."driverId" = u.id
+            WHERE u.role = 'DRIVER'
+            AND p."updatedAt" >= $2 AND p."updatedAt" <= $3
+            GROUP BY u.id, u.name
+            ORDER BY "firstActivity" ASC
+        `;
+
+        const [closuresRes, cadenceRes, chronometryRes] = await Promise.all([
+            db.query(closureQuery, [targetDate, start, nextDayStart]),
+            db.query(cadenceQuery, [start, nextDayStart]),
+            db.query(chronometryQuery, [targetDate, start, nextDayStart, systemTZ])
+        ]);
+
+        res.json({
+            date: targetDate,
+            closures: closuresRes.rows,
+            cadence: cadenceRes.rows,
+            chronometry: chronometryRes.rows
+        });
+
+    } catch (err) {
+        console.error('Error fetching fleet control center data:', err);
+        res.status(500).json({ message: 'Error al cargar el Centro de Control Multimodal.' });
+    }
+});
+
+// POST /api/users/notify-driver-closure - Enviar recordatorio de cierre a un conductor
+router.post('/notify-driver-closure', authMiddleware, adminOrRetirosOnly, async (req, res) => {
+    const { driverId } = req.body;
+    if (!driverId) {
+        return res.status(400).json({ message: 'Se requiere driverId' });
+    }
+
+    try {
+        const { rows } = await db.query('SELECT id, name, phone FROM users WHERE id = $1', [driverId]);
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Conductor no encontrado.' });
+        }
+
+        const driver = rows[0];
+        
+        // Registrar notificación en la BD para la app del conductor
+        await db.query(`
+            INSERT INTO notifications (id, "userId", title, message, type, "isRead", "createdAt")
+            VALUES ($1, $2, $3, $4, $5, false, NOW())
+        `, [
+            `notif-${uuidv4()}`,
+            driver.id,
+            '🚨 RECORDATORIO DE CIERRE DE JORNADA',
+            'Hola, recuerda que debes realizar el Cierre de Jornada en tu aplicación para liquidar tus entregas del día.',
+            'SYSTEM'
+        ]);
+
+        await logAction(req.user.id, req.user.name, 'NOTIFY_DRIVER_CLOSURE', { driverId, driverName: driver.name });
+
+        res.json({ message: `Recordatorio enviado con éxito a ${driver.name}` });
+    } catch (err) {
+        console.error('Error sending closure notification:', err);
+        res.status(500).json({ message: 'Error al enviar la notificación.' });
+    }
+});
+
 module.exports = router;

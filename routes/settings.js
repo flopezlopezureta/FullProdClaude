@@ -19,6 +19,10 @@ const adminOnly = (req, res, next) => {
     next();
 };
 
+// Ensure system_settings table has fleetControlEnabled column
+db.query('ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS "fleetControlEnabled" BOOLEAN DEFAULT TRUE')
+  .catch(err => console.error('[DB] Auto-migration fleetControlEnabled notice:', err.message));
+
 // Helper to verify admin password
 async function verifyAdminPassword(userId, password) {
     const { rows } = await db.query('SELECT password FROM users WHERE id = $1', [userId]);
@@ -132,7 +136,7 @@ router.post('/sync-woocommerce', authMiddleware, adminOnly, async (req, res) => 
 // GET /api/settings/system
 router.get('/system', async (req, res) => {
     try {
-        const { rows: settings } = await db.query('SELECT "companyName", "isAppEnabled", "requiredPhotos", "messagingPlan", "pickupMode", "meliFlexValidation", "saveFlexLabelPhoto", "meliAutoImport", "shopifyAutoImport", "woocommerceAutoImport", "publicTrackingEnabled", "isRutRequired", "flexDiscrepancyReportEnabled", "labelFormat", "circuitExportEnabled", "timeFormat", "allowRedelivery", "timezone", "recipientNotificationsEnabled", "meliAutoPromptPhotos", "licenseLimit", "licenseOverageFee", "showPendingPaymentAlert", "multiSelectEnabled", "gisSectorsEnabled", "pendingNotificationsEnabled", "adminWhatsappNumber", "adminCallmebotApiKey" FROM system_settings WHERE id = 1');
+        const { rows: settings } = await db.query('SELECT "companyName", "isAppEnabled", "requiredPhotos", "messagingPlan", "pickupMode", "meliFlexValidation", "saveFlexLabelPhoto", "meliAutoImport", "shopifyAutoImport", "woocommerceAutoImport", "publicTrackingEnabled", "isRutRequired", "flexDiscrepancyReportEnabled", "labelFormat", "circuitExportEnabled", "timeFormat", "allowRedelivery", "timezone", "recipientNotificationsEnabled", "meliAutoPromptPhotos", "licenseLimit", "licenseOverageFee", "showPendingPaymentAlert", "multiSelectEnabled", "gisSectorsEnabled", "fleetControlEnabled", "pendingNotificationsEnabled", "adminWhatsappNumber", "adminCallmebotApiKey" FROM system_settings WHERE id = 1');
         const fallbackSettings = {
             companyName: 'FULL ENVIOS',
             isAppEnabled: true,
@@ -159,6 +163,7 @@ router.get('/system', async (req, res) => {
             showPendingPaymentAlert: false,
             multiSelectEnabled: true,
             gisSectorsEnabled: true,
+            fleetControlEnabled: true,
             pendingNotificationsEnabled: false,
             adminWhatsappNumber: '',
             adminCallmebotApiKey: '',
@@ -170,13 +175,13 @@ router.get('/system', async (req, res) => {
     } catch (err) {
         console.error("ERROR in /api/settings/system:", err);
         // Fail gracefully if DB not ready
-        res.json({ companyName: 'FULL ENVIOS', isAppEnabled: true, requiredPhotos: 1, messagingPlan: 'NONE', pickupMode: 'SCAN', meliFlexValidation: true, labelFormat: 'compact_thermal', timeFormat: '12h', allowRedelivery: false, meliAutoPromptPhotos: false, licenseLimit: 70, licenseOverageFee: 0.1, multiSelectEnabled: true, pendingNotificationsEnabled: false, adminWhatsappNumber: '', adminCallmebotApiKey: '' });
+        res.json({ companyName: 'FULL ENVIOS', isAppEnabled: true, requiredPhotos: 1, messagingPlan: 'NONE', pickupMode: 'SCAN', meliFlexValidation: true, labelFormat: 'compact_thermal', timeFormat: '12h', allowRedelivery: false, meliAutoPromptPhotos: false, licenseLimit: 70, licenseOverageFee: 0.1, multiSelectEnabled: true, fleetControlEnabled: true, pendingNotificationsEnabled: false, adminWhatsappNumber: '', adminCallmebotApiKey: '' });
     }
 });
 
 // PUT /api/settings/system
 router.put('/system', authMiddleware, adminOnly, async (req, res) => {
-    const { companyName, isAppEnabled, requiredPhotos, messagingPlan, pickupMode, meliFlexValidation, saveFlexLabelPhoto, meliAutoImport, shopifyAutoImport, woocommerceAutoImport, publicTrackingEnabled, isRutRequired, flexDiscrepancyReportEnabled, labelFormat, circuitExportEnabled, timeFormat, allowRedelivery, timezone, recipientNotificationsEnabled, meliAutoPromptPhotos, licenseLimit, licenseOverageFee, showPendingPaymentAlert, multiSelectEnabled, gisSectorsEnabled, pendingNotificationsEnabled, adminWhatsappNumber, adminCallmebotApiKey } = req.body;
+    const { companyName, isAppEnabled, requiredPhotos, messagingPlan, pickupMode, meliFlexValidation, saveFlexLabelPhoto, meliAutoImport, shopifyAutoImport, woocommerceAutoImport, publicTrackingEnabled, isRutRequired, flexDiscrepancyReportEnabled, labelFormat, circuitExportEnabled, timeFormat, allowRedelivery, timezone, recipientNotificationsEnabled, meliAutoPromptPhotos, licenseLimit, licenseOverageFee, showPendingPaymentAlert, multiSelectEnabled, gisSectorsEnabled, fleetControlEnabled, pendingNotificationsEnabled, adminWhatsappNumber, adminCallmebotApiKey } = req.body;
 
     try {
         const { rows: currentSettingsRows } = await db.query('SELECT * FROM system_settings WHERE id = 1');
@@ -209,14 +214,15 @@ router.put('/system', authMiddleware, adminOnly, async (req, res) => {
                 showPendingPaymentAlert: showPendingPaymentAlert !== undefined ? showPendingPaymentAlert : currentSettings.showPendingPaymentAlert,
                 multiSelectEnabled: multiSelectEnabled !== undefined ? multiSelectEnabled : currentSettings.multiSelectEnabled,
                 gisSectorsEnabled: gisSectorsEnabled !== undefined ? gisSectorsEnabled : currentSettings.gisSectorsEnabled,
+                fleetControlEnabled: fleetControlEnabled !== undefined ? fleetControlEnabled : currentSettings.fleetControlEnabled,
                 pendingNotificationsEnabled: pendingNotificationsEnabled !== undefined ? pendingNotificationsEnabled : currentSettings.pendingNotificationsEnabled,
                 adminWhatsappNumber: adminWhatsappNumber !== undefined ? adminWhatsappNumber : currentSettings.adminWhatsappNumber,
                 adminCallmebotApiKey: adminCallmebotApiKey !== undefined ? adminCallmebotApiKey : currentSettings.adminCallmebotApiKey,
             };
             
             await db.query(
-                'UPDATE system_settings SET "companyName" = $1, "isAppEnabled" = $2, "requiredPhotos" = $3, "messagingPlan" = $4, "pickupMode" = $5, "meliFlexValidation" = $6, "saveFlexLabelPhoto" = $7, "meliAutoImport" = $8, "shopifyAutoImport" = $9, "woocommerceAutoImport" = $10, "publicTrackingEnabled" = $11, "isRutRequired" = $12, "flexDiscrepancyReportEnabled" = $13, "labelFormat" = $14, "circuitExportEnabled" = $15, "timeFormat" = $16, "allowRedelivery" = $17, "timezone" = $18, "recipientNotificationsEnabled" = $19, "meliAutoPromptPhotos" = $20, "licenseLimit" = $21, "licenseOverageFee" = $22, "showPendingPaymentAlert" = $23, "multiSelectEnabled" = $24, "gisSectorsEnabled" = $25, "pendingNotificationsEnabled" = $26, "adminWhatsappNumber" = $27, "adminCallmebotApiKey" = $28 WHERE id = 1',
-                [updatedSettings.companyName, updatedSettings.isAppEnabled, updatedSettings.requiredPhotos, updatedSettings.messagingPlan, updatedSettings.pickupMode, updatedSettings.meliFlexValidation, updatedSettings.saveFlexLabelPhoto, updatedSettings.meliAutoImport, updatedSettings.shopifyAutoImport, updatedSettings.woocommerceAutoImport, updatedSettings.publicTrackingEnabled, updatedSettings.isRutRequired, updatedSettings.flexDiscrepancyReportEnabled, updatedSettings.labelFormat, updatedSettings.circuitExportEnabled, updatedSettings.timeFormat, updatedSettings.allowRedelivery, updatedSettings.timezone, updatedSettings.recipientNotificationsEnabled, updatedSettings.meliAutoPromptPhotos, updatedSettings.licenseLimit, updatedSettings.licenseOverageFee, updatedSettings.showPendingPaymentAlert, updatedSettings.multiSelectEnabled, updatedSettings.gisSectorsEnabled, updatedSettings.pendingNotificationsEnabled, updatedSettings.adminWhatsappNumber, updatedSettings.adminCallmebotApiKey]
+                'UPDATE system_settings SET "companyName" = $1, "isAppEnabled" = $2, "requiredPhotos" = $3, "messagingPlan" = $4, "pickupMode" = $5, "meliFlexValidation" = $6, "saveFlexLabelPhoto" = $7, "meliAutoImport" = $8, "shopifyAutoImport" = $9, "woocommerceAutoImport" = $10, "publicTrackingEnabled" = $11, "isRutRequired" = $12, "flexDiscrepancyReportEnabled" = $13, "labelFormat" = $14, "circuitExportEnabled" = $15, "timeFormat" = $16, "allowRedelivery" = $17, "timezone" = $18, "recipientNotificationsEnabled" = $19, "meliAutoPromptPhotos" = $20, "licenseLimit" = $21, "licenseOverageFee" = $22, "showPendingPaymentAlert" = $23, "multiSelectEnabled" = $24, "gisSectorsEnabled" = $25, "fleetControlEnabled" = $26, "pendingNotificationsEnabled" = $27, "adminWhatsappNumber" = $28, "adminCallmebotApiKey" = $29 WHERE id = 1',
+                [updatedSettings.companyName, updatedSettings.isAppEnabled, updatedSettings.requiredPhotos, updatedSettings.messagingPlan, updatedSettings.pickupMode, updatedSettings.meliFlexValidation, updatedSettings.saveFlexLabelPhoto, updatedSettings.meliAutoImport, updatedSettings.shopifyAutoImport, updatedSettings.woocommerceAutoImport, updatedSettings.publicTrackingEnabled, updatedSettings.isRutRequired, updatedSettings.flexDiscrepancyReportEnabled, updatedSettings.labelFormat, updatedSettings.circuitExportEnabled, updatedSettings.timeFormat, updatedSettings.allowRedelivery, updatedSettings.timezone, updatedSettings.recipientNotificationsEnabled, updatedSettings.meliAutoPromptPhotos, updatedSettings.licenseLimit, updatedSettings.licenseOverageFee, updatedSettings.showPendingPaymentAlert, updatedSettings.multiSelectEnabled, updatedSettings.gisSectorsEnabled, updatedSettings.fleetControlEnabled, updatedSettings.pendingNotificationsEnabled, updatedSettings.adminWhatsappNumber, updatedSettings.adminCallmebotApiKey]
             );
             
             await logAction(req.user.id, req.user.name, 'UPDATE_SYSTEM_SETTINGS', { updatedSettings });
@@ -250,14 +256,15 @@ router.put('/system', authMiddleware, adminOnly, async (req, res) => {
                 showPendingPaymentAlert: showPendingPaymentAlert !== undefined ? showPendingPaymentAlert : false,
                 multiSelectEnabled: multiSelectEnabled !== undefined ? multiSelectEnabled : true,
                 gisSectorsEnabled: gisSectorsEnabled !== undefined ? gisSectorsEnabled : true,
+                fleetControlEnabled: fleetControlEnabled !== undefined ? fleetControlEnabled : true,
                 pendingNotificationsEnabled: pendingNotificationsEnabled !== undefined ? pendingNotificationsEnabled : false,
                 adminWhatsappNumber: adminWhatsappNumber !== undefined ? adminWhatsappNumber : '',
                 adminCallmebotApiKey: adminCallmebotApiKey !== undefined ? adminCallmebotApiKey : '',
             };
 
             await db.query(
-                'INSERT INTO system_settings (id, "companyName", "isAppEnabled", "requiredPhotos", "messagingPlan", "pickupMode", "meliFlexValidation", "saveFlexLabelPhoto", "meliAutoImport", "shopifyAutoImport", "woocommerceAutoImport", "publicTrackingEnabled", "isRutRequired", "flexDiscrepancyReportEnabled", "labelFormat", "circuitExportEnabled", "timeFormat", "allowRedelivery", "timezone", "recipientNotificationsEnabled", "meliAutoPromptPhotos", "licenseLimit", "licenseOverageFee", "showPendingPaymentAlert", "multiSelectEnabled", "gisSectorsEnabled", "pendingNotificationsEnabled", "adminWhatsappNumber", "adminCallmebotApiKey") VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)',
-                [updatedSettings.companyName, updatedSettings.isAppEnabled, updatedSettings.requiredPhotos, updatedSettings.messagingPlan, updatedSettings.pickupMode, updatedSettings.meliFlexValidation, updatedSettings.saveFlexLabelPhoto, updatedSettings.meliAutoImport, updatedSettings.shopifyAutoImport, updatedSettings.woocommerceAutoImport, updatedSettings.publicTrackingEnabled, updatedSettings.isRutRequired, updatedSettings.flexDiscrepancyReportEnabled, updatedSettings.labelFormat, updatedSettings.circuitExportEnabled, updatedSettings.timeFormat, updatedSettings.allowRedelivery, updatedSettings.timezone, updatedSettings.recipientNotificationsEnabled, updatedSettings.meliAutoPromptPhotos, updatedSettings.licenseLimit, updatedSettings.licenseOverageFee, updatedSettings.showPendingPaymentAlert, updatedSettings.multiSelectEnabled, updatedSettings.gisSectorsEnabled, updatedSettings.pendingNotificationsEnabled, updatedSettings.adminWhatsappNumber, updatedSettings.adminCallmebotApiKey]
+                'INSERT INTO system_settings (id, "companyName", "isAppEnabled", "requiredPhotos", "messagingPlan", "pickupMode", "meliFlexValidation", "saveFlexLabelPhoto", "meliAutoImport", "shopifyAutoImport", "woocommerceAutoImport", "publicTrackingEnabled", "isRutRequired", "flexDiscrepancyReportEnabled", "labelFormat", "circuitExportEnabled", "timeFormat", "allowRedelivery", "timezone", "recipientNotificationsEnabled", "meliAutoPromptPhotos", "licenseLimit", "licenseOverageFee", "showPendingPaymentAlert", "multiSelectEnabled", "gisSectorsEnabled", "fleetControlEnabled", "pendingNotificationsEnabled", "adminWhatsappNumber", "adminCallmebotApiKey") VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)',
+                [updatedSettings.companyName, updatedSettings.isAppEnabled, updatedSettings.requiredPhotos, updatedSettings.messagingPlan, updatedSettings.pickupMode, updatedSettings.meliFlexValidation, updatedSettings.saveFlexLabelPhoto, updatedSettings.meliAutoImport, updatedSettings.shopifyAutoImport, updatedSettings.woocommerceAutoImport, updatedSettings.publicTrackingEnabled, updatedSettings.isRutRequired, updatedSettings.flexDiscrepancyReportEnabled, updatedSettings.labelFormat, updatedSettings.circuitExportEnabled, updatedSettings.timeFormat, updatedSettings.allowRedelivery, updatedSettings.timezone, updatedSettings.recipientNotificationsEnabled, updatedSettings.meliAutoPromptPhotos, updatedSettings.licenseLimit, updatedSettings.licenseOverageFee, updatedSettings.showPendingPaymentAlert, updatedSettings.multiSelectEnabled, updatedSettings.gisSectorsEnabled, updatedSettings.fleetControlEnabled, updatedSettings.pendingNotificationsEnabled, updatedSettings.adminWhatsappNumber, updatedSettings.adminCallmebotApiKey]
             );
 
             await logAction(req.user.id, req.user.name, 'CREATE_SYSTEM_SETTINGS', { updatedSettings });

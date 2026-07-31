@@ -31,6 +31,7 @@ import ImportPackagesModal from './client/ImportPackagesModal';
 import BulkAssignDriverModal from './modals/BulkAssignDriverModal';
 import ExportFormatModal from './modals/ExportFormatModal';
 import QuickStatusModal from './modals/QuickStatusModal';
+import { FleetControlCenter } from './FleetControlCenter';
 import { exportToExcel, exportToCSV } from '../services/exportService';
 
 // Fix: declare Chart.js if needed

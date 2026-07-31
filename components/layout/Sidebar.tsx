@@ -44,7 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     if (activeView.startsWith('users-')) menus.add('users');
     if (['assign-pickups', 'pickup-report'].includes(activeView)) menus.add('pickups');
     if (['settings', 'integrations'].includes(activeView)) menus.add('configuration');
-    if (['delivery-analytics', 'late-deliveries', 'activity-audit'].includes(activeView)) menus.add('reports');
+    if (['delivery-analytics', 'late-deliveries', 'activity-audit', 'fleet-control'].includes(activeView)) menus.add('reports');
     if (['geolocate', 'zone-settings', 'live-map', 'sector-editor', 'projection-map'].includes(activeView)) menus.add('logistics');
     return menus;
   });
@@ -118,6 +118,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       label: 'Informes Operativos',
       icon: <IconBarChart className="h-6 w-6 text-indigo-600" />,
       subItems: [
+        ...((isSuperUser || systemSettings?.fleetControlEnabled !== false) ? [{ id: 'fleet-control', label: 'Control de Flotas & Cierres', icon: <IconTruck className="h-5 w-5 text-indigo-600" /> }] : []),
         { id: 'delivery-analytics', label: 'Análisis Logístico (BI)', icon: <IconBarChart className="h-5 w-5" /> },
         { id: 'activity-audit', label: 'Auditoría de Actividad', icon: <IconFileText className="h-5 w-5 text-amber-600" /> },
         { id: 'late-deliveries', label: 'Auditoría Nocturna (>21h)', icon: <IconClock className="h-5 w-5 text-red-500" /> },
