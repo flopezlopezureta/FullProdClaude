@@ -440,6 +440,8 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             AND (
                 (p."estimatedDelivery" >= $2 AND p."estimatedDelivery" <= $3)
                 OR (p."assignedAt" >= $2 AND p."assignedAt" <= $3)
+                OR (p."updatedAt" >= $2 AND p."updatedAt" <= $3)
+                OR (p."createdAt" >= $2 AND p."createdAt" <= $3)
             )
             GROUP BY u.id, u.name, u.phone
             ORDER BY "pending" DESC, "hasClosedInApp" ASC, u.name ASC
