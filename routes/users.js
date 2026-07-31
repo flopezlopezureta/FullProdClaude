@@ -425,13 +425,13 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
                     WHERE dc."driverId" = u.id AND dc."date" = $1
                 ) as "hasClosedInApp",
                 (
-                    SELECT dc."createdAt" FROM daily_closures dc 
+                    SELECT dc."closedAt" FROM daily_closures dc 
                     WHERE dc."driverId" = u.id AND dc."date" = $1 
                     LIMIT 1
                 ) as "closureTimestamp",
                 (
                     SELECT COUNT(*)::int FROM daily_closures dc
-                    WHERE dc."driverId" = u.id AND dc."createdAt" >= NOW() - INTERVAL '30 days'
+                    WHERE dc."driverId" = u.id AND dc."closedAt" >= NOW() - INTERVAL '30 days'
                 ) as "closuresLast30Days"
             FROM users u
             JOIN packages p ON p."driverId" = u.id

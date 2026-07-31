@@ -7,7 +7,8 @@
 * **STAGING / PRUEBAS (Fullenvios2 / CLIENTE2):** `c:\IA ANTIGRAVITY\FULLENVIOS\CLIENTE2`
   * Git Remote `origin_fullenvios2`: `https://github.com/flopezlopezureta/Fullenvios2.git`
   * Servidor: Coolify Staging.
-* **PROHIBICIÓN EXPLICITA:** Queda prohibido el uso o referencia del remoto `qwen3.7` o `FullenviosQwen3.7`. Todo cambio debe pasar primero por Staging (Fullenvios2) y luego ser promovido a Producción (Test1).
+* **PROHIBICIÓN EXPLICITA DE REPOSITORIOS:** Queda prohibido el uso o referencia del remoto `qwen3.7` o `FullenviosQwen3.7`. Todo cambio debe pasar primero por Staging (Fullenvios2) y luego ser promovido a Producción (Test1).
+* **BLOQUEO ESTRICTO DE PRODUCCIÓN:** Bajo ninguna circunstancia el agente tiene permitido modificar, crear o eliminar archivos en el workspace `Test1` (Producción) a menos que el usuario escriba literalmente la frase "Autorizado para Producción". Si el usuario dice "procede", "hazlo" o comandos genéricos similares, el agente asume obligatoriamente que debe aplicar los cambios SÓLO en `CLIENTE2` (Staging). El agente debe mostrar el código exacto antes de modificar `Test1`.
 
 ## Database Configuration
 * **Host:** `191.113.87.123`
