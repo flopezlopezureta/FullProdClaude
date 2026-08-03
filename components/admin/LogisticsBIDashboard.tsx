@@ -202,72 +202,51 @@ const LogisticsBIDashboard: React.FC = () => {
       {/* Operational Pulse & Clock */}
       <OperationalTimer />
 
-      {/* Fleet Summary Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4">
-               <span className="px-3 py-1 bg-emerald-50 text-emerald-600 text-[10px] font-black rounded-full border border-emerald-100">LIVE</span>
+      {/* Fleet Summary Stat Row - compact tiles, uniform height */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="group flex items-center gap-4 p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-blue-100 transition-all relative">
+            <span className="absolute top-3 right-3 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] font-black rounded-full border border-emerald-100">LIVE</span>
+            <div className="p-2.5 bg-blue-100 rounded-xl group-hover:scale-110 transition-transform">
+              <IconTruck className="w-5 h-5 text-blue-600" />
             </div>
-            
-            <h3 className="font-black text-slate-800 mb-6 text-lg tracking-tight">Estado de Flota</h3>
-            
-            <div className="space-y-4">
-              <div className="group flex items-center justify-between p-4 bg-slate-50 hover:bg-blue-50 rounded-2xl transition-all border border-transparent hover:border-blue-100">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-blue-100 rounded-lg group-hover:scale-110 transition-transform">
-                    <IconTruck className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <span className="text-sm font-bold text-slate-600">Conductores en Ruta</span>
-                </div>
-                <span className="text-2xl font-black text-blue-700">{stats.inRoute}</span>
-              </div>
-              
-              <div className="group flex items-center justify-between p-4 bg-slate-50 hover:bg-emerald-50 rounded-2xl transition-all border border-transparent hover:border-emerald-100">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-emerald-100 rounded-lg group-hover:scale-110 transition-transform">
-                    <IconCheckCircle className="w-5 h-5 text-emerald-600" />
-                  </div>
-                  <span className="text-sm font-bold text-slate-600">Rutas Finalizadas</span>
-                </div>
-                <span className="text-2xl font-black text-emerald-700">{stats.finished}</span>
-              </div>
-
-              <div className="group flex items-center justify-between p-4 bg-slate-50 hover:bg-amber-50 rounded-2xl transition-all border border-transparent hover:border-amber-100">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-amber-100 rounded-lg group-hover:scale-110 transition-transform">
-                    <IconAlertTriangle className="w-5 h-5 text-amber-600" />
-                  </div>
-                  <span className="text-sm font-bold text-slate-600">Paquetes por Entregar</span>
-                </div>
-                <span className="text-2xl font-black text-amber-700">{stats.totalPending}</span>
-              </div>
+            <div>
+              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Conductores en Ruta</span>
+              <span className="text-2xl font-black text-blue-700">{stats.inRoute}</span>
             </div>
           </div>
 
-          {/* Efficiency Pulse - Vibrant but cleaner */}
-          <div className="bg-gradient-to-br from-indigo-500 to-indigo-700 p-8 rounded-3xl text-white shadow-xl shadow-indigo-100 relative overflow-hidden group">
-            <div className="relative z-10">
-              <div className="flex items-center justify-between mb-8">
-                <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-md">
-                   <IconZap className="w-8 h-8 text-yellow-300 animate-pulse" />
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] opacity-70 uppercase font-black tracking-widest">Pulso Operativo</p>
-                  <p className="text-2xl font-black">94% RITMO</p>
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between text-xs font-bold">
-                  <span className="opacity-80">Eficiencia de Entrega</span>
-                  <span className="text-yellow-300">ÓPTIMO</span>
-                </div>
-                <div className="h-3 bg-white/20 rounded-full overflow-hidden p-0.5 border border-white/10">
-                  <div className="h-full bg-gradient-to-r from-yellow-300 to-yellow-500 rounded-full shadow-sm transition-all duration-1000" style={{ width: '94%' }}></div>
-                </div>
+          <div className="group flex items-center gap-4 p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-emerald-100 transition-all">
+            <div className="p-2.5 bg-emerald-100 rounded-xl group-hover:scale-110 transition-transform">
+              <IconCheckCircle className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Rutas Finalizadas</span>
+              <span className="text-2xl font-black text-emerald-700">{stats.finished}</span>
+            </div>
+          </div>
+
+          <div className="group flex items-center gap-4 p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:border-amber-100 transition-all">
+            <div className="p-2.5 bg-amber-100 rounded-xl group-hover:scale-110 transition-transform">
+              <IconAlertTriangle className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Paquetes por Entregar</span>
+              <span className="text-2xl font-black text-amber-700">{stats.totalPending}</span>
+            </div>
+          </div>
+
+          {/* Efficiency Pulse - compact, same height as the other tiles */}
+          <div className="flex items-center gap-4 p-5 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-2xl text-white shadow-sm relative overflow-hidden">
+            <div className="p-2.5 bg-white/20 rounded-xl backdrop-blur-md">
+              <IconZap className="w-5 h-5 text-yellow-300" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="block text-[10px] opacity-70 uppercase font-black tracking-wider">Pulso Operativo</span>
+              <span className="text-2xl font-black">94% RITMO</span>
+              <div className="h-1.5 bg-white/20 rounded-full overflow-hidden mt-1.5">
+                <div className="h-full bg-yellow-300 rounded-full" style={{ width: '94%' }}></div>
               </div>
             </div>
-            {/* Decoration */}
-            <div className="absolute -right-12 -bottom-12 w-48 h-48 bg-white/10 rounded-full blur-3xl group-hover:scale-125 transition-transform duration-700"></div>
           </div>
       </div>
 
