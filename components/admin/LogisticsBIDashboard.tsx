@@ -149,6 +149,16 @@ const LogisticsBIDashboard: React.FC = () => {
     return { inRoute, finished, totalPending };
   }, [fleet]);
 
+  const [progressSortDirection, setProgressSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  const sortedFleet = useMemo(() => {
+    const getProgress = (d: FleetDriverStatus) => (d.delivered_packages / d.total_packages) * 100 || 0;
+    return [...fleet].sort((a, b) => {
+      const diff = getProgress(a) - getProgress(b);
+      return progressSortDirection === 'desc' ? -diff : diff;
+    });
+  }, [fleet, progressSortDirection]);
+
   return (
     <div className="space-y-6 pb-12">
       {/* Control Header - Clean White */}
@@ -283,7 +293,20 @@ const LogisticsBIDashboard: React.FC = () => {
               <thead>
                 <tr className="text-[10px] uppercase font-black tracking-[0.1em] text-slate-400 bg-slate-50/50">
                   <th className="px-8 py-5">Conductor</th>
-                  <th className="px-8 py-5">Progreso de Ruta</th>
+                  <th className="px-8 py-5">
+                    <button
+                      onClick={() => setProgressSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
+                      className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors group uppercase tracking-[0.1em]"
+                      title={progressSortDirection === 'desc' ? 'Ordenar de menor a mayor' : 'Ordenar de mayor a menor'}
+                    >
+                      Progreso de Ruta
+                      {progressSortDirection === 'desc' ? (
+                        <IconChevronDown className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600" />
+                      ) : (
+                        <IconChevronUp className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600" />
+                      )}
+                    </button>
+                  </th>
                   <th className="px-8 py-5 text-center">Entregados</th>
                   <th className="px-8 py-5 text-center">Problemas</th>
                   <th className="px-8 py-5 text-center">Pendientes</th>
@@ -291,16 +314,16 @@ const LogisticsBIDashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {fleet.length === 0 ? (
+                {sortedFleet.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-8 py-20 text-center">
+                    <td colSpan={6} className="px-8 py-20 text-center">
                       <div className="flex flex-col items-center gap-3">
                          <IconLoader className="w-8 h-8 text-slate-200 animate-spin" />
                          <p className="text-slate-400 font-bold">No hay actividad registrada para esta fecha</p>
                       </div>
                     </td>
                   </tr>
-                ) : fleet.map((driver) => {
+                ) : sortedFleet.map((driver) => {
                   const progress = (driver.delivered_packages / driver.total_packages) * 100 || 0;
                   return (
                     <tr key={driver.driver_id} className="hover:bg-slate-50/80 transition-all group">
