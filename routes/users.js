@@ -418,22 +418,33 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
         const systemTZ = settingsRows.length > 0 ? settingsRows[0].timezone : 'America/Santiago';
 
         // 1. Auditoría de Cierres
+        // NOTE: Filters strictly by p."assignedAt" (the egress/route-assignment event), NOT
+        // createdAt/updatedAt/estimatedDelivery. This is intentional here (unlike the broader
+        // dashboard list query) so that a driver's daily metrics only reflect packages actually
+        // dispatched to them today, instead of accumulating older packages that merely got
+        // touched (status update) today.
         const closureQuery = `
-            SELECT 
+            SELECT
                 u.id as "driverId",
                 u.name as "driverName",
                 u.phone as "driverPhone",
                 COUNT(p.id)::int as "totalPackages",
                 COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "delivered",
+                COUNT(p.id) FILTER (WHERE p.status = 'DEVUELTO')::int as "returned",
+                COUNT(p.id) FILTER (WHERE p.status = 'RETIRADO')::int as "pickedUp",
                 COUNT(p.id) FILTER (WHERE p.status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO'))::int as "pending",
                 COUNT(p.id) FILTER (WHERE p.status IN ('PROBLEMA', 'REPROGRAMADO', 'DEVUELTO'))::int as "failed",
+                CASE WHEN COUNT(p.id) > 0
+                    THEN ROUND((COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO'))::numeric / COUNT(p.id) * 100, 1)
+                    ELSE 0
+                END as "deliveryRate",
                 EXISTS (
-                    SELECT 1 FROM daily_closures dc 
+                    SELECT 1 FROM daily_closures dc
                     WHERE dc."driverId" = u.id AND dc."date" = $1
                 ) as "hasClosedInApp",
                 (
-                    SELECT dc."closedAt" FROM daily_closures dc 
-                    WHERE dc."driverId" = u.id AND dc."date" = $1 
+                    SELECT dc."closedAt" FROM daily_closures dc
+                    WHERE dc."driverId" = u.id AND dc."date" = $1
                     LIMIT 1
                 ) as "closureTimestamp",
                 (
@@ -443,14 +454,9 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             FROM users u
             JOIN packages p ON p."driverId" = u.id
             WHERE u.role = 'DRIVER'
-            AND (
-                (p."estimatedDelivery" >= $2 AND p."estimatedDelivery" <= $3)
-                OR (p."assignedAt" >= $2 AND p."assignedAt" <= $3)
-                OR (p."updatedAt" >= $2 AND p."updatedAt" <= $3)
-                OR (p."createdAt" >= $2 AND p."createdAt" <= $3)
-            )
+            AND p."assignedAt" >= $2 AND p."assignedAt" < $3
             GROUP BY u.id, u.name, u.phone
-            ORDER BY "pending" DESC, "hasClosedInApp" ASC, u.name ASC
+            ORDER BY "deliveryRate" DESC, "pending" DESC, u.name ASC
         `;
 
         // 2. Cadencia y Tiempos entre Entregas
