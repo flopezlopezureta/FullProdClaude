@@ -273,16 +273,30 @@ const LogisticsBIDashboard: React.FC = () => {
 
       {/* Driver Detail List - Clean White Table (full width so no horizontal scroll is needed) */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
+          <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30 flex-wrap gap-3">
             <h3 className="font-black text-slate-800 text-lg tracking-tight">Monitor de Flota Detallado</h3>
-            <div className="flex gap-4">
-               <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-200"></div> 
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">En Ruta</span>
-               </div>
-               <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200"></div> 
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Finalizado</span>
+            <div className="flex items-center gap-4">
+               <button
+                  onClick={() => setProgressSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
+                  className="flex items-center gap-1.5 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-full pl-3 pr-2 py-1.5 text-[10px] font-black text-slate-500 hover:text-indigo-600 transition-colors group uppercase tracking-[0.1em] shadow-sm"
+                  title={progressSortDirection === 'desc' ? 'Ordenar de menor a mayor' : 'Ordenar de mayor a menor'}
+               >
+                  Ordenar por % Entrega
+                  {progressSortDirection === 'desc' ? (
+                     <IconChevronDown className="w-4 h-4 text-indigo-500 group-hover:text-indigo-600" />
+                  ) : (
+                     <IconChevronUp className="w-4 h-4 text-indigo-500 group-hover:text-indigo-600" />
+                  )}
+               </button>
+               <div className="flex gap-4">
+                  <div className="flex items-center gap-2">
+                     <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-200"></div>
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">En Ruta</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200"></div>
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Finalizado</span>
+                  </div>
                </div>
             </div>
           </div>
@@ -291,20 +305,7 @@ const LogisticsBIDashboard: React.FC = () => {
               <thead>
                 <tr className="text-[10px] uppercase font-black tracking-[0.1em] text-slate-400 bg-slate-50/50">
                   <th className="px-5 py-4">Conductor</th>
-                  <th className="px-5 py-4">
-                    <button
-                      onClick={() => setProgressSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
-                      className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors group uppercase tracking-[0.1em]"
-                      title={progressSortDirection === 'desc' ? 'Ordenar de menor a mayor' : 'Ordenar de mayor a menor'}
-                    >
-                      Progreso de Ruta
-                      {progressSortDirection === 'desc' ? (
-                        <IconChevronDown className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600" />
-                      ) : (
-                        <IconChevronUp className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600" />
-                      )}
-                    </button>
-                  </th>
+                  <th className="px-5 py-4">Progreso de Ruta</th>
                   <th className="px-5 py-4 text-center">Entregados</th>
                   <th className="px-5 py-4 text-center">Problemas</th>
                   <th className="px-5 py-4 text-center">Pendientes</th>
