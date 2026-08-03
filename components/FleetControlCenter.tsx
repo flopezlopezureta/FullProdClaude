@@ -249,7 +249,8 @@ export const FleetControlCenter: React.FC = () => {
                     ) : (
                       filteredClosures.map((driver) => {
                         const isClosed = driver.hasClosedInApp;
-                        const isPending = !isClosed && driver.pending > 0;
+                        const hasPending = driver.pending > 0;
+                        const isPending = !isClosed && hasPending;
                         return (
                           <tr key={driver.driverId} className="hover:bg-slate-50 transition-colors">
                             <td className="px-5 py-3 font-bold text-slate-900">
@@ -269,7 +270,7 @@ export const FleetControlCenter: React.FC = () => {
                                 </span>
                               ) : (
                                 <span className="px-2.5 py-1 text-[10px] font-black bg-slate-100 text-slate-600 rounded-md uppercase">
-                                  Sin Entregas
+                                  {driver.totalPackages > 0 ? 'Sin Pendientes' : 'Sin Entregas'}
                                 </span>
                               )}
                             </td>
@@ -292,8 +293,13 @@ export const FleetControlCenter: React.FC = () => {
                               {!isClosed && (
                                 <button
                                   onClick={() => handleNotifyClosure(driver.driverId, driver.driverName)}
-                                  disabled={notifyingDriverId === driver.driverId}
-                                  className="px-3 py-1.5 text-[10px] font-black bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm transition-all flex items-center gap-1.5 ml-auto"
+                                  disabled={notifyingDriverId === driver.driverId || !hasPending}
+                                  title={!hasPending ? 'Sin entregas pendientes: no hay nada que recordarle al conductor' : undefined}
+                                  className={`px-3 py-1.5 text-[10px] font-black rounded-lg shadow-sm transition-all flex items-center gap-1.5 ml-auto ${
+                                    hasPending
+                                      ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                      : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
+                                  }`}
                                 >
                                   <IconBell className="w-3.5 h-3.5" />
                                   {notifyingDriverId === driver.driverId ? 'Enviando...' : 'Recordar Cierre'}
