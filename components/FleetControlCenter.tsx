@@ -413,14 +413,16 @@ export const FleetControlCenter: React.FC = () => {
                       </tr>
                     ) : (
                       filteredChronometry.map((chrono) => {
-                        const first = chrono.firstActivity ? new Date(chrono.firstActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-                        const last = chrono.lastActivity ? new Date(chrono.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+                        // firstActivity/lastActivity now arrive pre-formatted as "HH:MM" (system timezone) from the backend, or null if the driver has no deliveries yet.
+                        const first = chrono.firstActivity || '--:--';
+                        const last = chrono.lastActivity || '--:--';
+                        const hours = chrono.totalHoursActive != null ? `${chrono.totalHoursActive} hrs` : '--';
                         return (
                           <tr key={chrono.driverId} className="hover:bg-slate-50 transition-colors">
                             <td className="px-5 py-3 font-bold text-slate-900 uppercase">{chrono.driverName}</td>
                             <td className="px-5 py-3 text-center font-bold text-emerald-700">{first}</td>
                             <td className="px-5 py-3 text-center font-bold text-blue-700">{last}</td>
-                            <td className="px-5 py-3 text-center font-black text-slate-800">{chrono.totalHoursActive} hrs</td>
+                            <td className="px-5 py-3 text-center font-black text-slate-800">{hours}</td>
                             <td className="px-5 py-3 text-right font-black text-slate-900">{chrono.deliveredCount} entregas</td>
                           </tr>
                         );

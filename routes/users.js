@@ -274,19 +274,20 @@ router.get('/fleet-status', authMiddleware, adminOnly, async (req, res) => {
         const { rows: settingsRows } = await db.query('SELECT timezone FROM system_settings WHERE id = 1');
         const systemTZ = settingsRows.length > 0 ? settingsRows[0].timezone : 'America/Santiago';
         
+        // NOTE: total_packages/delivered_packages/etc. are scoped strictly to p."assignedAt"
+        // (the egress/route-assignment event) within the target logical day, not the broader
+        // estimatedDelivery-OR-assignedAt match used elsewhere for the main dashboard list.
+        // That broader match is correct for "don't hide active packages", but here it caused
+        // "Pedidos Cargados" to accumulate packages merely estimated for today, inflating totals.
         const query = `
             WITH active_drivers AS (
-                -- Conductores con paquetes programados o asignados para la fecha objetivo
                 SELECT DISTINCT "driverId" as driver_id FROM packages
                 WHERE "driverId" IS NOT NULL
-                AND (
-                    ("estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2)
-                    OR ("assignedAt" >= $1 AND "assignedAt" <= $2)
-                )
+                AND "assignedAt" >= $1 AND "assignedAt" < $2
             )
-            SELECT 
-                u.id as driver_id, 
-                u.name as driver_name, 
+            SELECT
+                u.id as driver_id,
+                u.name as driver_name,
                 u.phone,
                 COALESCE(p_stats.total, 0) as total_packages,
                 COALESCE(p_stats.delivered, 0) as delivered_packages,
@@ -296,7 +297,7 @@ router.get('/fleet-status', authMiddleware, adminOnly, async (req, res) => {
             FROM active_drivers ad
             JOIN users u ON ad.driver_id = u.id
             LEFT JOIN (
-                SELECT 
+                SELECT
                     "driverId",
                     COUNT(*) as total,
                     COUNT(*) FILTER (WHERE status = 'ENTREGADO') as delivered,
@@ -305,10 +306,7 @@ router.get('/fleet-status', authMiddleware, adminOnly, async (req, res) => {
                     MAX("updatedAt") as last_pkg_update
                 FROM packages
                 WHERE "driverId" IS NOT NULL
-                AND (
-                    ("estimatedDelivery" >= $1 AND "estimatedDelivery" <= $2)
-                    OR ("assignedAt" >= $1 AND "assignedAt" <= $2)
-                )
+                AND "assignedAt" >= $1 AND "assignedAt" < $2
                 GROUP BY "driverId"
             ) p_stats ON u.id = p_stats."driverId"
             WHERE u.status NOT IN ('ELIMINADO', 'DESHABILITADO', 'PENDIENTE')
@@ -486,20 +484,27 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
         `;
 
         // 3. Cronometría de Jornada (Horarios de inicio, fin y duración)
+        // NOTE: firstActivity/lastActivity are computed only over packages with status = 'ENTREGADO'
+        // (the actual delivery timestamp), not any package touched today. Formatted server-side as
+        // 'HH24:MI' text in the system timezone to avoid the double "AT TIME ZONE" bug that produced
+        // 00:00:00 (packages."updatedAt" is timestamptz, so it only needs a single AT TIME ZONE
+        // conversion) and to avoid the browser re-interpreting the timestamp in its own locale/zone.
         const chronometryQuery = `
-            SELECT 
+            SELECT
                 u.id as "driverId",
                 u.name as "driverName",
-                MIN(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $3) as "firstActivity",
-                MAX(p."updatedAt" AT TIME ZONE 'UTC' AT TIME ZONE $3) as "lastActivity",
-                ROUND(EXTRACT(EPOCH FROM (MAX(p."updatedAt") - MIN(p."updatedAt")))/3600::numeric, 2) as "totalHoursActive",
+                TO_CHAR((MIN(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) AT TIME ZONE $3, 'HH24:MI') as "firstActivity",
+                TO_CHAR((MAX(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) AT TIME ZONE $3, 'HH24:MI') as "lastActivity",
+                ROUND(EXTRACT(EPOCH FROM (
+                    (MAX(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) - (MIN(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO'))
+                ))/3600::numeric, 2) as "totalHoursActive",
                 COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "deliveredCount"
             FROM users u
             JOIN packages p ON p."driverId" = u.id
             WHERE u.role = 'DRIVER'
             AND p."updatedAt" >= $1 AND p."updatedAt" <= $2
             GROUP BY u.id, u.name
-            ORDER BY "firstActivity" ASC
+            ORDER BY "firstActivity" ASC NULLS LAST
         `;
 
         const [closuresRes, cadenceRes, chronometryRes] = await Promise.all([
