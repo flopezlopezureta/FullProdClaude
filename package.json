@@ -1,7 +1,7 @@
 {
   "name": "full-envios-app",
-  "version": "2.8.5-prodtest.1",
-  "versionComment": "Prueba de fuego - verificación de pipeline de despliegue de Producción desde repositorio FullProdClaude en Coolify.",
+  "version": "2.8.6",
+  "versionComment": "Versión 2.8.6: Pipeline de despliegue de Producción migrado a repositorio FullProdClaude en Coolify.",
   "private": true,
   "description": "Fixed ML auto-import type mismatch (sellerId), corrected Import Orders navigation ID, fixed mobile sidebar rendering above blur overlay, Added JSON QR Scan support.",
   "scripts": {
