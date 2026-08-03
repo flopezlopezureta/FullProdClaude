@@ -202,10 +202,8 @@ const LogisticsBIDashboard: React.FC = () => {
       {/* Operational Pulse & Clock */}
       <OperationalTimer />
 
-      {/* Real-time Fleet Monitor Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Fleet Summary Cards */}
-        <div className="lg:col-span-1 space-y-6">
+      {/* Fleet Summary Cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-4">
                <span className="px-3 py-1 bg-emerald-50 text-emerald-600 text-[10px] font-black rounded-full border border-emerald-100">LIVE</span>
@@ -271,10 +269,10 @@ const LogisticsBIDashboard: React.FC = () => {
             {/* Decoration */}
             <div className="absolute -right-12 -bottom-12 w-48 h-48 bg-white/10 rounded-full blur-3xl group-hover:scale-125 transition-transform duration-700"></div>
           </div>
-        </div>
+      </div>
 
-        {/* Driver Detail List - Clean White Table */}
-        <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
+      {/* Driver Detail List - Clean White Table (full width so no horizontal scroll is needed) */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
           <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
             <h3 className="font-black text-slate-800 text-lg tracking-tight">Monitor de Flota Detallado</h3>
             <div className="flex gap-4">
@@ -292,8 +290,8 @@ const LogisticsBIDashboard: React.FC = () => {
             <table className="w-full text-left">
               <thead>
                 <tr className="text-[10px] uppercase font-black tracking-[0.1em] text-slate-400 bg-slate-50/50">
-                  <th className="px-8 py-5">Conductor</th>
-                  <th className="px-8 py-5">
+                  <th className="px-5 py-4">Conductor</th>
+                  <th className="px-5 py-4">
                     <button
                       onClick={() => setProgressSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')}
                       className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors group uppercase tracking-[0.1em]"
@@ -307,10 +305,10 @@ const LogisticsBIDashboard: React.FC = () => {
                       )}
                     </button>
                   </th>
-                  <th className="px-8 py-5 text-center">Entregados</th>
-                  <th className="px-8 py-5 text-center">Problemas</th>
-                  <th className="px-8 py-5 text-center">Pendientes</th>
-                  <th className="px-8 py-5 text-right">Estado</th>
+                  <th className="px-5 py-4 text-center">Entregados</th>
+                  <th className="px-5 py-4 text-center">Problemas</th>
+                  <th className="px-5 py-4 text-center">Pendientes</th>
+                  <th className="px-5 py-4 text-right">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -327,7 +325,7 @@ const LogisticsBIDashboard: React.FC = () => {
                   const progress = (driver.delivered_packages / driver.total_packages) * 100 || 0;
                   return (
                     <tr key={driver.driver_id} className="hover:bg-slate-50/80 transition-all group">
-                      <td className="px-8 py-5">
+                      <td className="px-5 py-4">
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center group-hover:bg-white transition-colors border border-transparent group-hover:border-slate-200">
                             <IconUser className="w-5 h-5 text-slate-500" />
@@ -335,7 +333,7 @@ const LogisticsBIDashboard: React.FC = () => {
                           <span className="text-sm font-black text-slate-700">{driver.driver_name}</span>
                         </div>
                       </td>
-                      <td className="px-8 py-5">
+                      <td className="px-5 py-4">
                         <div className="w-full max-w-[160px]">
                           <div className="flex justify-between text-[10px] font-black mb-1.5">
                             <span className={driver.is_completed ? 'text-emerald-600' : 'text-blue-600'}>{Math.round(progress)}%</span>
@@ -349,20 +347,20 @@ const LogisticsBIDashboard: React.FC = () => {
                           </div>
                         </div>
                       </td>
-                      <td className="px-8 py-5 text-center">
+                      <td className="px-5 py-4 text-center">
                         <span className="text-sm font-black text-slate-800">{driver.delivered_packages}</span>
                       </td>
-                      <td className="px-8 py-5 text-center">
+                      <td className="px-5 py-4 text-center">
                         <span className={`text-sm font-black ${driver.problem_packages > 0 ? 'text-red-500' : 'text-slate-300'}`}>
                           {driver.problem_packages}
                         </span>
                       </td>
-                      <td className="px-8 py-5 text-center">
+                      <td className="px-5 py-4 text-center">
                         <span className={`text-sm font-black ${driver.pending_packages > 0 ? 'text-amber-500' : 'text-slate-300'}`}>
                           {driver.pending_packages}
                         </span>
                       </td>
-                      <td className="px-8 py-5 text-right">
+                      <td className="px-5 py-4 text-right">
                         {driver.is_completed ? (
                           <span className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-[10px] font-black rounded-xl border border-emerald-100">FINALIZADO</span>
                         ) : (
@@ -375,7 +373,6 @@ const LogisticsBIDashboard: React.FC = () => {
               </tbody>
             </table>
           </div>
-        </div>
       </div>
 
       {/* Advanced Analytics Section - Light Charts */}
