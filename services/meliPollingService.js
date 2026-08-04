@@ -1087,16 +1087,127 @@ const triggerSync = async () => {
     await pollMeliPackages();
 };
 
-module.exports = { 
-    start, 
-    stop, 
-    getStatus, 
-    pollMeliPackages, 
-    syncPackage, 
-    getValidMeliToken, 
-    autoImportMeliPackages, 
-    syncTrackingId, 
+const lastDriverSyncs = new Map();
+
+// Fast, on-demand sync for a single driver's own pending ML packages, used when
+// the driver's browser tab regains focus (e.g. coming back from checking Meli's
+// own app) so a closed shipment shows up in seconds instead of waiting for the
+// next 5-min background poll cycle.
+async function syncDriverPendingPackages(driverId) {
+    if (!driverId) return [];
+
+    // Anti-Spam / Rate-limiting: Previene que la sincronización se dispare
+    // varias veces si el conductor cambia rápido de pestañas. (30 segundos de cooldown)
+    const nowMs = Date.now();
+    const lastSync = lastDriverSyncs.get(driverId);
+    if (lastSync && (nowMs - lastSync < 30000)) {
+        return [];
+    }
+    lastDriverSyncs.set(driverId, nowMs);
+
+    console.log(`[MeliPolling] Fast sync requested for driver ${driverId}`);
+
+    // Check if auto-prompt is enabled
+    let meliAutoPromptPhotos = false;
+    try {
+        const { rows: settingsRows } = await db.query('SELECT "meliAutoPromptPhotos" FROM system_settings WHERE id = 1');
+        if (settingsRows.length > 0) {
+            meliAutoPromptPhotos = settingsRows[0].meliAutoPromptPhotos;
+        }
+    } catch (e) {
+        console.warn('[MeliPolling] Failed to read meliAutoPromptPhotos in fast sync, defaulting to false.');
+    }
+
+    if (!meliAutoPromptPhotos) return []; // If feature is disabled, don't waste API calls
+
+    const { rows: packages } = await db.query(`
+        SELECT id, "meliOrderId", "meliFlexCode", "creatorId", "sourceAccountId", status
+        FROM packages
+        WHERE source = 'MERCADO_LIBRE'
+        AND status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO', 'PROBLEMA', 'REPROGRAMADO')
+        AND ("meliOrderId" IS NOT NULL OR "meliFlexCode" IS NOT NULL)
+        AND "driverId" = $1
+    `, [driverId]);
+
+    if (packages.length === 0) return [];
+
+    console.log(`[MeliPolling] Driver ${driverId} has ${packages.length} pending ML packages. Checking status...`);
+    const newlyDelivered = [];
+
+    // Optimizamos el caché de tokens para no sobrecargar la base de datos con peticiones iguales
+    const tokenCache = new Map();
+    const getTokenCached = async (creatorId, sourceAccountId) => {
+        const key = `${creatorId}_${sourceAccountId || 'default'}`;
+        if (tokenCache.has(key)) return tokenCache.get(key);
+        const token = await getValidMeliToken(creatorId, sourceAccountId);
+        tokenCache.set(key, token);
+        return token;
+    };
+
+    // We can do this in parallel but with small limit (3) to guarantee no connection starvation
+    await runWithLimit(3, packages, async (pkg) => {
+        try {
+            const accessToken = await getTokenCached(pkg.creatorId, pkg.sourceAccountId);
+            if (!accessToken) return;
+
+            const shipmentId = pkg.meliFlexCode || pkg.meliOrderId;
+            if (!shipmentId) return;
+
+            const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
+            const mlStatus = shipment.status;
+
+            if (mlStatus === 'delivered' && pkg.status !== 'ENTREGADO') {
+                const now = new Date();
+
+                // Add event if it doesn't exist
+                const { rows: existingML } = await db.query(
+                    'SELECT id FROM tracking_events WHERE "packageId" = $1 AND status = \'CIERRE_OFICIAL_ML\'',
+                    [pkg.id]
+                );
+                if (existingML.length === 0) {
+                    let meliTime = now;
+                    if (shipment.status_history && Array.isArray(shipment.status_history)) {
+                        const deliveredEvent = shipment.status_history.find(h => h.status === 'delivered');
+                        if (deliveredEvent && deliveredEvent.date) meliTime = new Date(deliveredEvent.date);
+                    }
+                    await db.query(
+                        'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                        [pkg.id, 'CIERRE_OFICIAL_ML', 'Mercado Libre API (Fast-Sync)', `Entrega detectada en Meli: ${meliTime.toISOString()}`, meliTime]
+                    );
+                }
+
+                // Set the flag
+                await db.query(
+                    'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1 WHERE id = $2',
+                    [now, pkg.id]
+                );
+                emitDriverEvent(driverId, {
+                    packageId: pkg.id,
+                    trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
+                    type: 'MELI_DELIVERY_CLOSED'
+                });
+
+                newlyDelivered.push(pkg.id);
+            }
+        } catch (err) {
+            console.error(`[MeliPolling] Fast sync failed for package ${pkg.id}:`, err.message || err);
+        }
+    });
+
+    return newlyDelivered;
+}
+
+module.exports = {
+    start,
+    stop,
+    getStatus,
+    pollMeliPackages,
+    syncPackage,
+    getValidMeliToken,
+    autoImportMeliPackages,
+    syncTrackingId,
     importSpecificMeliPackage,
     optimizedJITDiscovery,
-    triggerSync
+    triggerSync,
+    syncDriverPendingPackages
 };

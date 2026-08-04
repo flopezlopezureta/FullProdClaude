@@ -1461,6 +1461,18 @@ router.post('/sync-meli-all', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/packages/sync-my-meli (For Drivers)
+router.post('/sync-my-meli', authMiddleware, async (req, res) => {
+    try {
+        const driverId = req.user.id;
+        const newlyDelivered = await meliPollingService.syncDriverPendingPackages(driverId);
+        res.json({ success: true, newlyDelivered });
+    } catch (err) {
+        console.error('Error in POST /api/packages/sync-my-meli:', err);
+        res.status(500).json({ message: err.message || 'Error al sincronizar.' });
+    }
+});
+
 // [LEGACY/DEBUG] GET /api/packages/sys/status
 router.get('/sys/status', authMiddleware, async (req, res) => {
     try {

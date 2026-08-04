@@ -439,6 +439,7 @@ export const api = {
   getDriverFlexDiscrepancyDetails: (driverId: string) => get<any[]>(`/packages/reports/flex-discrepancies/${driverId}`),
 
   // Mercado Libre Tracking
+  syncMyMeliPackages: () => post<{ success: boolean, newlyDelivered: string[] }>('/packages/sync-my-meli', {}),
   getMeliTracking: (packageId: string) => get<{ trackingId: string, shipmentStatus: string, source: string }>(`/integrations/meli-tracking/${packageId}`),
   getMeliLabelUrl: (packageId: string) => {
     const token = localStorage.getItem('token');

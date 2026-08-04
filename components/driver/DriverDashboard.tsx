@@ -248,9 +248,32 @@ const DriverDashboard: React.FC = () => {
 
     fetchData(true); // Initial background fetch
     const intervalId = setInterval(() => fetchData(true), 15000); // Poll every 15 seconds instead of 10
-    
-    return () => clearInterval(intervalId);
-  }, [auth?.user, deliveringPackages, reportingProblemPackage]);
+
+    // [NUEVO] Listener para cuando el conductor regresa a la app desde Meli
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        if (auth?.systemSettings?.meliAutoPromptPhotos) {
+          try {
+            const res = await api.syncMyMeliPackages();
+            if (res && res.newlyDelivered && res.newlyDelivered.length > 0) {
+              // Si detecta un paquete cerrado, recargar la data inmediatamente
+              await fetchData(true);
+            }
+          } catch (e) {
+            console.error("Fast Meli Sync failed:", e);
+          }
+        } else {
+          fetchData(true);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [auth?.user, auth?.systemSettings?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage]);
 
   // Real-time push: when Meli reports a shipment closed, refetch immediately instead of
   // waiting for the next 15s poll. The auto-open-modal effect above reacts to the refetched
