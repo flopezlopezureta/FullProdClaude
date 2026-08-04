@@ -13,6 +13,7 @@ import { AuthContext } from '../../contexts/AuthContext';
 import { IconArchive, IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin } from '../Icon';
 import EndOfDayReportModal from '../modals/EndOfDayReportModal';
 import DriverMapView from './DriverMapView';
+import { useDriverSSE } from '../../hooks/useDriverSSE';
 
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -250,6 +251,11 @@ const DriverDashboard: React.FC = () => {
     
     return () => clearInterval(intervalId);
   }, [auth?.user, deliveringPackages, reportingProblemPackage]);
+
+  // Real-time push: when Meli reports a shipment closed, refetch immediately instead of
+  // waiting for the next 15s poll. The auto-open-modal effect above reacts to the refetched
+  // data exactly as it already does today - this only shortens how soon that data arrives.
+  useDriverSSE(!!auth?.user, () => fetchData(true));
 
   // Effect to detect when all packages are processed
   useEffect(() => {

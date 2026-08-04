@@ -3,6 +3,7 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding, geocodeAddress } = require('./geocodingService');
+const { emitDriverEvent } = require('./driverEvents');
 
 // --- MELI API HELPERS (Duplicated from integrations.js for independence) ---
 const makeMeliRequest = (options, postData = null) => {
@@ -279,6 +280,11 @@ async function pollMeliPackages() {
                                 'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1 WHERE id = $2',
                                 [now, pkg.id]
                             );
+                            emitDriverEvent(pkg.driverId, {
+                                packageId: pkg.id,
+                                trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
+                                type: 'MELI_DELIVERY_CLOSED'
+                            });
                         }
                     } else if (mlStatus === 'shipped' && !['EN_TRANSITO', 'EN_RUTA', 'PROBLEMA', 'REPROGRAMADO', 'ENTREGADO', 'DEVUELTO', 'CANCELADO'].includes(pkg.status)) {
                         newStatus = 'EN_TRANSITO';

@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const authMiddleware = require('../middleware/auth');
+const { emitDriverEvent } = require('../services/driverEvents');
 
 // This file was missing and is referenced in server.js.
 // Creating a placeholder to ensure server stability.
@@ -82,6 +84,53 @@ router.get('/meli-check/:id', async (req, res) => {
         res.json({ shipmentId, results });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/debug/simulate-meli-closure
+// Admin-only testing tool. Exercises the exact same downstream path as a real
+// Mercado Libre delivery-closure detection (mark "meliDeliveredNeedsPhotos" +
+// push the MELI_DELIVERY_CLOSED SSE signal) WITHOUT calling the real ML API,
+// so the real-time auto-open-modal feature can be tested without needing to
+// actually close a live shipment. Only ever touches the one package passed in.
+router.post('/simulate-meli-closure', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Solo administradores pueden usar esta herramienta.' });
+    }
+    const { packageId } = req.body;
+    if (!packageId) {
+        return res.status(400).json({ message: 'Se requiere packageId.' });
+    }
+    try {
+        const { rows } = await db.query(
+            'SELECT id, "driverId", status, "meliOrderId", "meliFlexCode" FROM packages WHERE id = $1',
+            [packageId]
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Paquete no encontrado.' });
+        }
+        const pkg = rows[0];
+        if (!pkg.driverId) {
+            return res.status(400).json({ message: 'Este paquete no tiene conductor asignado.' });
+        }
+
+        await db.query(
+            'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = NOW() WHERE id = $1',
+            [packageId]
+        );
+
+        emitDriverEvent(pkg.driverId, {
+            packageId: pkg.id,
+            trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
+            type: 'MELI_DELIVERY_CLOSED'
+        });
+
+        res.json({
+            success: true,
+            message: `Simulación enviada: paquete ${packageId} marcado como cerrado en Meli para el conductor ${pkg.driverId}.`
+        });
+    } catch (err) {
+        res.status(500).json({ message: 'Error al simular el cierre.', error: err.message });
     }
 });
 

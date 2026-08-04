@@ -4,6 +4,52 @@ const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const https = require('https');
 const timeService = require('../services/timeService');
+const { bus: driverEventBus } = require('../services/driverEvents');
+
+/**
+ * GET /api/drivers/events
+ * Server-Sent Events stream for the authenticated driver. Purely a
+ * latency-reduction signal: it tells the client to refetch immediately
+ * instead of waiting for the next 15s poll. The existing polling loop
+ * and the existing auto-open-modal effect in DriverDashboard are the
+ * source of truth and keep working unchanged if this stream never
+ * connects or drops.
+ */
+router.get('/drivers/events', authMiddleware, (req, res) => {
+    if (!req.user || req.user.role !== 'DRIVER') {
+        return res.status(403).end();
+    }
+    const driverId = req.user.id;
+
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+    res.write(':ok\n\n');
+
+    const send = (payload) => {
+        try {
+            res.write('event: MELI_DELIVERY_CLOSED\n');
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        } catch (e) {
+            // Connection likely already closed; the 'close' handler below will clean up.
+        }
+    };
+
+    driverEventBus.on(`driver:${driverId}`, send);
+
+    // Heartbeat comment to keep proxies/CDN (Cloudflare, Traefik) from closing an idle connection.
+    const heartbeat = setInterval(() => {
+        try { res.write(':hb\n\n'); } catch (e) { /* noop */ }
+    }, 20000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        driverEventBus.off(`driver:${driverId}`, send);
+    });
+});
 
 // --- MELI API HELPERS ---
 const makeMeliRequest = (options, postData = null) => {
