@@ -62,7 +62,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
-  const [systemSettings, setSystemSettings] = useState<SystemSettings>({
+  const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
     companyName: 'Sistema de Seguimiento',
     isAppEnabled: true,
     requiredPhotos: 1,
@@ -82,7 +82,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     licenseLimit: 70,
     licenseOverageFee: 0.1,
     gisSectorsEnabled: true,
-  });
+  };
+  // A driver who loses connection right as the app (re)loads was falling back to these
+  // hardcoded generic defaults (e.g. "1 photo required, RUT required") instead of the admin's
+  // actual configuration — seed the initial state from the last successfully-fetched settings
+  // (cached below whenever the fetch succeeds) so an offline reload keeps using real values.
+  const getCachedSystemSettings = (): SystemSettings => {
+    try {
+      const raw = localStorage.getItem('cached_system_settings');
+      if (raw) return { ...DEFAULT_SYSTEM_SETTINGS, ...JSON.parse(raw) };
+    } catch (e) {
+      console.warn('[Auth] Failed to parse cached system settings', e);
+    }
+    return DEFAULT_SYSTEM_SETTINGS;
+  };
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>(getCachedSystemSettings);
   const [activeCommunes, setActiveCommunes] = useState<string[]>([]);
   const [isPushSubscribed, setIsPushSubscribed] = useState(false);
   const [isPushLoading, setIsPushLoading] = useState(true);
@@ -123,8 +137,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         try {
           const settings = await api.getSystemSettings();
           setSystemSettings(settings);
+          try {
+            localStorage.setItem('cached_system_settings', JSON.stringify(settings));
+          } catch (cacheErr) {
+            console.warn('[Auth] Failed to cache system settings', cacheErr);
+          }
         } catch (settingsErr) {
-          console.error("[Auth] Failed to fetch system settings.", settingsErr);
+          // Offline or request failed: keep whatever we already have in state (the cached
+          // settings this component was seeded with), instead of silently reverting to the
+          // generic hardcoded defaults — see getCachedSystemSettings above.
+          console.error("[Auth] Failed to fetch system settings. Using last cached values.", settingsErr);
         }
 
         // 3. Active Communes fetch (Always fetch if possible, non-blocking)
