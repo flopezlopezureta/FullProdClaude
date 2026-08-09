@@ -386,8 +386,8 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
                   {pkgList.length === 1 && <span className="text-[var(--brand-primary)]">{mainPkg.id}</span>}
                 </h3>
                 <p className="text-sm text-[var(--text-muted)]">
-                  {pkgList.length > 1 
-                    ? `Destinos: ${pkgList.map(p => p.id).join(', ')}` 
+                  {pkgList.length > 1
+                    ? `Destinos: ${pkgList.map(p => p.id).join(', ')}`
                     : `Para: ${mainPkg.recipientName}`}
                 </p>
                 {isRestored && (
@@ -409,7 +409,13 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto no-scrollbar">
             {error && <p className="text-sm text-[var(--error-text)] bg-[var(--error-bg)] p-3 rounded-md flex items-center"><IconAlertTriangle className="w-4 h-4 mr-2"/> {error}</p>}
-            
+
+            {pkgList.length === 1 && mainPkg.recipientAddress && (
+                <div className="text-xs text-[var(--text-secondary)] bg-[var(--background-muted)] px-3 py-2 rounded-md">
+                    <span className="font-semibold">{mainPkg.recipientName}</span> — {mainPkg.recipientAddress}
+                </div>
+            )}
+
             <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <IconUser className="h-5 w-5 text-[var(--text-muted)]" />

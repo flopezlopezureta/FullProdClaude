@@ -49,6 +49,11 @@ const DriverDashboard: React.FC = () => {
     }
   };
   const [deliveringPackages, setDeliveringPackages] = useState<Package[] | null>(null);
+  // Packages the driver explicitly dismissed from the Meli auto-open prompt this session, so
+  // it doesn't immediately reopen the instant they close it — "Cancelar" used to be a no-op
+  // because the modal's onClose set deliveringPackages back to null, which re-ran the auto-open
+  // effect below and found the same still-flagged package, reopening it in the same render pass.
+  const [dismissedMeliPromptIds, setDismissedMeliPromptIds] = useState<Set<string>>(new Set());
   const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set());
   const [reportingProblemPackage, setReportingProblemPackage] = useState<Package | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -207,6 +212,7 @@ const DriverDashboard: React.FC = () => {
 
     const needsPhotosPackage = myPackages.find(
       p => p.meliDeliveredNeedsPhotos === true && p.status !== PackageStatus.Delivered && p.status !== PackageStatus.Problem
+          && !dismissedMeliPromptIds.has(p.id)
     );
     if (needsPhotosPackage) {
       if (navigator.vibrate) {
@@ -214,7 +220,7 @@ const DriverDashboard: React.FC = () => {
       }
       setDeliveringPackages([needsPhotosPackage]);
     }
-  }, [myPackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage]);
+  }, [myPackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage, dismissedMeliPromptIds]);
 
   const fetchData = async (silent = false) => {
       if (!auth?.user) return;
@@ -916,6 +922,12 @@ const DriverDashboard: React.FC = () => {
           key={deliveringPackages.map(p => p.id).join(',')}
           packages={deliveringPackages}
           onClose={() => {
+              // Postpone: packages auto-opened because Meli flagged them shouldn't reopen
+              // immediately just because the driver closed without confirming.
+              const meliFlaggedIds = deliveringPackages.filter(p => p.meliDeliveredNeedsPhotos === true).map(p => p.id);
+              if (meliFlaggedIds.length > 0) {
+                  setDismissedMeliPromptIds(prev => new Set([...prev, ...meliFlaggedIds]));
+              }
               setDeliveringPackages(null);
               if (auth?.user) {
                   localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
