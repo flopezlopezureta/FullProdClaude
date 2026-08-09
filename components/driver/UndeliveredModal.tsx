@@ -71,6 +71,19 @@ const CameraView: React.FC<{ onCapture: (dataUrl: string) => void, onCancel: () 
             context?.drawImage(video, 0, 0, width, height);
             
             const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+
+            // Guardar también en la galería del teléfono (respaldo local del conductor).
+            // window.AndroidApp solo existe dentro del wrapper Android.
+            // @ts-ignore
+            if (window.AndroidApp && window.AndroidApp.saveImageToGallery) {
+                try {
+                    // @ts-ignore
+                    window.AndroidApp.saveImageToGallery(dataUrl, `FullEnvios_${Date.now()}.jpg`);
+                } catch (e) {
+                    console.warn('No se pudo guardar la foto en la galería', e);
+                }
+            }
+
             onCapture(dataUrl);
         }
     };
@@ -305,10 +318,11 @@ const UndeliveredModal: React.FC<UndeliveredModalProps> = ({ pkg, onClose, onCon
                 <input 
                     type="file" 
                     ref={fileInputRef} 
-                    onChange={handleFileChange} 
-                    accept="image/*" 
+                    onChange={handleFileChange}
+                    accept="image/*"
                     capture={false}
-                    className="hidden" 
+                    multiple
+                    className="hidden"
                 />
                 
                 {isCameraOpen && <CameraView onCapture={(dataUrl) => { setPhotosBase64(prev => [...prev, dataUrl]); setIsCameraOpen(false); }} onCancel={() => setIsCameraOpen(false)} />}

@@ -4,13 +4,19 @@ import DriverClosureModal from '../modals/DriverClosureModal';
 import { storageUtils } from '../../utils/storageUtils';
 import { PackageStatus, MessagingPlan } from '../../constants';
 import type { Package, User } from '../../types';
-import { api, DeliveryConfirmationData } from '../../services/api';
+import { api, ApiError, DeliveryConfirmationData } from '../../services/api';
+import { offlineQueue } from '../../services/offlineQueue';
 import PackageList from '../PackageList';
 import PackageDetailModal from '../PackageDetailModal';
 import DeliveryConfirmationModal from './DeliveryConfirmationModal';
 import UndeliveredModal from './UndeliveredModal';
 import { AuthContext } from '../../contexts/AuthContext';
 import { IconArchive, IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin } from '../Icon';
+
+// A network-level failure (offline, DNS, timeout) surfaces as a plain fetch TypeError, not an
+// ApiError with a real HTTP status from the server — that distinction is what separates "queue
+// this for later" from "the server rejected it, show the driver why" (e.g. validation errors).
+const isNetworkFailure = (error: any) => !navigator.onLine || !(error instanceof ApiError) || !error.status;
 import EndOfDayReportModal from '../modals/EndOfDayReportModal';
 import DriverMapView from './DriverMapView';
 import { useDriverSSE } from '../../hooks/useDriverSSE';
@@ -51,7 +57,8 @@ const DriverDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isEndOfDayModalOpen, setIsEndOfDayModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-  
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0);
+
   const auth = useContext(AuthContext);
   const isInitialLoad = useRef(true);
   const prevPackagesRef = useRef<Package[] | undefined>(undefined);
@@ -280,6 +287,19 @@ const DriverDashboard: React.FC = () => {
   // data exactly as it already does today - this only shortens how soon that data arrives.
   useDriverSSE(!!auth?.user, () => fetchData(true));
 
+  // Reflect the offline queue's pending count here for the banner below. The actual draining
+  // (retry against the API) happens once, in DriverMobileLayout.tsx — a persistent parent
+  // mounted regardless of which driver tab is active — so a delivery/problem/return queued
+  // while on another tab still gets synced without the driver needing to revisit this screen.
+  // Listening for the same custom event that processor dispatches keeps this in sync.
+  useEffect(() => {
+    if (!auth?.user) return;
+    setOfflinePendingCount(offlineQueue.getPendingCount());
+    const onQueueChange = () => setOfflinePendingCount(offlineQueue.getPendingCount());
+    window.addEventListener('offline-queue-changed', onQueueChange);
+    return () => window.removeEventListener('offline-queue-changed', onQueueChange);
+  }, [auth?.user]);
+
   // Effect to detect when all packages are processed
   useEffect(() => {
     if (prevPackagesRef.current === undefined) {
@@ -475,55 +495,69 @@ const DriverDashboard: React.FC = () => {
   };
 
   const handleConfirmDelivery = async (pkgIds: string[], data: DeliveryConfirmationData) => {
+    let updatedPackages: Package[];
     try {
-      const updatedPackages = await Promise.all(pkgIds.map(async (pkgId) => {
+      updatedPackages = await Promise.all(pkgIds.map(async (pkgId) => {
         const updatedPackage = await api.confirmDelivery(pkgId, data);
         if (!updatedPackage || !updatedPackage.id) {
             throw new Error("La respuesta del servidor no es válida.");
         }
         return updatedPackage;
       }));
-
-      setMyPackages(prev => {
-        let next = [...prev];
-        updatedPackages.forEach(up => {
-          next = next.map(p => p.id === up.id ? up : p);
-        });
-        return next;
-      });
-
-      setDeliveringPackages(null);
-      setSelectedPackages(new Set()); // Limpiar selección después de entregar
-
-      if (auth?.user) {
-          localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
-      }
-
-      // --- WhatsApp/Email notifications logic ---
-      if (auth?.systemSettings.messagingPlan && auth.systemSettings.messagingPlan !== MessagingPlan.None) {
-          for (const updatedPackage of updatedPackages) {
-              const creator = users.find(u => u.id === updatedPackage.creatorId);
-              if (creator) {
-                  const message = `Hola ${creator.name}, te informamos que tu paquete con ID ${updatedPackage.id} para ${updatedPackage.recipientName} ha sido entregado exitosamente.`;
-                  if (auth.systemSettings.messagingPlan === MessagingPlan.WhatsApp && creator.phone) {
-                      const phone = (creator.phone || '').replace(/\D/g, '');
-                      const url = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
-                      
-                      // @ts-ignore
-                      if (window.AndroidApp && window.AndroidApp.shareText) {
-                          // @ts-ignore
-                          window.AndroidApp.shareText(message, "Notificación de Entrega");
-                      } else {
-                          // Para lotes, redirigimos en pestaña nueva para no romper flujo
-                          window.open(url, '_blank');
-                      }
-                  }
-              }
-          }
-      }
     } catch (error: any) {
-        console.error("Failed to confirm delivery", error);
-        throw error;
+      if (isNetworkFailure(error)) {
+        // No connection (or the request never reached the server): save the delivery locally
+        // instead of losing it. The queue is drained automatically once the connection returns
+        // (see the 'online' listener + poll effect below) — the driver doesn't need to redo anything.
+        pkgIds.forEach(pkgId => offlineQueue.enqueue('DELIVER', pkgId, data));
+        setDeliveringPackages(null);
+        setSelectedPackages(new Set());
+        if (auth?.user) {
+            localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
+        }
+        setOfflinePendingCount(offlineQueue.getPendingCount());
+        return;
+      }
+      console.error("Failed to confirm delivery", error);
+      throw error;
+    }
+
+    setMyPackages(prev => {
+      let next = [...prev];
+      updatedPackages.forEach(up => {
+        next = next.map(p => p.id === up.id ? up : p);
+      });
+      return next;
+    });
+
+    setDeliveringPackages(null);
+    setSelectedPackages(new Set()); // Limpiar selección después de entregar
+
+    if (auth?.user) {
+        localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
+    }
+
+    // --- WhatsApp/Email notifications logic ---
+    if (auth?.systemSettings.messagingPlan && auth.systemSettings.messagingPlan !== MessagingPlan.None) {
+        for (const updatedPackage of updatedPackages) {
+            const creator = users.find(u => u.id === updatedPackage.creatorId);
+            if (creator) {
+                const message = `Hola ${creator.name}, te informamos que tu paquete con ID ${updatedPackage.id} para ${updatedPackage.recipientName} ha sido entregado exitosamente.`;
+                if (auth.systemSettings.messagingPlan === MessagingPlan.WhatsApp && creator.phone) {
+                    const phone = (creator.phone || '').replace(/\D/g, '');
+                    const url = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+
+                    // @ts-ignore
+                    if (window.AndroidApp && window.AndroidApp.shareText) {
+                        // @ts-ignore
+                        window.AndroidApp.shareText(message, "Notificación de Entrega");
+                    } else {
+                        // Para lotes, redirigimos en pestaña nueva para no romper flujo
+                        window.open(url, '_blank');
+                    }
+                }
+            }
+        }
     }
   };
 
@@ -533,6 +567,12 @@ const DriverDashboard: React.FC = () => {
         setMyPackages(prev => prev.map(p => p.id === pkgId ? updatedPackage : p));
         setReportingProblemPackage(null);
     } catch (error: any) {
+        if (isNetworkFailure(error)) {
+          offlineQueue.enqueue('PROBLEM', pkgId, { reason, photos });
+          setReportingProblemPackage(null);
+          setOfflinePendingCount(offlineQueue.getPendingCount());
+          return;
+        }
         console.error("Failed to report problem", error);
         throw error;
     }
@@ -702,6 +742,21 @@ const DriverDashboard: React.FC = () => {
 
   return (
     <div>
+      {offlinePendingCount > 0 && (
+        <div className="mb-6 mx-4 p-4 bg-amber-50 border-2 border-amber-200 rounded-xl shadow-sm">
+          <div className="flex items-start">
+            <div className="p-2 bg-amber-100 rounded-lg text-amber-600 mr-4">
+              <IconAlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-bold text-amber-900">Sin conexión — Guardado local</h3>
+              <p className="text-amber-800 text-sm mt-1">
+                Tienes <strong>{offlinePendingCount}</strong> {offlinePendingCount === 1 ? 'registro pendiente' : 'registros pendientes'} de sincronizar. Se enviarán automáticamente en cuanto recuperes conexión a internet — no necesitas hacer nada.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {unflexedCount > 0 && auth?.systemSettings?.flexDiscrepancyReportEnabled && (
         <div className="mb-6 mx-4 p-4 bg-orange-50 border-2 border-orange-200 rounded-xl shadow-sm animate-pulse-subtle">
           <div className="flex items-start">

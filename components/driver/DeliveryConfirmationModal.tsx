@@ -78,8 +78,19 @@ const CameraView: React.FC<{ pkgId: string, onCapture: (dataUrl: string) => void
             
             // 1. Generar la imagen para la App (con calidad reducida para subir)
             const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
-            
 
+            // 2. Guardar también en la galería del teléfono (respaldo local del conductor).
+            // Solo existe window.AndroidApp dentro del wrapper Android; en un navegador normal
+            // este bloque simplemente no hace nada.
+            // @ts-ignore
+            if (window.AndroidApp && window.AndroidApp.saveImageToGallery) {
+                try {
+                    // @ts-ignore
+                    window.AndroidApp.saveImageToGallery(dataUrl, `FullEnvios_${pkgId}_${Date.now()}.jpg`);
+                } catch (e) {
+                    console.warn('No se pudo guardar la foto en la galería', e);
+                }
+            }
 
             onCapture(dataUrl);
         }
@@ -452,12 +463,13 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
                                 <IconPhoto className="w-8 h-8 mb-2" />
                                 <span className="text-sm font-semibold">Galería</span>
                             </button>
-                            <input 
-                                type="file" 
+                            <input
+                                type="file"
                                 ref={fileInputRef}
-                                onChange={handleFileChange} 
-                                accept="image/*" 
-                                className="hidden" 
+                                onChange={handleFileChange}
+                                accept="image/*"
+                                multiple
+                                className="hidden"
                             />
                         </div>
                         {isCompressing && (

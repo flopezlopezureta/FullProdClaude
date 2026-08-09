@@ -14,6 +14,8 @@ import DispatchScanner from '../auxiliar/DispatchScanner';
 import ZoningScanner from './ZoningScanner';
 import { DriverPermissions, Notification } from '../../types';
 import { api } from '../../services/api';
+import { offlineQueue } from '../../services/offlineQueue';
+import { processOfflineQueue } from '../../services/offlineQueueProcessor';
 
 type DriverView = 'my-packages' | 'scan-dispatch' | 'scan-dispatch-auxiliar' | 'scan-pickups' | 'colectas' | 'returns' | 'delivery-history' | 'meli-flex-test' | 'zona';
 
@@ -102,6 +104,31 @@ const DriverMobileLayout: React.FC = () => {
         return () => clearInterval(intervalId);
 
     }, [user]); // Rerun effect if user object changes
+
+    // Offline queue: drain any deliveries/problems/returns saved locally while disconnected.
+    // Lives here (not in DriverDashboard.tsx) because this layout is the one component that
+    // stays mounted across every driver tab — a delivery queued while offline on "Entregas"
+    // must still sync even if the driver has since switched to "Devoluciones" or any other tab.
+    useEffect(() => {
+        if (!user) return;
+
+        const syncQueue = async () => {
+            if (offlineQueue.getPendingCount() === 0) return;
+            await processOfflineQueue();
+            // Individual dashboards listen for 'offline-queue-changed' (dispatched by
+            // offlineQueue itself on every enqueue/remove) to refresh their own package lists
+            // and pending-count banners — no direct coupling needed from here.
+        };
+
+        syncQueue();
+        window.addEventListener('online', syncQueue);
+        const intervalId = setInterval(syncQueue, 30000);
+
+        return () => {
+            window.removeEventListener('online', syncQueue);
+            clearInterval(intervalId);
+        };
+    }, [user]);
 
     const driverPermissions = useMemo(() => {
         return user?.driverPermissions || {

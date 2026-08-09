@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { PackageStatus } from '../../constants';
 import type { Package, User } from '../../types';
-import { api, DeliveryConfirmationData } from '../../services/api';
+import { api, ApiError, DeliveryConfirmationData } from '../../services/api';
 import PackageList from '../PackageList';
 import PackageDetailModal from '../PackageDetailModal';
 import ReturnConfirmationModal from './ReturnConfirmationModal';
 import { AuthContext } from '../../contexts/AuthContext';
+import { offlineQueue } from '../../services/offlineQueue';
+import { IconAlertTriangle } from '../Icon';
+
+// See DriverDashboard.tsx's isNetworkFailure for the full rationale.
+const isNetworkFailure = (error: any) => !navigator.onLine || !(error instanceof ApiError) || !error.status;
 
 const ReturnsDashboard: React.FC = () => {
   const [returnPackages, setReturnPackages] = useState<Package[]>([]);
@@ -23,7 +28,18 @@ const ReturnsDashboard: React.FC = () => {
   };
   const [returningPackage, setReturningPackage] = useState<Package | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0);
   const auth = useContext(AuthContext);
+
+  // Reflect the offline queue's pending count here for the banner below. The actual draining
+  // happens in DriverMobileLayout.tsx (see DriverDashboard.tsx for the full rationale).
+  useEffect(() => {
+    if (!auth?.user) return;
+    setOfflinePendingCount(offlineQueue.getPendingCount());
+    const onQueueChange = () => setOfflinePendingCount(offlineQueue.getPendingCount());
+    window.addEventListener('offline-queue-changed', onQueueChange);
+    return () => window.removeEventListener('offline-queue-changed', onQueueChange);
+  }, [auth?.user]);
 
   // Load from cache on mount
   useEffect(() => {
@@ -87,6 +103,12 @@ const ReturnsDashboard: React.FC = () => {
       setReturnPackages(prev => prev.filter(p => p.id !== pkgId));
       setReturningPackage(null);
     } catch (error: any) {
+        if (isNetworkFailure(error)) {
+          offlineQueue.enqueue('RETURN', pkgId, data);
+          setReturnPackages(prev => prev.filter(p => p.id !== pkgId));
+          setReturningPackage(null);
+          return;
+        }
         console.error("Failed to confirm return", error);
         throw error;
     }
@@ -103,9 +125,25 @@ const ReturnsDashboard: React.FC = () => {
         </span>
       </div>
 
+      {offlinePendingCount > 0 && (
+        <div className="mb-6 mx-4 p-4 bg-amber-50 border-2 border-amber-200 rounded-xl shadow-sm">
+          <div className="flex items-start">
+            <div className="p-2 bg-amber-100 rounded-lg text-amber-600 mr-4">
+              <IconAlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-bold text-amber-900">Sin conexión — Guardado local</h3>
+              <p className="text-amber-800 text-sm mt-1">
+                Tienes <strong>{offlinePendingCount}</strong> {offlinePendingCount === 1 ? 'registro pendiente' : 'registros pendientes'} de sincronizar. Se enviarán automáticamente en cuanto recuperes conexión a internet — no necesitas hacer nada.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-[var(--background-secondary)] shadow-md rounded-lg">
-        <PackageList 
-            packages={returnPackages} 
+        <PackageList
+            packages={returnPackages}
             users={users}
             isLoading={isLoading}
             onSelectPackage={handleSelectPackageDetails}
