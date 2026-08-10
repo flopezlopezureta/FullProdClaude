@@ -17,8 +17,10 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build the Vite frontend with memory limits to prevent OOM kills on smaller VPS hosts
-RUN NODE_OPTIONS="--max-old-space-size=512" npm run build
+# Build the Vite frontend with memory limits to prevent OOM kills on smaller VPS hosts.
+# Bumped from 512 to 1024 — the Service Worker precache-manifest generation step (Workbox)
+# added 2026-08-09 needs more headroom than the base Vite build alone did.
+RUN NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
 # Stage 2: Production runtime
 FROM node:22-alpine AS runner

@@ -24,6 +24,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
         // Marketing/landing-page screenshots — not needed for a driver to work offline, and one
         // of them exceeds Workbox's default 2 MiB precache limit.
+        // NOTE: tried excluding vendor-excel/vendor-charts here to cut build memory use — broke
+        // the offline app shell entirely (React never mounted, 0 children in #root) because they
+        // turned out not to be purely lazy-loaded after all. Reverted; the Dockerfile's build
+        // memory bump (512->1024MB) is the actual fix for the OOM.
         globIgnores: ['**/assets/landing/**'],
       },
     }),
