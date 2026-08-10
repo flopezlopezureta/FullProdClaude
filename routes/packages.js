@@ -1395,7 +1395,14 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
         // Notify recipient
         NotificationService.notifyRecipient(realId, 'EN_TRANSITO');
 
-        res.json({ 
+        // Falabella Directo: report OUT_FOR_DELIVERY_001 once a driver actually receives the
+        // package into their route (the Auxiliar's intake scan already reported IN_TRANSIT_001).
+        if (currentPkg.source === 'FALABELLA_DIRECTO' && updatedPkg?.falabellaDirectLpn) {
+            falabellaDirectRoute.pushStatusWithRetry(realId, updatedPkg.falabellaDirectLpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driverName}, en reparto.`)
+                .catch(err => console.error('[Dispatch] Falabella Directo status push error:', err));
+        }
+
+        res.json({
             message: `Paquete ${realId} asignado a ${driverName} y en tránsito.`,
             package: updatedPkg
         });
@@ -1535,7 +1542,8 @@ const makeMeliPostRequest = (path, postData) => makeMeliRequest({
 // --- END MELI HELPERS ---
 
 // --- FALABELLA SYNC LOGIC ---
-const { decrypt, buildFalabellaSignature } = require('../services/falabellaCrypto');
+const { decrypt, buildFalabellaSignature, verifyPhotoToken, signPhotoToken } = require('../services/falabellaCrypto');
+const falabellaDirectRoute = require('./falabellaDirect.js');
 
 async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
     const MAX_ATTEMPTS = 3;
@@ -1803,6 +1811,15 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { receiverName, receiverId, photosBase64 } = req.body;
     try {
+        // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — no other
+        // source enforces a minimum today, so this check is scoped to that source only.
+        const { rows: sourceCheckRows } = await db.query('SELECT source, "falabellaDirectLpn" FROM packages WHERE id = $1', [id]);
+        if (sourceCheckRows.length > 0 && sourceCheckRows[0].source === 'FALABELLA_DIRECTO') {
+            if (!Array.isArray(photosBase64) || photosBase64.length < 2) {
+                return res.status(400).json({ message: 'Falabella Directo exige al menos 2 fotos de evidencia para confirmar la entrega.' });
+            }
+        }
+
         const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');
         const meliFlexValidation = settingsRows.length > 0 ? settingsRows[0].meliFlexValidation : true;
 
@@ -1945,6 +1962,27 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         }
         // --- END ENVIAME NOTIFICATION ---
 
+        // --- NEW FALABELLA DIRECTO NOTIFICATION ---
+        if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
+            const baseUrl = process.env.PUBLIC_BASE_URL || 'https://fullenvios.selcom.cl';
+            const photoCount = Math.min(Array.isArray(photosBase64) ? photosBase64.length : 0, 5);
+            const images = Array.from({ length: photoCount }, (_, i) =>
+                `${baseUrl}/api/packages/public/falabella-photo/${updatedPackage.id}/${i}?token=${signPhotoToken(updatedPackage.id, i)}`
+            );
+            falabellaDirectRoute.pushStatusWithRetry(
+                updatedPackage.id,
+                updatedPackage.falabellaDirectLpn,
+                'DELIVERED_001',
+                `Entregado a ${receiverName}.`,
+                {
+                    latitude: updatedPackage.destLatitude || 0,
+                    longitude: updatedPackage.destLongitude || 0,
+                    deliveryProof: { recipientName: receiverName, recipientId: receiverId || '', images },
+                }
+            ).catch(err => console.error('[Deliver] Falabella Directo status push error:', err));
+        }
+        // --- END FALABELLA DIRECTO NOTIFICATION ---
+
         // Notify recipient
         NotificationService.notifyRecipient(id, 'ENTREGADO');
 
@@ -1979,6 +2017,14 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
 
         // Notify administrator
         NotificationService.notifyAdminPendingDelivery(id, targetStatus, reason);
+
+        // --- FALABELLA DIRECTO NOTIFICATION ---
+        if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
+            const falabellaDirectStatusCode = isReschedule ? 'DELIVERY_ATTEMPTED_001' : 'DELIVERY_ATTEMPTED_002';
+            falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, falabellaDirectStatusCode, reason)
+                .catch(err => console.error('[Problem] Falabella Directo status push error:', err));
+        }
+        // --- END FALABELLA DIRECTO NOTIFICATION ---
 
         res.json(updatedPackage);
     } catch (err) {
@@ -2131,6 +2177,13 @@ router.post('/:id/return', authMiddleware, async (req, res) => {
         // Notify recipient
         NotificationService.notifyRecipient(id, 'DEVOLUCION');
 
+        // --- FALABELLA DIRECTO NOTIFICATION ---
+        if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
+            falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, 'UNDELIVERED_001', `Devuelto a remitente. Recibido por ${receiverName}.`)
+                .catch(err => console.error('[Return] Falabella Directo status push error:', err));
+        }
+        // --- END FALABELLA DIRECTO NOTIFICATION ---
+
         res.json(updatedPackage);
 
     } catch(err) {
@@ -2225,6 +2278,43 @@ router.get('/public/track/:id', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Error al consultar el seguimiento.' });
+    }
+});
+
+// GET /api/packages/public/falabella-photo/:id/:index?token=...
+// Serves a single delivery-evidence photo as a real image response so it can be referenced by
+// URL in Falabella Directo's DELIVERED_001 deliveryProof.images — Falabella's servers fetch this
+// directly, with no session/JWT, so it's HMAC-signed instead of left fully open (package IDs are
+// short/guessable, and these are real people's delivery photos/addresses).
+router.get('/public/falabella-photo/:id/:index', async (req, res) => {
+    const { id, index } = req.params;
+    const { token } = req.query;
+    const idx = parseInt(index, 10);
+
+    if (!Number.isInteger(idx) || idx < 0 || !verifyPhotoToken(id, idx, token)) {
+        return res.status(403).send('Acceso no autorizado.');
+    }
+
+    try {
+        const { rows } = await db.query('SELECT "deliveryPhotosBase64" FROM packages WHERE id = $1', [id]);
+        if (rows.length === 0) return res.status(404).send('Paquete no encontrado.');
+
+        const photos = rows[0].deliveryPhotosBase64;
+        const photoList = typeof photos === 'string' ? JSON.parse(photos) : photos;
+        if (!Array.isArray(photoList) || !photoList[idx]) {
+            return res.status(404).send('Foto no encontrada.');
+        }
+
+        const dataUrl = photoList[idx];
+        const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, max-age=31536000');
+        res.send(buffer);
+    } catch (err) {
+        console.error('[FalabellaPhoto] Error serving signed photo:', err);
+        res.status(500).send('Error al obtener la foto.');
     }
 });
 
@@ -2522,3 +2612,7 @@ router.get('/sys/db-size', async (req, res) => {
 });
 
 module.exports = router;
+// Named exports so the generic integration_sync_queue processor (services/falabellaDirectService.js)
+// can retry Falabella Seller Center / Envíame pushes too, not just Falabella Directo's own.
+module.exports.syncDeliveryToFalabella = syncDeliveryToFalabella;
+module.exports.syncDeliveryToEnviame = syncDeliveryToEnviame;

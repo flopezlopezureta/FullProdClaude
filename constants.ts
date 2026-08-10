@@ -62,6 +62,7 @@ export enum PackageSource {
   Shopify = 'SHOPIFY',
   WooCommerce = 'WOOCOMMERCE',
   Falabella = 'FALABELLA',
+  FalabellaDirect = 'FALABELLA_DIRECTO',
   Jumpseller = 'JUMPSELLER',
 }
 

@@ -27,6 +27,9 @@ const IntegrationSettingsPage: React.FC = () => {
         wooSyncInterval: 30,
         falabellaApiKey: '',
         falabellaSellerId: '',
+        falabellaDirectClientId: '',
+        falabellaDirectClientSecret: '',
+        falabellaDirectEnvironment: 'UAT',
         smtpHost: '',
         smtpPort: '',
         smtpUser: '',
@@ -45,6 +48,7 @@ const IntegrationSettingsPage: React.FC = () => {
         githubToken: false,
         wooConsumerSecret: false,
         falabellaApiKey: false,
+        falabellaDirectClientSecret: false,
         smtpPassword: false,
         jumpsellerToken: false,
     });
@@ -56,6 +60,7 @@ const IntegrationSettingsPage: React.FC = () => {
     const [isSavingGithub, setIsSavingGithub] = useState(false);
     const [isSavingWoo, setIsSavingWoo] = useState(false);
     const [isSavingFalabella, setIsSavingFalabella] = useState(false);
+    const [isSavingFalabellaDirect, setIsSavingFalabellaDirect] = useState(false);
     const [isSavingJumpseller, setIsSavingJumpseller] = useState(false);
     const [isSavingSmtp, setIsSavingSmtp] = useState(false);
     const [isBackingUp, setIsBackingUp] = useState(false);
@@ -77,6 +82,10 @@ const IntegrationSettingsPage: React.FC = () => {
     const [isTestingFalabella, setIsTestingFalabella] = useState(false);
     const [falabellaTestResult, setFalabellaTestResult] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
+    // Falabella Directo (Courier) Test State
+    const [isTestingFalabellaDirect, setIsTestingFalabellaDirect] = useState(false);
+    const [falabellaDirectTestResult, setFalabellaDirectTestResult] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+
     // GitHub Backup State
     const [backupResult, setBackupResult] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
@@ -91,7 +100,8 @@ const IntegrationSettingsPage: React.FC = () => {
     const [shopifyActiveTab, setShopifyActiveTab] = useState<'connect' | 'sync' | 'manual'>('connect');
     const [wooActiveTab, setWooActiveTab] = useState<'connect' | 'sync' | 'manual'>('connect');
     const [isAuthorizingGoogle, setIsAuthorizingGoogle] = useState(false);
-    const [activeTab, setActiveTab] = useState<'help' | 'meli' | 'shopify' | 'woocommerce' | 'falabella' | 'jumpseller' | 'smtp' | 'github'>('help');
+    const [activeTab, setActiveTab] = useState<'help' | 'meli' | 'shopify' | 'woocommerce' | 'falabella' | 'falabella-direct' | 'jumpseller' | 'smtp' | 'github'>('help');
+    const isSuperUser = auth?.user?.email === 'admin' || auth?.user?.email === 'admin@admin.cl';
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -125,7 +135,7 @@ const IntegrationSettingsPage: React.FC = () => {
         return () => window.removeEventListener('message', handleMessage);
     }, []);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setSettings(prev => ({ ...prev, [name]: value }));
     };
@@ -220,6 +230,23 @@ const IntegrationSettingsPage: React.FC = () => {
             alert('Error al guardar configuración de Falabella.');
         } finally {
             setIsSavingFalabella(false);
+        }
+    };
+
+    const handleSaveFalabellaDirect = async () => {
+        setIsSavingFalabellaDirect(true);
+        setFalabellaDirectTestResult(null);
+        try {
+            await api.updateIntegrationSettings({
+                falabellaDirectClientId: settings.falabellaDirectClientId,
+                falabellaDirectClientSecret: settings.falabellaDirectClientSecret,
+                falabellaDirectEnvironment: settings.falabellaDirectEnvironment,
+            });
+            alert('Configuración de Falabella Directo guardada con éxito.');
+        } catch (err: any) {
+            alert('Error al guardar configuración de Falabella Directo.');
+        } finally {
+            setIsSavingFalabellaDirect(false);
         }
     };
 
@@ -434,6 +461,24 @@ const IntegrationSettingsPage: React.FC = () => {
         }
     };
 
+    const handleTestFalabellaDirectConnection = async () => {
+        setIsTestingFalabellaDirect(true);
+        setFalabellaDirectTestResult(null);
+
+        try {
+            const result = await api.testFalabellaDirectConnection({
+                falabellaDirectClientId: settings.falabellaDirectClientId || '',
+                falabellaDirectClientSecret: settings.falabellaDirectClientSecret || '',
+                falabellaDirectEnvironment: settings.falabellaDirectEnvironment || 'UAT',
+            });
+            setFalabellaDirectTestResult({ type: 'success', message: result.message });
+        } catch (err: any) {
+            setFalabellaDirectTestResult({ type: 'error', message: err.message || 'Error de conexión' });
+        } finally {
+            setIsTestingFalabellaDirect(false);
+        }
+    };
+
     const handleTestJumpsellerConnection = async () => {
         setIsTestingJumpseller(true);
         setJumpsellerTestResult(null);
@@ -470,9 +515,11 @@ const IntegrationSettingsPage: React.FC = () => {
                     { id: 'woocommerce', label: 'WooCommerce', icon: <IconWoocommerce className="w-3.5 h-3.5 text-purple-500" /> },
                     { id: 'falabella', label: 'Falabella', icon: <IconFalabella className="w-3.5 h-3.5 text-lime-500" /> },
                     { id: 'jumpseller', label: 'Jumpseller', icon: <IconJumpseller className="w-3.5 h-3.5 text-sky-500" /> },
-                    ...((auth?.user?.email === 'admin' || auth?.user?.email === 'admin@admin.cl') ? [
+                    ...(isSuperUser ? [
                         { id: 'smtp', label: 'Correo', icon: <IconMail className="w-3.5 h-3.5 text-blue-500" /> },
-                        { id: 'github', label: 'GitHub', icon: <IconGithub className="w-3.5 h-3.5 text-gray-900 dark:text-white" /> }
+                        { id: 'github', label: 'GitHub', icon: <IconGithub className="w-3.5 h-3.5 text-gray-900 dark:text-white" /> },
+                        // Hidden until validated in UAT — super admin only for now.
+                        { id: 'falabella-direct', label: 'Falabella Directo', icon: <IconFalabella className="w-3.5 h-3.5 text-rose-500" /> }
                     ] : [])
                 ].map(tab => (
                     <button
@@ -1183,6 +1230,103 @@ const IntegrationSettingsPage: React.FC = () => {
                                 <div className={`p-3 rounded-md flex items-center text-sm font-medium ${falabellaTestResult.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                                     {falabellaTestResult.type === 'success' ? <IconCheckCircle className="w-5 h-5 mr-2"/> : <IconAlertTriangle className="w-5 h-5 mr-2"/>}
                                     {falabellaTestResult.message}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Falabella Directo (Courier) Card — super admin only, UAT-only for now */}
+            {activeTab === 'falabella-direct' && isSuperUser && (
+                <div className="bg-[var(--background-secondary)] shadow-md rounded-lg border border-[var(--border-primary)] mb-8 overflow-hidden">
+                    <div className="bg-rose-600 p-4 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <IconFalabella className="w-8 h-8" />
+                            <div>
+                                <h3 className="text-lg font-black uppercase tracking-tighter leading-none">Falabella Directo</h3>
+                                <p className="text-[10px] text-rose-100 font-bold uppercase tracking-widest mt-0.5">Courier API — Ambiente de prueba</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-6">
+                        <p className="text-sm text-[var(--text-muted)] mb-1">
+                            Integración directa como transportista de los pedidos "Directo" de Falabella — distinta de la integración Seller Center de arriba.
+                        </p>
+                        <p className="text-xs text-amber-600 font-semibold mb-4">
+                            Esta sección solo la ves tú (super admin) mientras se valida en UAT.
+                        </p>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="falabellaDirectClientId" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Client ID</label>
+                                    <input
+                                        type="text"
+                                        id="falabellaDirectClientId"
+                                        name="falabellaDirectClientId"
+                                        value={settings.falabellaDirectClientId || ''}
+                                        onChange={handleChange}
+                                        className={inputClasses}
+                                        placeholder="client_id proporcionado por Falabella"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="falabellaDirectClientSecret" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Client Secret</label>
+                                    <div className="relative">
+                                        <input
+                                            type={passwordVisibility.falabellaDirectClientSecret ? 'text' : 'password'}
+                                            id="falabellaDirectClientSecret"
+                                            name="falabellaDirectClientSecret"
+                                            value={settings.falabellaDirectClientSecret || ''}
+                                            onChange={handleChange}
+                                            className={`${inputClasses} pr-10`}
+                                            placeholder="************************"
+                                        />
+                                        <button type="button" onClick={() => togglePasswordVisibility('falabellaDirectClientSecret')} className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                                            {passwordVisibility.falabellaDirectClientSecret ? <IconEyeOff className="h-5 w-5 text-[var(--text-muted)]"/> : <IconEye className="h-5 w-5 text-[var(--text-muted)]"/>}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label htmlFor="falabellaDirectEnvironment" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Ambiente</label>
+                                <select
+                                    id="falabellaDirectEnvironment"
+                                    name="falabellaDirectEnvironment"
+                                    value={settings.falabellaDirectEnvironment || 'UAT'}
+                                    onChange={handleChange}
+                                    className={inputClasses}
+                                >
+                                    <option value="UAT">UAT (Pruebas)</option>
+                                    <option value="PROD">PROD (Producción)</option>
+                                </select>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-6 border-t border-[var(--border-secondary)] mt-6">
+                                 <button
+                                    type="button"
+                                    onClick={handleTestFalabellaDirectConnection}
+                                    disabled={isTestingFalabellaDirect}
+                                    className="flex items-center px-4 py-2 border border-[var(--border-secondary)] text-sm font-medium rounded-md text-[var(--text-secondary)] bg-[var(--background-secondary)] hover:bg-[var(--background-hover)] disabled:opacity-50 transition-colors"
+                                >
+                                    {isTestingFalabellaDirect ? <IconLoader className="w-4 h-4 mr-2 animate-spin"/> : <IconPlugConnected className="w-4 h-4 mr-2 text-rose-600"/>}
+                                    Probar Conexión
+                                </button>
+                                <button
+                                    onClick={handleSaveFalabellaDirect}
+                                    disabled={isSavingFalabellaDirect}
+                                    className="px-6 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-widest rounded-md shadow-lg disabled:opacity-50 transition-all transform active:scale-95 flex items-center gap-2"
+                                >
+                                    {isSavingFalabellaDirect ? 'Guardando...' : 'Guardar Global'}
+                                </button>
+                            </div>
+
+                            {falabellaDirectTestResult && (
+                                <div className={`p-3 rounded-md flex items-center text-sm font-medium ${falabellaDirectTestResult.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                    {falabellaDirectTestResult.type === 'success' ? <IconCheckCircle className="w-5 h-5 mr-2"/> : <IconAlertTriangle className="w-5 h-5 mr-2"/>}
+                                    {falabellaDirectTestResult.message}
                                 </div>
                             )}
                         </div>

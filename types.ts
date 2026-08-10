@@ -144,6 +144,7 @@ export interface DriverPermissions {
   canAuxiliar: boolean;
   canZoning?: boolean;
   meliAutoPromptPhotos?: boolean;
+  canFalabellaDirect?: boolean;
 }
 
 export interface OperatorPermissions {
@@ -192,6 +193,9 @@ export interface IntegrationSettings {
     wooSyncInterval?: number;
     falabellaApiKey?: string;
     falabellaSellerId?: string;
+    falabellaDirectClientId?: string;
+    falabellaDirectClientSecret?: string;
+    falabellaDirectEnvironment?: 'UAT' | 'PROD';
     jumpsellerLogin?: string;
     jumpsellerToken?: string;
     jumpsellerAutoImport?: boolean;

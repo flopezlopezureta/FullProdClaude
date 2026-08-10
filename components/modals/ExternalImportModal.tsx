@@ -15,7 +15,9 @@ interface ExternalImportModalProps {
     onImport: (packages: Omit<PackageCreationData, 'creatorId' | 'origin'>[]) => Promise<any>;
 }
 
-const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL'>]: { title: string; icon: ReactNode; fetchFn: (clientId: string) => Promise<any[]>; orderIdField: 'meliOrderId' | 'wooOrderId' | 'shopifyOrderId' } } = {
+// FALABELLA_DIRECTO is intentionally excluded — unlike the other sources here, it has no
+// "fetch pending orders" flow; packages only enter the system via a physical-label QR scan.
+const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL' | 'FALABELLA_DIRECTO'>]: { title: string; icon: ReactNode; fetchFn: (clientId: string) => Promise<any[]>; orderIdField: 'meliOrderId' | 'wooOrderId' | 'shopifyOrderId' } } = {
     'MERCADO_LIBRE': {
         title: 'Mercado Libre',
         icon: <IconMercadoLibre className="w-8 h-8 text-yellow-500" />,
@@ -50,7 +52,7 @@ const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL'>]: { title: string
 
 const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, source, onClose, onImport }) => {
     const auth = useContext(AuthContext);
-    const config = sourceConfig[source as Exclude<PackageSource, 'MANUAL'>];
+    const config = sourceConfig[source as Exclude<PackageSource, 'MANUAL' | 'FALABELLA_DIRECTO'>];
     const [orders, setOrders] = useState<any[]>([]);
     const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);

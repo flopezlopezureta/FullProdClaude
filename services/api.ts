@@ -51,15 +51,31 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const isJson = contentType && contentType.includes('application/json');
 
   if (!response.ok) {
+    let errorMessage = `Error ${response.status}: ${response.statusText}`;
+    let errorBody: any = {};
+
+    if (isJson) {
+      try {
+        errorBody = await response.json();
+        errorMessage = errorBody.message || errorMessage;
+      } catch (e) {
+        console.warn('[API] Could not parse error JSON body');
+      }
+    }
+
     // Si el token no es válido o ha expirado (401), cerramos la sesión automáticamente
     if (response.status === 401) {
       const hasToken = !!localStorage.getItem('token');
       const isLoginRequest = endpoint.includes('/auth/login');
-      
+
       if (!isLoginRequest && hasToken) {
         console.warn('[API] Sesión expirada o inválida (401). Limpiando token...');
         localStorage.removeItem('token');
-        
+        // Surface why the session ended (e.g. logged in elsewhere) on the next login screen.
+        if (errorBody.code === 'SESSION_SUPERSEDED') {
+          sessionStorage.setItem('sessionEndedReason', errorMessage);
+        }
+
         // Redirigimos forzadamente al login para romper cualquier bucle
         if (!window.location.pathname.includes('/login')) {
           window.location.href = '/login';
@@ -70,17 +86,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       }
     }
 
-    let errorMessage = `Error ${response.status}: ${response.statusText}`;
-    let errorBody = {};
-
-    if (isJson) {
-      try {
-        errorBody = await response.json();
-        errorMessage = (errorBody as any).message || errorMessage;
-      } catch (e) {
-        console.warn('[API] Could not parse error JSON body');
-      }
-    } else {
+    if (!isJson) {
       const text = await response.text();
       console.warn(`[API] Received non-JSON error response (${response.status}):`, text.substring(0, 100));
       
@@ -362,6 +368,7 @@ export const api = {
   testShopifyConnection: (creds: { shopifyShopUrl: string, shopifyAccessToken: string }) => post<{message: string, shopName?: string}>('/integrations/test/shopify', creds),
   testWooCommerceConnection: (creds: { wooUrl: string, wooConsumerKey: string, wooConsumerSecret: string }) => post<{message: string}>('/integrations/test/woocommerce', creds),
   testFalabellaConnection: (creds: { falabellaApiKey: string, falabellaSellerId: string }) => post<{message: string}>('/integrations/test/falabella', creds),
+  testFalabellaDirectConnection: (creds: { falabellaDirectClientId: string, falabellaDirectClientSecret: string, falabellaDirectEnvironment: string }) => post<{message: string}>('/settings/test-falabella-direct', creds),
   testJumpsellerConnection: (creds: { jumpsellerLogin: string, jumpsellerToken: string }) => post<{message: string}>('/integrations/test/jumpseller', creds),
   testSmtpConnection: (creds: { smtpHost: string, smtpPort: string, smtpUser: string, smtpPassword: string }) => post<{message: string}>('/settings/test-smtp', creds),
   getGoogleAuthUrl: () => get<{url: string}>('/auth/google/url'),
@@ -374,6 +381,7 @@ export const api = {
   fetchFalabellaOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/falabella/orders`),
   fetchJumpsellerOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/jumpseller/orders`),
   importScannedMeliOrder: (clientId: string, scannedId: string, flexCode?: string) => post<{message: string, pkg: Package}>(`/integrations/import/meli-scanned`, { clientId, scannedId, flexCode }),
+  importFalabellaDirectScanned: (rawCode: string) => post<{message: string, pkg: Package, alreadyImported?: boolean}>('/falabella-direct/import-scanned', { rawCode }),
   checkMeliShipmentStatus: (shipmentId: string) => get<{status: string, substatus: string}>(`/integrations/status/${shipmentId}`),
   syncMeliPackage: (shipmentId: string) => post<Package>(`/integrations/sync-shipment/${shipmentId}`, {}),
   

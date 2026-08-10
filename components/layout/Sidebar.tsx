@@ -173,7 +173,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       subItems: [
         { id: 'settings', label: 'Sistema', icon: <IconSettings className="h-5 w-5" /> },
         { id: 'integrations', label: 'Integraciones', icon: <IconPlugConnected className="h-5 w-5" /> },
-        ...(isSuperUser ? [{ id: 'system-logs', label: 'Logs del Sistema', icon: <IconFileText className="h-5 w-5" /> }] : [])
+        ...(isSuperUser ? [
+            { id: 'system-logs', label: 'Logs del Sistema', icon: <IconFileText className="h-5 w-5" /> },
+            { id: 'falabella-direct-labels', label: 'Etiquetas Falabella Directo (UAT)', icon: <IconQrcode className="h-5 w-5" /> }
+        ] : [])
       ]
     }
   ].filter(item => !('subItems' in item) || (item as any).subItems.length > 0);
@@ -265,6 +268,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
 
   const auxiliarNavItems = [
     { id: 'scan-dispatch', label: 'Despachar Paquetes', icon: <IconQrcode className="h-6 w-6" /> },
+    // Hidden until validated in UAT — only the super admin sees this while it's in development,
+    // then it gets opened up per-user via the canFalabellaDirect permission.
+    ...((isSuperUser || user?.driverPermissions?.canFalabellaDirect) ? [{ id: 'falabella-direct-scan', label: 'Falabella Directo', icon: <IconQrcode className="h-6 w-6" /> }] : []),
   ];
 
   const filteredAdminNavItems = adminNavItems.filter(item => {

@@ -210,6 +210,7 @@ async function startServer() {
     const mobileRoute = tryRequireRoute('./routes/mobile.js'); if (mobileRoute) app.use('/api', mobileRoute);
     const debugRoute = tryRequireRoute('./routes/debug.js'); if (debugRoute) app.use('/api/debug', debugRoute);
     const appUpdatesRoute = tryRequireRoute('./routes/appUpdates.js'); if (appUpdatesRoute) app.use('/api/app-updates', appUpdatesRoute);
+    const falabellaDirectRoute = tryRequireRoute('./routes/falabellaDirect.js'); if (falabellaDirectRoute) app.use('/api/falabella-direct', falabellaDirectRoute);
     const googleAuthRoute = tryRequireRoute('./routes/googleAuth.js'); if (googleAuthRoute) app.use('/api/auth/google', googleAuthRoute);
     const notificationsRoute = tryRequireRoute('./routes/notifications.js'); if (notificationsRoute) app.use('/api/notifications', notificationsRoute);
     const reportsRoute = tryRequireRoute('./routes/reports.js'); if (reportsRoute) app.use('/api/reports', reportsRoute);
@@ -292,6 +293,20 @@ async function startServer() {
             const wooDelay = (POLL_INTERVAL / 2) + (90 * 1000);
             woocommercePollingService.start(POLL_INTERVAL, wooDelay);
             console.log(`Background Service: WooCommerce Polling scheduled (${wooDelay/1000}s delay).`);
+        }
+
+        // Drains integration_sync_queue (Falabella Seller Center, Envíame, Falabella Directo
+        // retries that exhausted their inline attempts) — previously write-only, nothing ever
+        // processed it after the first 3 failed attempts.
+        const falabellaDirectService = tryRequireRoute('./services/falabellaDirectService.js');
+        if (falabellaDirectService && typeof falabellaDirectService.processIntegrationSyncQueue === 'function') {
+            const QUEUE_INTERVAL = 5 * 60 * 1000;
+            setInterval(() => {
+                falabellaDirectService.processIntegrationSyncQueue().catch(err => {
+                    console.error('[IntegrationSyncQueue] Error processing queue:', err);
+                });
+            }, QUEUE_INTERVAL);
+            console.log('Background Service: Integration Sync Queue processor scheduled (5min interval).');
         }
 
       } catch (initErr) {
@@ -467,7 +482,11 @@ async function initializeDatabase() {
                 'shopifyOrderNumber TEXT',
                 'isDuplicate BOOLEAN DEFAULT false',
                 'falabellaOrderId TEXT',
-                'falabellaTrackingId TEXT'
+                'falabellaTrackingId TEXT',
+                'falabellaDirectLpn TEXT',
+                'falabellaDirectOrderNumber TEXT',
+                'falabellaDirectLastPushedStatus TEXT',
+                'falabellaDirectLastPushedAt TIMESTAMPTZ'
             ];
             for (const spec of pkgCols) {
                 const col = spec.split(' ')[0];
@@ -1115,7 +1134,27 @@ async function initializeDatabase() {
         } catch (err) {
             if (err.code !== '42701') { console.error('Error during integration_settings migration (enviame_environment):', err); }
         }
-        
+
+        // --- MIGRATIONS: Add Falabella Directo (Courier API) fields ---
+        try {
+            await db.query('ALTER TABLE integration_settings ADD COLUMN falabella_direct_client_id TEXT');
+            console.log('MIGRATION APPLIED: Column "falabella_direct_client_id" added to "integration_settings".');
+        } catch (err) {
+            if (err.code !== '42701') { console.error('Error during integration_settings migration (falabella_direct_client_id):', err); }
+        }
+        try {
+            await db.query('ALTER TABLE integration_settings ADD COLUMN falabella_direct_client_secret TEXT');
+            console.log('MIGRATION APPLIED: Column "falabella_direct_client_secret" added to "integration_settings".');
+        } catch (err) {
+            if (err.code !== '42701') { console.error('Error during integration_settings migration (falabella_direct_client_secret):', err); }
+        }
+        try {
+            await db.query("ALTER TABLE integration_settings ADD COLUMN falabella_direct_environment TEXT DEFAULT 'UAT'");
+            console.log('MIGRATION APPLIED: Column "falabella_direct_environment" added to "integration_settings".');
+        } catch (err) {
+            if (err.code !== '42701') { console.error('Error during integration_settings migration (falabella_direct_environment):', err); }
+        }
+
         // --- MIGRATIONS: Add missing package fields ---
         try {
             await db.query('ALTER TABLE packages ADD COLUMN "shopifyOrderId" TEXT');

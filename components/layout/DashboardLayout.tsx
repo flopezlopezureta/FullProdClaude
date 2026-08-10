@@ -10,6 +10,7 @@ import ClientDashboard from '../client/ClientDashboard';
 import { IconMenu, IconCheckCircle, IconX, IconAlertTriangle } from '../Icon';
 import SettingsPage from '../admin/SettingsPage';
 import IntegrationSettingsPage from '../admin/IntegrationSettingsPage';
+import FalabellaTestLabelsPage from '../admin/FalabellaTestLabelsPage';
 import SystemLogsPage from '../admin/SystemLogsPage';
 import ImportOrdersPage from '../admin/ImportOrdersPage';
 import BillingReportPage from '../admin/BillingReportPage';
@@ -22,6 +23,7 @@ import AdminBillingSummary from '../admin/AdminBillingSummary';
 import LogisticsBIDashboard from '../admin/LogisticsBIDashboard';
 import LateDeliveriesAnalysis from '../admin/LateDeliveriesAnalysis';
 import DispatchScanner from '../auxiliar/DispatchScanner';
+import FalabellaDirectScanner from '../auxiliar/FalabellaDirectScanner';
 import { PickupDashboard } from '../admin/PickupDashboard';
 import PickupReportPage from '../admin/PickupReportPage';
 import LiveMap from '../admin/LiveMap';
@@ -256,6 +258,14 @@ const DashboardLayout: React.FC = () => {
         if (isAux) return { title: 'Despacho de Paquetes', content: <DispatchScanner /> };
         break;
 
+      case 'falabella-direct-scan':
+        // Hidden until validated in UAT — only the super admin, or a user explicitly granted
+        // canFalabellaDirect, can reach this.
+        if (isAux && (isSuperUser || user?.driverPermissions?.canFalabellaDirect)) {
+          return { title: 'Falabella Directo', content: <FalabellaDirectScanner /> };
+        }
+        break;
+
       // Settings
       case 'settings':
         if (isAdmin || (isOp && user?.operatorPermissions?.canManageSettings)) return { title: 'Ajustes del Sistema', content: <SettingsPage /> };
@@ -264,6 +274,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'integrations':
         if (isAdmin || (isOp && user?.operatorPermissions?.canManageIntegrations)) return { title: 'Configuración de Integraciones', content: <IntegrationSettingsPage /> };
+        break;
+
+      case 'falabella-direct-labels':
+        if (isAdmin && isSuperUser) return { title: 'Etiquetas Falabella Directo (UAT)', content: <FalabellaTestLabelsPage /> };
         break;
 
       case 'system-logs':

@@ -453,7 +453,7 @@ router.post('/reset-invoices', authMiddleware, adminOnly, async (req, res) => {
 // GET /api/settings/integrations
 router.get('/integrations', authMiddleware, adminOnly, async (req, res) => {
     try {
-        const { rows } = await db.query('SELECT meli_app_id, meli_client_secret, shopify_client_id, shopify_client_secret, shopify_shop_url, shopify_access_token, github_token, github_repo, github_owner, woo_url, woo_consumer_key, woo_consumer_secret, falabella_api_key, falabella_seller_id, smtp_host, smtp_port, smtp_user, smtp_password, smtp_from, smtp_google_refresh_token, smtp_google_email, enviame_api_key, enviame_environment FROM integration_settings WHERE id = 1');
+        const { rows } = await db.query('SELECT meli_app_id, meli_client_secret, shopify_client_id, shopify_client_secret, shopify_shop_url, shopify_access_token, github_token, github_repo, github_owner, woo_url, woo_consumer_key, woo_consumer_secret, falabella_api_key, falabella_seller_id, falabella_direct_client_id, falabella_direct_client_secret, falabella_direct_environment, smtp_host, smtp_port, smtp_user, smtp_password, smtp_from, smtp_google_refresh_token, smtp_google_email, enviame_api_key, enviame_environment FROM integration_settings WHERE id = 1');
         if (rows.length === 0) return res.json({});
         res.json({ 
             meliAppId: rows[0].meli_app_id,
@@ -470,6 +470,9 @@ router.get('/integrations', authMiddleware, adminOnly, async (req, res) => {
             wooConsumerSecret: rows[0].woo_consumer_secret,
             falabellaApiKey: rows[0].falabella_api_key ? '************************' : '',
             falabellaSellerId: rows[0].falabella_seller_id,
+            falabellaDirectClientId: rows[0].falabella_direct_client_id || '',
+            falabellaDirectClientSecret: rows[0].falabella_direct_client_secret ? '************************' : '',
+            falabellaDirectEnvironment: rows[0].falabella_direct_environment || 'UAT',
             smtpFrom: rows[0].smtp_from,
             smtpGoogleEmail: rows[0].smtp_google_email,
             hasGoogleSmtp: !!rows[0].smtp_google_refresh_token,
@@ -491,6 +494,7 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
         githubToken, githubRepo, githubOwner,
         wooUrl, wooConsumerKey, wooConsumerSecret,
         falabellaApiKey, falabellaSellerId,
+        falabellaDirectClientId, falabellaDirectClientSecret, falabellaDirectEnvironment,
         smtpHost, smtpPort, smtpUser, smtpPassword, smtpFrom,
         enviameApiKey, enviameEnvironment
     } = req.body;
@@ -559,6 +563,18 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
             updates.push(`falabella_seller_id = $${idx++}`);
             values.push(falabellaSellerId);
         }
+        if (falabellaDirectClientId !== undefined) {
+            updates.push(`falabella_direct_client_id = $${idx++}`);
+            values.push(falabellaDirectClientId);
+        }
+        if (falabellaDirectClientSecret !== undefined && falabellaDirectClientSecret !== '************************') {
+            updates.push(`falabella_direct_client_secret = $${idx++}`);
+            values.push(encrypt(falabellaDirectClientSecret));
+        }
+        if (falabellaDirectEnvironment !== undefined) {
+            updates.push(`falabella_direct_environment = $${idx++}`);
+            values.push(falabellaDirectEnvironment);
+        }
         if (smtpHost !== undefined) {
             updates.push(`smtp_host = $${idx++}`);
             values.push(smtpHost);
@@ -610,6 +626,9 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
                 wooConsumerSecret: saved.woo_consumer_secret,
                 falabellaApiKey: saved.falabella_api_key ? '************************' : '',
                 falabellaSellerId: saved.falabella_seller_id,
+                falabellaDirectClientId: saved.falabella_direct_client_id || '',
+                falabellaDirectClientSecret: saved.falabella_direct_client_secret ? '************************' : '',
+                falabellaDirectEnvironment: saved.falabella_direct_environment || 'UAT',
                 smtpFrom: saved.smtp_from,
                 smtpGoogleEmail: saved.smtp_google_email,
                 hasGoogleSmtp: !!saved.smtp_google_refresh_token,
@@ -675,6 +694,22 @@ router.post('/test-meli', authMiddleware, adminOnly, async (req, res) => {
 
     reqApi.write(postData);
     reqApi.end();
+});
+
+// POST /api/settings/test-falabella-direct
+router.post('/test-falabella-direct', authMiddleware, adminOnly, async (req, res) => {
+    const { falabellaDirectClientId, falabellaDirectClientSecret, falabellaDirectEnvironment } = req.body;
+    if (!falabellaDirectClientId || !falabellaDirectClientSecret) {
+        return res.status(400).json({ message: 'Client ID y Client Secret son requeridos.' });
+    }
+    try {
+        const falabellaDirectService = require('../services/falabellaDirectService');
+        const result = await falabellaDirectService.testConnection(falabellaDirectClientId, falabellaDirectClientSecret, falabellaDirectEnvironment || 'UAT');
+        res.json({ message: `Conexión exitosa con Falabella Directo (token válido por ${result.expiresIn}s).` });
+    } catch (err) {
+        console.error('[Settings] Falabella Directo test connection failed:', err.message);
+        res.status(400).json({ message: `No se pudo conectar: ${err.message}` });
+    }
 });
 
 // POST /api/settings/test-smtp

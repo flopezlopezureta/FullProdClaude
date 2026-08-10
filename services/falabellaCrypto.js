@@ -29,6 +29,24 @@ function decrypt(text) {
     }
 }
 
+// Signs a (packageId, photoIndex) pair so the delivery-evidence photo route can be reached by
+// Falabella's servers (no session/JWT available there) without being a fully open, enumerable
+// URL — package IDs are short and guessable, and these are real people's photos/addresses.
+function signPhotoToken(packageId, index) {
+    return crypto.createHmac('sha256', ENCRYPTION_KEY)
+        .update(`${packageId}:${index}`)
+        .digest('hex');
+}
+
+function verifyPhotoToken(packageId, index, token) {
+    if (!token) return false;
+    const expected = signPhotoToken(packageId, index);
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const tokenBuf = Buffer.from(String(token), 'hex');
+    if (expectedBuf.length !== tokenBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, tokenBuf);
+}
+
 function buildFalabellaSignature(params, apiKey) {
     const sortedKeys = Object.keys(params).sort();
     const sortedParams = {};
@@ -48,5 +66,7 @@ function buildFalabellaSignature(params, apiKey) {
 module.exports = {
     encrypt,
     decrypt,
-    buildFalabellaSignature
+    buildFalabellaSignature,
+    signPhotoToken,
+    verifyPhotoToken
 };
