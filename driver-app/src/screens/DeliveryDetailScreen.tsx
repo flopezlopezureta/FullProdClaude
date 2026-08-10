@@ -27,7 +27,12 @@ export default function DeliveryDetailScreen({ route, navigation }: any) {
   const { user, serverUrl } = useContext(AuthContext);
   const isCompleted = ['ENTREGADO', 'CANCELADO', 'DEVUELTO'].includes(pkg.status);
   const isFailedAttempt = ['PROBLEMA', 'REPROGRAMADO'].includes(pkg.status);
-  
+  // Falabella Directo's DELIVERED_001 webhook hard-requires a non-empty deliveryProof.recipientId
+  // (rejects the whole push with a 400 otherwise — confirmed against their real API) and >=2
+  // evidence photos — scoped to this source specifically, regardless of the global system
+  // settings, since those are optional for every other source by design.
+  const isFalabellaDirectDelivery = pkg.source === 'FALABELLA_DIRECTO';
+
   // Parse initial photos if any
   const getInitialPhotos = () => {
     if (pkg.photos && pkg.photos.length > 0) return pkg.photos;
@@ -158,15 +163,15 @@ export default function DeliveryDetailScreen({ route, navigation }: any) {
     if (isCompleted) return;
     
     // Validation based on settings
-    const requiredPhotos = settings?.requiredPhotos || 1;
+    const requiredPhotos = isFalabellaDirectDelivery ? Math.max(2, settings?.requiredPhotos || 1) : (settings?.requiredPhotos || 1);
     if (photos.length < requiredPhotos) {
       Alert.alert("Acción Requerida", `Debes añadir al menos ${requiredPhotos} foto(s) de evidencia`);
       return;
     }
 
-    const isRutRequired = settings?.isRutRequired ?? true;
+    const isRutRequired = isFalabellaDirectDelivery || (settings?.isRutRequired ?? true);
     if (isRutRequired && !receiverId.trim()) {
-      Alert.alert("Dato Obligatorio", "El RUT del receptor es obligatorio según la configuración del sistema.");
+      Alert.alert("Dato Obligatorio", isFalabellaDirectDelivery ? "Falabella Directo exige el RUT de quien recibe para poder cerrar la entrega." : "El RUT del receptor es obligatorio según la configuración del sistema.");
       return;
     }
 
@@ -328,7 +333,7 @@ export default function DeliveryDetailScreen({ route, navigation }: any) {
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>RUT / Cédula {settings?.isRutRequired ? '(Obligatorio)' : '(Opcional/Recomendado)'}</Text>
+            <Text style={styles.label}>RUT / Cédula {(isFalabellaDirectDelivery || settings?.isRutRequired) ? '(Obligatorio)' : '(Opcional/Recomendado)'}</Text>
             <TextInput 
               style={[styles.input, (isCompleted || (isFailedAttempt && !isRetrying)) && styles.disabledInput]}
               value={receiverId}
@@ -420,19 +425,22 @@ export default function DeliveryDetailScreen({ route, navigation }: any) {
           </View>
           
           {/* Indicador de fotos restantes */}
-          {!isCompleted && settings && (
-            <View style={styles.photoStatus}>
-               {photos.length < settings.requiredPhotos ? (
-                 <Text style={styles.photoStatusText}>
-                   Faltan {settings.requiredPhotos - photos.length} foto(s) de evidencia
-                 </Text>
-               ) : (
-                 <Text style={[styles.photoStatusText, { color: '#16a34a' }]}>
-                   ✓ Evidencia fotográfica completa
-                 </Text>
-               )}
-            </View>
-          )}
+          {!isCompleted && settings && (() => {
+            const effectiveRequiredPhotos = isFalabellaDirectDelivery ? Math.max(2, settings.requiredPhotos || 1) : settings.requiredPhotos;
+            return (
+              <View style={styles.photoStatus}>
+                 {photos.length < effectiveRequiredPhotos ? (
+                   <Text style={styles.photoStatusText}>
+                     Faltan {effectiveRequiredPhotos - photos.length} foto(s) de evidencia
+                   </Text>
+                 ) : (
+                   <Text style={[styles.photoStatusText, { color: '#16a34a' }]}>
+                     ✓ Evidencia fotográfica completa
+                   </Text>
+                 )}
+              </View>
+            );
+          })()}
         </View>
       </ScrollView>
 
@@ -446,13 +454,13 @@ export default function DeliveryDetailScreen({ route, navigation }: any) {
             <Text style={styles.problemBtnText}>NO PUEDO ENTREGAR</Text>
           </TouchableOpacity>
           
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[
-              styles.confirmBtn, 
-              (loading || photos.length < (settings?.requiredPhotos || 1) || (settings?.isRutRequired && !receiverId)) && styles.disabledBtn
+              styles.confirmBtn,
+              (loading || photos.length < (isFalabellaDirectDelivery ? Math.max(2, settings?.requiredPhotos || 1) : (settings?.requiredPhotos || 1)) || ((isFalabellaDirectDelivery || settings?.isRutRequired) && !receiverId)) && styles.disabledBtn
             ]}
             onPress={handleConfirm}
-            disabled={loading || photos.length < (settings?.requiredPhotos || 1) || (settings?.isRutRequired && !receiverId)}
+            disabled={loading || photos.length < (isFalabellaDirectDelivery ? Math.max(2, settings?.requiredPhotos || 1) : (settings?.requiredPhotos || 1)) || ((isFalabellaDirectDelivery || settings?.isRutRequired) && !receiverId)}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
