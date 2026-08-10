@@ -266,6 +266,12 @@ const DashboardLayout: React.FC = () => {
         }
         break;
 
+      case 'falabella-direct-admin-scan':
+        // Same scanner, reachable from the super admin's own ADMIN-role account (not just
+        // Auxiliar/Driver logins) — the super admin's real account is role=ADMIN.
+        if (isAdmin && isSuperUser) return { title: 'Falabella Directo (Prueba)', content: <FalabellaDirectScanner /> };
+        break;
+
       // Settings
       case 'settings':
         if (isAdmin || (isOp && user?.operatorPermissions?.canManageSettings)) return { title: 'Ajustes del Sistema', content: <SettingsPage /> };

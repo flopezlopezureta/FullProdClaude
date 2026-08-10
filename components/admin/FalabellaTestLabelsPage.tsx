@@ -22,7 +22,7 @@ const FalabellaTestLabelsPage: React.FC = () => {
                 const payload = JSON.stringify({
                     origin: 'Falabella',
                     url: `${QA_HOST}/schn-trmg-3pl-directo/v1/orders/${lpn}`,
-                    sellerId: 'TEST_SELLER',
+                    sellerId: 'SC478FA', // matches the real seller ID seen on Falabella's actual UAT test labels
                 });
                 const qrCodeUrl = await QRCode.toDataURL(payload, {
                     errorCorrectionLevel: 'M',

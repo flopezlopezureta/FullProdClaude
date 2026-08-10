@@ -166,6 +166,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     { id: 'billing-summary', label: 'Resumen Operativo de Cobro', icon: <IconChartBar className="h-6 w-6 text-emerald-600" /> },
     { id: 'billing-report', label: 'Informe por Cliente', icon: <IconFileText className="h-6 w-6" /> },
     ...(user?.email === 'admin' ? [{ id: 'superadmin-billing', label: 'Reporte Cobro UF (Superadmin)', icon: <IconFileInvoice className="h-6 w-6 text-rose-600 font-bold" /> }] : []),
+    // Hidden until validated in UAT — super admin only, so the super admin's own ADMIN-role
+    // login (not just Auxiliar/Driver accounts) has a way to reach the scanner directly.
+    ...(isSuperUser ? [{ id: 'falabella-direct-admin-scan', label: 'Falabella Directo (Prueba)', icon: <IconQrcode className="h-6 w-6 text-rose-600" /> }] : []),
     {
       id: 'configuration',
       label: 'Configuración',
