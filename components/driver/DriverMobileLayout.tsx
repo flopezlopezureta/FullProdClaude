@@ -30,7 +30,7 @@ const menuItems: { id: DriverView; label: string; subtitle?: string; icon: React
     { id: 'delivery-history', label: '6. Historial', subtitle: 'MIS ENTREGAS', icon: <IconHistory />, color: 'bg-slate-600', permission: 'canViewHistory' },
     { id: 'zona', label: '7. Zonificación', subtitle: 'CONSULTAR SECTOR', icon: <IconMapPin />, color: 'bg-violet-600', permission: 'canZoning' },
     { id: 'meli-flex-test', label: 'Test ML Flex', subtitle: 'PRUEBA LECTURA', icon: <IconZap />, color: 'bg-yellow-500' },
-    { id: 'falabella-direct-scan', label: 'Falabella Directo', subtitle: 'PRUEBA UAT', icon: <IconCube />, color: 'bg-rose-600', permission: 'canFalabellaDirect' },
+    { id: 'falabella-direct-scan', label: 'Falabella Directo', subtitle: 'RECEPCIÓN', icon: <IconCube />, color: 'bg-rose-600', permission: 'canFalabellaDirect' },
 ];
 
 const DriverMobileLayout: React.FC = () => {
@@ -157,12 +157,6 @@ const DriverMobileLayout: React.FC = () => {
             }
             if (item.id === 'zona' && !systemSettings?.gisSectorsEnabled) {
                 return false;
-            }
-            if (item.id === 'falabella-direct-scan') {
-                // Hidden until validated in UAT — only the super admin, or a driver explicitly
-                // granted canFalabellaDirect, sees this.
-                const isSuperUser = user?.email === 'admin' || user?.email === 'admin@admin.cl';
-                return isSuperUser || !!driverPermissions.canFalabellaDirect;
             }
             return item.permission ? driverPermissions[item.permission] : true;
         });

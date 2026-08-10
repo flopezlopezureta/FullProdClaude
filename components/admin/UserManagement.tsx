@@ -606,7 +606,7 @@ const wb = XLSX.utils.book_new();
                         Contraseña: {user.plainPassword}
                     </p>
                 )}
-                {roleFilter === Role.Driver && (
+                {(roleFilter === Role.Driver || roleFilter === Role.Auxiliar) && (
                     (() => {
                         const permissions = user.driverPermissions || { canDeliver: true, canPickup: true, canDispatch: true, canReturn: true, canViewHistory: true, canBulkPickup: false, canColecta: false, canAuxiliar: false, canZoning: false, meliAutoPromptPhotos: false };
                         const permissionItems: { key: keyof DriverPermissions, label: string, icon: React.ReactNode }[] = [
@@ -618,6 +618,7 @@ const wb = XLSX.utils.book_new();
                             { key: 'canReturn', label: 'Devoluciones', icon: <IconArrowUturnLeft className="w-4 h-4"/> },
                             { key: 'canAuxiliar', label: 'Auxiliar', icon: <IconUsers className="w-4 h-4"/> },
                             { key: 'canViewHistory', label: 'Historial', icon: <IconHistory className="w-4 h-4"/> },
+                            { key: 'canFalabellaDirect', label: 'Falabella Directo', icon: <IconQrcode className="w-4 h-4"/> },
                             ...(auth?.systemSettings?.gisSectorsEnabled ? [{ key: 'canZoning' as keyof DriverPermissions, label: 'Zonificación', icon: <IconMapPin className="w-4 h-4"/> }] : []),
                             ...(auth?.systemSettings?.meliAutoPromptPhotos ? [{ key: 'meliAutoPromptPhotos' as keyof DriverPermissions, label: 'Auto-abrir Confirmar Entrega', icon: <IconCamera className="w-4 h-4"/> }] : []),
                         ];

@@ -50,8 +50,31 @@ const FalabellaDirectScanner: React.FC = () => {
             }, duration);
         };
 
+        // Snapshot the physical label at the moment of a successful scan — same pattern as the
+        // Mercado Libre Flex label photo (ScanDispatchPage.tsx), a small backup reference photo
+        // kept alongside the package, separate from the delivery-evidence photos taken later.
+        let labelPhotoBase64: string | undefined;
+        const video = videoRef.current;
+        if (video) {
+            const photoCanvas = document.createElement('canvas');
+            const maxDim = 600;
+            let width = video.videoWidth;
+            let height = video.videoHeight;
+            if (width > maxDim) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+            }
+            photoCanvas.width = width;
+            photoCanvas.height = height;
+            const pCtx = photoCanvas.getContext('2d');
+            if (pCtx) {
+                pCtx.drawImage(video, 0, 0, width, height);
+                labelPhotoBase64 = photoCanvas.toDataURL('image/jpeg', 0.5);
+            }
+        }
+
         try {
-            const result = await api.importFalabellaDirectScanned(rawCode);
+            const result = await api.importFalabellaDirectScanned(rawCode, labelPhotoBase64);
             playBeep();
             if (!result.alreadyImported) {
                 setScannedCount(prev => prev + 1);

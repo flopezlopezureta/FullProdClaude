@@ -259,17 +259,11 @@ const DashboardLayout: React.FC = () => {
         break;
 
       case 'falabella-direct-scan':
-        // Hidden until validated in UAT — only the super admin, or a user explicitly granted
-        // canFalabellaDirect, can reach this.
-        if (isAux && (isSuperUser || user?.driverPermissions?.canFalabellaDirect)) {
+        // Validated in UAT — normal permission-gated feature now, granted per-user via the
+        // "Falabella Directo" toggle in Gestión de Usuarios.
+        if (isAux && user?.driverPermissions?.canFalabellaDirect) {
           return { title: 'Falabella Directo', content: <FalabellaDirectScanner /> };
         }
-        break;
-
-      case 'falabella-direct-admin-scan':
-        // Same scanner, reachable from the super admin's own ADMIN-role account (not just
-        // Auxiliar/Driver logins) — the super admin's real account is role=ADMIN.
-        if (isAdmin && isSuperUser) return { title: 'Falabella Directo (Prueba)', content: <FalabellaDirectScanner /> };
         break;
 
       // Settings

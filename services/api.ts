@@ -381,7 +381,7 @@ export const api = {
   fetchFalabellaOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/falabella/orders`),
   fetchJumpsellerOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/jumpseller/orders`),
   importScannedMeliOrder: (clientId: string, scannedId: string, flexCode?: string) => post<{message: string, pkg: Package}>(`/integrations/import/meli-scanned`, { clientId, scannedId, flexCode }),
-  importFalabellaDirectScanned: (rawCode: string) => post<{message: string, pkg: Package, alreadyImported?: boolean}>('/falabella-direct/import-scanned', { rawCode }),
+  importFalabellaDirectScanned: (rawCode: string, labelPhotoBase64?: string) => post<{message: string, pkg: Package, alreadyImported?: boolean}>('/falabella-direct/import-scanned', { rawCode, labelPhotoBase64 }),
   checkMeliShipmentStatus: (shipmentId: string) => get<{status: string, substatus: string}>(`/integrations/status/${shipmentId}`),
   syncMeliPackage: (shipmentId: string) => post<Package>(`/integrations/sync-shipment/${shipmentId}`, {}),
   

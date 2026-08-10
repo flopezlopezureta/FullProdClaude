@@ -57,7 +57,7 @@ function buildAddress(shipTo) {
 // Auxiliar (or super admin) scans a Falabella "Directo" label on intake. Fetches the real order
 // from Falabella, creates the package locally, and reports IN_TRANSIT_001 back to Falabella.
 router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, async (req, res) => {
-    const { rawCode } = req.body;
+    const { rawCode, labelPhotoBase64 } = req.body;
     if (!rawCode) {
         return res.status(400).json({ message: 'Falta el código escaneado.' });
     }
@@ -98,6 +98,7 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             falabellaDirectOrderNumber: order?.orderNumber || null,
             falabellaDirectLastPushedStatus: 'IN_TRANSIT_001',
             falabellaDirectLastPushedAt: now,
+            falabellaDirectLabelPhotoBase64: labelPhotoBase64 || null,
         };
 
         const columns = Object.keys(newPackage).map(k => `"${k}"`).join(', ');

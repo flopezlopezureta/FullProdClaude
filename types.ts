@@ -312,6 +312,11 @@ export interface Package {
   isFlexed?: boolean;
   flexedAt?: Date;
   flexLabelPhotoBase64?: string;
+  falabellaDirectLpn?: string;
+  falabellaDirectOrderNumber?: string;
+  falabellaDirectLastPushedStatus?: string;
+  falabellaDirectLastPushedAt?: string;
+  falabellaDirectLabelPhotoBase64?: string;
   recipientRut?: string;
   recipientEmail?: string;
   sourceAccountId?: string;

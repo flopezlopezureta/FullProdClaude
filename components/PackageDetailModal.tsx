@@ -210,6 +210,7 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
   const isMeli = pkg.source === 'MERCADO_LIBRE';
   const needsFlex = isMeli && pkg.status === PackageStatus.InTransit && !pkg.isFlexed;
   const hasFlexPhoto = !!pkg.flexLabelPhotoBase64;
+  const hasFalabellaDirectLabelPhoto = !!pkg.falabellaDirectLabelPhotoBase64;
 
   return (
     <>
@@ -330,6 +331,27 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
                           />
                           <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/60 rounded text-[10px] text-white font-mono">
                               {pkg.flexedAt ? new Date(pkg.flexedAt).toLocaleString() : 'Fecha desconocida'}
+                          </div>
+                      </div>
+                  </div>
+              )}
+
+              {/* Falabella Directo Label Backup Photo */}
+              {hasFalabellaDirectLabelPhoto && (
+                  <div className="bg-[var(--background-secondary)] p-4 rounded-lg shadow-sm border border-[var(--border-primary)]">
+                      <h4 className="text-sm font-semibold text-[var(--text-muted)] mb-3 flex items-center gap-2">
+                          <IconQrcode className="w-4 h-4" />
+                          Respaldo de Etiqueta Falabella Directo
+                      </h4>
+                      <div className="relative aspect-video bg-black rounded-md overflow-hidden border border-[var(--border-secondary)]">
+                          <img
+                              src={pkg.falabellaDirectLabelPhotoBase64}
+                              alt="Respaldo Etiqueta Falabella Directo"
+                              className="w-full h-full object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={() => setViewingPhoto(pkg.falabellaDirectLabelPhotoBase64!)}
+                          />
+                          <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/60 rounded text-[10px] text-white font-mono">
+                              {pkg.createdAt ? new Date(pkg.createdAt).toLocaleString() : 'Fecha desconocida'}
                           </div>
                       </div>
                   </div>
