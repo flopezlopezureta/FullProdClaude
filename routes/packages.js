@@ -1398,8 +1398,9 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
         // Falabella Directo: report OUT_FOR_DELIVERY_001 once a driver actually receives the
         // package into their route (the Auxiliar's intake scan already reported IN_TRANSIT_001).
         if (currentPkg.source === 'FALABELLA_DIRECTO' && updatedPkg?.falabellaDirectLpn) {
-            falabellaDirectRoute.pushStatusWithRetry(realId, updatedPkg.falabellaDirectLpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driverName}, en reparto.`)
-                .catch(err => console.error('[Dispatch] Falabella Directo status push error:', err));
+            getDriverLocation(driverId).then(({ latitude, longitude }) =>
+                falabellaDirectRoute.pushStatusWithRetry(realId, updatedPkg.falabellaDirectLpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driverName}, en reparto.`, { latitude, longitude })
+            ).catch(err => console.error('[Dispatch] Falabella Directo status push error:', err));
         }
 
         res.json({
@@ -1544,6 +1545,25 @@ const makeMeliPostRequest = (path, postData) => makeMeliRequest({
 // --- FALABELLA SYNC LOGIC ---
 const { decrypt, buildFalabellaSignature, verifyPhotoToken, signPhotoToken } = require('../services/falabellaCrypto');
 const falabellaDirectRoute = require('./falabellaDirect.js');
+
+// Falabella's status-update API lists latitude/longitude as required "event location" fields
+// on every update, not just DELIVERED — this should be where the delivery actually physically
+// happened, not the package's nominal destination address. Drivers already report live GPS
+// continuously (users.latitude/longitude, updated via navigator.geolocation.watchPosition on
+// the driver app) for the live-map feature, so reuse that as the closest available proxy for
+// "driver's real position right now" rather than a static geocoded coordinate.
+async function getDriverLocation(driverId) {
+    if (!driverId) return { latitude: 0, longitude: 0 };
+    try {
+        const { rows } = await db.query('SELECT latitude, longitude FROM users WHERE id = $1', [driverId]);
+        if (rows.length > 0 && rows[0].latitude != null && rows[0].longitude != null) {
+            return { latitude: rows[0].latitude, longitude: rows[0].longitude };
+        }
+    } catch (e) {
+        console.error('[FalabellaDirect] Error fetching driver location:', e);
+    }
+    return { latitude: 0, longitude: 0 };
+}
 
 async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
     const MAX_ATTEMPTS = 3;
@@ -1969,16 +1989,18 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             const images = Array.from({ length: photoCount }, (_, i) =>
                 `${baseUrl}/api/packages/public/falabella-photo/${updatedPackage.id}/${i}?token=${signPhotoToken(updatedPackage.id, i)}`
             );
-            falabellaDirectRoute.pushStatusWithRetry(
-                updatedPackage.id,
-                updatedPackage.falabellaDirectLpn,
-                'DELIVERED_001',
-                `Entregado a ${receiverName}.`,
-                {
-                    latitude: updatedPackage.destLatitude || 0,
-                    longitude: updatedPackage.destLongitude || 0,
-                    deliveryProof: { recipientName: receiverName, recipientId: receiverId || '', images },
-                }
+            getDriverLocation(updatedPackage.driverId).then(({ latitude, longitude }) =>
+                falabellaDirectRoute.pushStatusWithRetry(
+                    updatedPackage.id,
+                    updatedPackage.falabellaDirectLpn,
+                    'DELIVERED_001',
+                    `Entregado a ${receiverName}.`,
+                    {
+                        latitude,
+                        longitude,
+                        deliveryProof: { recipientName: receiverName, recipientId: receiverId || '', images },
+                    }
+                )
             ).catch(err => console.error('[Deliver] Falabella Directo status push error:', err));
         }
         // --- END FALABELLA DIRECTO NOTIFICATION ---
@@ -2021,8 +2043,9 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
         // --- FALABELLA DIRECTO NOTIFICATION ---
         if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
             const falabellaDirectStatusCode = isReschedule ? 'DELIVERY_ATTEMPTED_001' : 'DELIVERY_ATTEMPTED_002';
-            falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, falabellaDirectStatusCode, reason)
-                .catch(err => console.error('[Problem] Falabella Directo status push error:', err));
+            getDriverLocation(updatedPackage.driverId).then(({ latitude, longitude }) =>
+                falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, falabellaDirectStatusCode, reason, { latitude, longitude })
+            ).catch(err => console.error('[Problem] Falabella Directo status push error:', err));
         }
         // --- END FALABELLA DIRECTO NOTIFICATION ---
 
@@ -2179,8 +2202,9 @@ router.post('/:id/return', authMiddleware, async (req, res) => {
 
         // --- FALABELLA DIRECTO NOTIFICATION ---
         if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
-            falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, 'UNDELIVERED_001', `Devuelto a remitente. Recibido por ${receiverName}.`)
-                .catch(err => console.error('[Return] Falabella Directo status push error:', err));
+            getDriverLocation(updatedPackage.driverId).then(({ latitude, longitude }) =>
+                falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, 'UNDELIVERED_001', `Devuelto a remitente. Recibido por ${receiverName}.`, { latitude, longitude })
+            ).catch(err => console.error('[Return] Falabella Directo status push error:', err));
         }
         // --- END FALABELLA DIRECTO NOTIFICATION ---
 
