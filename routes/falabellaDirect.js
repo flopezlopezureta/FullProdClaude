@@ -7,12 +7,13 @@ const falabellaDirectService = require('../services/falabellaDirectService');
 
 const isSuperUser = (email) => email === 'admin' || email === 'admin@admin.cl';
 
-// Backend gate: role-level only (AUXILIAR/ADMIN), matching this codebase's existing convention
-// where granular driverPermissions flags (canDispatch/canAuxiliar/etc.) are enforced only on the
-// frontend today, not re-checked server-side. Kept intentionally simple rather than introducing
-// a new, inconsistent stricter pattern just for this one route.
+// Backend gate: role-level only, matching dispatchAllowed in routes/packages.js exactly (same
+// screen — this now fires from inside the generic dispatch scanner, so DRIVER accounts with the
+// canAuxiliar permission need to pass too, not just AUXILIAR/ADMIN). Granular driverPermissions
+// flags are enforced only on the frontend today, not re-checked server-side — same convention as
+// dispatchAllowed.
 function requireFalabellaDirectAccess(req, res, next) {
-    if (isSuperUser(req.user?.email) || req.user?.role === 'AUXILIAR' || req.user?.role === 'ADMIN') {
+    if (isSuperUser(req.user?.email) || ['ADMIN', 'DRIVER', 'AUXILIAR'].includes(req.user?.role)) {
         return next();
     }
     return res.status(403).json({ message: 'No tienes permiso para usar Falabella Directo.' });
