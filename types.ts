@@ -144,7 +144,6 @@ export interface DriverPermissions {
   canAuxiliar: boolean;
   canZoning?: boolean;
   meliAutoPromptPhotos?: boolean;
-  canFalabellaDirect?: boolean;
 }
 
 export interface OperatorPermissions {

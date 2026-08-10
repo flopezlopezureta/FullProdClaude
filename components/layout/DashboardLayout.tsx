@@ -23,7 +23,6 @@ import AdminBillingSummary from '../admin/AdminBillingSummary';
 import LogisticsBIDashboard from '../admin/LogisticsBIDashboard';
 import LateDeliveriesAnalysis from '../admin/LateDeliveriesAnalysis';
 import DispatchScanner from '../auxiliar/DispatchScanner';
-import FalabellaDirectScanner from '../auxiliar/FalabellaDirectScanner';
 import { PickupDashboard } from '../admin/PickupDashboard';
 import PickupReportPage from '../admin/PickupReportPage';
 import LiveMap from '../admin/LiveMap';
@@ -256,14 +255,6 @@ const DashboardLayout: React.FC = () => {
       // Auxiliar
       case 'scan-dispatch':
         if (isAux) return { title: 'Despacho de Paquetes', content: <DispatchScanner /> };
-        break;
-
-      case 'falabella-direct-scan':
-        // Validated in UAT — normal permission-gated feature now, granted per-user via the
-        // "Falabella Directo" toggle in Gestión de Usuarios.
-        if (isAux && user?.driverPermissions?.canFalabellaDirect) {
-          return { title: 'Falabella Directo', content: <FalabellaDirectScanner /> };
-        }
         break;
 
       // Settings

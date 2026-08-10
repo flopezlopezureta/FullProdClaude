@@ -268,9 +268,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
 
   const auxiliarNavItems = [
     { id: 'scan-dispatch', label: 'Despachar Paquetes', icon: <IconQrcode className="h-6 w-6" /> },
-    // Validated in UAT — now a normal permission-gated feature like any other, granted per-user
-    // via the "Falabella Directo" toggle in Gestión de Usuarios.
-    ...(user?.driverPermissions?.canFalabellaDirect ? [{ id: 'falabella-direct-scan', label: 'Falabella Directo', icon: <IconQrcode className="h-6 w-6" /> }] : []),
   ];
 
   const filteredAdminNavItems = adminNavItems.filter(item => {

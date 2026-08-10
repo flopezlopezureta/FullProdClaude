@@ -83,16 +83,24 @@ const ScannerView: React.FC<ScannerViewProps> = ({ initialDriver, allDrivers, on
         }
 
         let extractedId: string | null = null;
+        // Falabella Directo labels are a distinct QR payload ({origin:"Falabella", url, sellerId})
+        // rather than a scannable ID — treated as just another package source here, same scanner,
+        // same driver-assignment flow, no separate screen.
+        let isFalabellaDirect = false;
 
-        // Try to parse JSON (official ML labels)
+        // Try to parse JSON (official ML labels, or Falabella Directo labels)
         try {
             if (cleanRawCode.startsWith('{')) {
                 const parsed = JSON.parse(cleanRawCode);
-                if (parsed.id) extractedId = parsed.id.toString();
+                if (parsed.origin === 'Falabella' && parsed.url) {
+                    isFalabellaDirect = true;
+                } else if (parsed.id) {
+                    extractedId = parsed.id.toString();
+                }
             }
         } catch (e) {}
 
-        if (!extractedId) {
+        if (!isFalabellaDirect && !extractedId) {
             // Priority 1: Check for Alphanumeric 'SCA...' format
             const scaMatch = cleanRawCode.match(/[A-Z]{3}\d{2}-[A-Z0-9]{12}/);
             if (scaMatch && scaMatch[0]) {
@@ -123,22 +131,32 @@ const ScannerView: React.FC<ScannerViewProps> = ({ initialDriver, allDrivers, on
 
         const performDispatch = async (force = false) => {
             try {
-              const result = await api.scanPackageForDispatch(codeToUse, currentDriverId, rawCode, undefined, force);
+              let resultPackage: any;
+              let successMessage: string;
+
+              if (isFalabellaDirect) {
+                  // Falabella Directo has no pre-existing package to dispatch — the scan itself
+                  // creates it already assigned to currentDriverId, in one step.
+                  const res = await api.importFalabellaDirectScanned(rawCode, currentDriverId, photoBase64);
+                  resultPackage = res.pkg;
+                  successMessage = res.message;
+              } else {
+                  const res = await api.scanPackageForDispatch(codeToUse, currentDriverId, rawCode, undefined, force);
+                  resultPackage = res.package;
+                  successMessage = `Paquete ${codeToUse} asignado a ${currentDriver.name}`;
+
+                  // Upload photo in background
+                  if (photoBase64 && resultPackage?.id) {
+                      api.updatePackage(resultPackage.id, { flexLabelPhotoBase64: photoBase64 })
+                         .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
+                  }
+              }
+
               playBeep();
               setScannedCount(prev => prev + 1);
-              setScanResult({ 
-                type: 'success', 
-                message: `Paquete ${codeToUse} asignado a ${currentDriver.name}`,
-                package: result?.package
-              });
+              setScanResult({ type: 'success', message: successMessage, package: resultPackage });
               if (isManual) setManualId('');
 
-              // Upload photo in background
-              if (photoBase64 && result?.package?.id) {
-                  api.updatePackage(result.package.id, { flexLabelPhotoBase64: photoBase64 })
-                     .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
-              }
-              
               setTimeout(() => {
                   setScanResult(null);
                   if (!isManual) {
@@ -150,7 +168,7 @@ const ScannerView: React.FC<ScannerViewProps> = ({ initialDriver, allDrivers, on
                   }
               }, 1500);
             } catch (error: any) {
-              if (error.status === 409 && error.body?.code === 'REASSIGN_PROMPT') {
+              if (!isFalabellaDirect && error.status === 409 && error.body?.code === 'REASSIGN_PROMPT') {
                   setReassignConfirm({
                       message: error.message,
                       codeToUse,

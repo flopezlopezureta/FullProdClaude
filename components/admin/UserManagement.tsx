@@ -618,7 +618,6 @@ const wb = XLSX.utils.book_new();
                             { key: 'canReturn', label: 'Devoluciones', icon: <IconArrowUturnLeft className="w-4 h-4"/> },
                             { key: 'canAuxiliar', label: 'Auxiliar', icon: <IconUsers className="w-4 h-4"/> },
                             { key: 'canViewHistory', label: 'Historial', icon: <IconHistory className="w-4 h-4"/> },
-                            { key: 'canFalabellaDirect', label: 'Falabella Directo', icon: <IconQrcode className="w-4 h-4"/> },
                             ...(auth?.systemSettings?.gisSectorsEnabled ? [{ key: 'canZoning' as keyof DriverPermissions, label: 'Zonificación', icon: <IconMapPin className="w-4 h-4"/> }] : []),
                             ...(auth?.systemSettings?.meliAutoPromptPhotos ? [{ key: 'meliAutoPromptPhotos' as keyof DriverPermissions, label: 'Auto-abrir Confirmar Entrega', icon: <IconCamera className="w-4 h-4"/> }] : []),
                         ];

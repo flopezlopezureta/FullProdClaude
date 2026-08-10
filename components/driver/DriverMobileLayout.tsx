@@ -11,14 +11,13 @@ import ScanPickupPage from './ScanPickupPage';
 import ColectaPage from './ColectaPage';
 import MeliFlexTestScanner from './MeliFlexTestScanner';
 import DispatchScanner from '../auxiliar/DispatchScanner';
-import FalabellaDirectScanner from '../auxiliar/FalabellaDirectScanner';
 import ZoningScanner from './ZoningScanner';
 import { DriverPermissions, Notification } from '../../types';
 import { api } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
 import { processOfflineQueue } from '../../services/offlineQueueProcessor';
 
-type DriverView = 'my-packages' | 'scan-dispatch' | 'scan-dispatch-auxiliar' | 'falabella-direct-scan' | 'scan-pickups' | 'colectas' | 'returns' | 'delivery-history' | 'meli-flex-test' | 'zona';
+type DriverView = 'my-packages' | 'scan-dispatch' | 'scan-dispatch-auxiliar' | 'scan-pickups' | 'colectas' | 'returns' | 'delivery-history' | 'meli-flex-test' | 'zona';
 
 const menuItems: { id: DriverView; label: string; subtitle?: string; icon: React.ReactNode; color: string, permission?: keyof DriverPermissions }[] = [
     { id: 'my-packages', label: '1. Entregas', subtitle: 'RUTA DE HOY', icon: <IconTruck />, color: 'bg-blue-600', permission: 'canDeliver' },
@@ -30,7 +29,6 @@ const menuItems: { id: DriverView; label: string; subtitle?: string; icon: React
     { id: 'delivery-history', label: '6. Historial', subtitle: 'MIS ENTREGAS', icon: <IconHistory />, color: 'bg-slate-600', permission: 'canViewHistory' },
     { id: 'zona', label: '7. Zonificación', subtitle: 'CONSULTAR SECTOR', icon: <IconMapPin />, color: 'bg-violet-600', permission: 'canZoning' },
     { id: 'meli-flex-test', label: 'Test ML Flex', subtitle: 'PRUEBA LECTURA', icon: <IconZap />, color: 'bg-yellow-500' },
-    { id: 'falabella-direct-scan', label: 'Falabella Directo', subtitle: 'RECEPCIÓN', icon: <IconCube />, color: 'bg-rose-600', permission: 'canFalabellaDirect' },
 ];
 
 const DriverMobileLayout: React.FC = () => {
@@ -182,7 +180,6 @@ const DriverMobileLayout: React.FC = () => {
             case 'colectas': return <ColectaPage />;
             case 'scan-dispatch': return <ScanDispatchPage />;
             case 'scan-dispatch-auxiliar': return <DispatchScanner />;
-            case 'falabella-direct-scan': return <FalabellaDirectScanner />;
             case 'returns': return <ReturnsDashboard />;
             case 'delivery-history': return <DriverPerformanceReportPage driverIdProp={user?.id} />;
             case 'meli-flex-test': return <MeliFlexTestScanner onBack={() => setActiveView('menu')} />;
