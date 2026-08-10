@@ -79,16 +79,23 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
     }
 
     let extractedId: string | null = null;
-    
+    // Falabella Directo labels are a distinct QR payload ({origin:"Falabella", url, sellerId})
+    // rather than a scannable ID — treated as just another package source here, no separate screen.
+    let isFalabellaDirect = false;
+
     // 1. Check if it is a JSON string
     if (cleanRawCode.startsWith('{')) {
         try {
             const jsonData = JSON.parse(cleanRawCode);
-            extractedId = jsonData.shipment_id || jsonData.id || jsonData.s || jsonData.order_id;
+            if (jsonData.origin === 'Falabella' && jsonData.url) {
+                isFalabellaDirect = true;
+            } else {
+                extractedId = jsonData.shipment_id || jsonData.id || jsonData.s || jsonData.order_id;
+            }
         } catch (e) {}
     }
 
-    if (!extractedId) {
+    if (!isFalabellaDirect && !extractedId) {
         // Priority 1: Check for Alphanumeric 'SCA...' format
         const scaMatch = cleanRawCode.match(/[A-Z]{3}\d{2}-[A-Z0-9]{12}/);
         if (scaMatch && scaMatch[0]) {
@@ -119,22 +126,32 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
 
     const performDispatch = async (force = false) => {
         try {
-          const result = await api.scanPackageForDispatch(codeToUse, user.id, rawCode, undefined, force);
+          let resultPackage: Package | undefined;
+          let successMessage: string;
+
+          if (isFalabellaDirect) {
+              // Falabella Directo has no pre-existing package to dispatch — the scan itself
+              // creates it already assigned to yourself, in one step.
+              const res = await api.importFalabellaDirectScanned(rawCode, user!.id, photoBase64);
+              resultPackage = res.pkg;
+              successMessage = res.message;
+          } else {
+              const res = await api.scanPackageForDispatch(codeToUse, user.id, rawCode, undefined, force);
+              resultPackage = res.package;
+              successMessage = `Paquete ${codeToUse} asignado a tu ruta`;
+
+              // Upload photo in background
+              if (photoBase64 && resultPackage?.id) {
+                  api.updatePackage(resultPackage.id, { flexLabelPhotoBase64: photoBase64 })
+                     .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
+              }
+          }
+
           playBeep();
           setScannedCount(prev => prev + 1);
-          setScanResult({ 
-            type: 'success', 
-            message: `Paquete ${codeToUse} asignado a tu ruta`,
-            package: result.package
-          });
+          setScanResult({ type: 'success', message: successMessage, package: resultPackage });
           if (isManual) setManualCode('');
 
-          // Upload photo in background
-          if (photoBase64 && result?.package?.id) {
-              api.updatePackage(result.package.id, { flexLabelPhotoBase64: photoBase64 })
-                 .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
-          }
-          
           setTimeout(() => {
               setScanResult(null);
               if (!isManual) {
@@ -146,7 +163,7 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
               }
           }, 1500);
         } catch (error: any) {
-          if (error.status === 409 && error.body?.code === 'REASSIGN_PROMPT') {
+          if (!isFalabellaDirect && error.status === 409 && error.body?.code === 'REASSIGN_PROMPT') {
               setReassignConfirm({
                   message: error.message,
                   packageId: codeToUse,
