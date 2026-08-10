@@ -1838,6 +1838,13 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             if (!Array.isArray(photosBase64) || photosBase64.length < 2) {
                 return res.status(400).json({ message: 'Falabella Directo exige al menos 2 fotos de evidencia para confirmar la entrega.' });
             }
+            // Falabella's DELIVERED_001 webhook rejects the whole push with a 400 if
+            // deliveryProof.recipientId is empty or contains characters outside
+            // ^[a-zA-Z0-9 _\-.]+$ (confirmed against their real API) — enforced here too, not
+            // just in the UI, since this field is optional for every other source.
+            if (!receiverId || !/^[a-zA-Z0-9 _\-.]+$/.test(String(receiverId).trim())) {
+                return res.status(400).json({ message: 'Falabella Directo exige el RUT de quien recibe (solo letras, números, espacios, guiones y puntos) para confirmar la entrega.' });
+            }
         }
 
         const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');

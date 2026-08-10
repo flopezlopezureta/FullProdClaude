@@ -204,8 +204,15 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
     storageUtils.removeItem(`${STORAGE_KEY_PREFIX}id`);
     storageUtils.removeItem(`${STORAGE_KEY_PREFIX}photos`);
   };
-  const requiredPhotos = auth?.systemSettings.requiredPhotos || 1;
-  const isRutRequired = auth?.systemSettings.isRutRequired ?? true;
+  // Falabella Directo's DELIVERED_001 webhook hard-requires a non-empty deliveryProof.recipientId
+  // (rejects the whole push with a 400 otherwise — confirmed against their real API) and >=2
+  // evidence photos — scoped to this source specifically, regardless of the global system
+  // settings, since those are optional for every other source by design.
+  const isFalabellaDirectDelivery = pkgList.some(p => p.source === 'FALABELLA_DIRECTO');
+  const requiredPhotos = isFalabellaDirectDelivery
+    ? Math.max(2, auth?.systemSettings.requiredPhotos || 1)
+    : (auth?.systemSettings.requiredPhotos || 1);
+  const isRutRequired = isFalabellaDirectDelivery || (auth?.systemSettings.isRutRequired ?? true);
   const photosRemaining = requiredPhotos - photosBase64.length;
 
   const formatRut = (rut: string) => {
@@ -440,6 +447,9 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
                         />
                     </div>
                     {rutError && <p className="text-xs text-red-600 mt-1 ml-1">{rutError}</p>}
+                    {isFalabellaDirectDelivery && !(auth?.systemSettings.isRutRequired ?? true) && (
+                        <p className="text-xs text-[var(--text-muted)] mt-1 ml-1">Falabella Directo exige el RUT de quien recibe para poder cerrar la entrega.</p>
+                    )}
                 </div>
             )}
 
