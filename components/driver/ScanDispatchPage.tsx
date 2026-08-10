@@ -27,7 +27,7 @@ interface ScanDispatchPageProps {
 export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) => {
   const { user, systemSettings } = useContext(AuthContext)!;
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [scanResult, setScanResult] = useState<{ type: 'success' | 'error'; message: string; package?: Package } | null>(null);
+  const [scanResult, setScanResult] = useState<{ type: 'success' | 'error' | 'info'; message: string; package?: Package } | null>(null);
   const [isScanning, setIsScanning] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -126,25 +126,37 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
 
     const performDispatch = async (force = false) => {
         try {
-          let resultPackage: Package | undefined;
-          let successMessage: string;
-
           if (isFalabellaDirect) {
               // Falabella Directo has no pre-existing package to dispatch — the scan itself
-              // creates it already assigned to yourself, in one step.
-              const res = await api.importFalabellaDirectScanned(rawCode, user!.id, photoBase64);
-              resultPackage = res.pkg;
-              successMessage = res.message;
-          } else {
-              const res = await api.scanPackageForDispatch(codeToUse, user.id, rawCode, undefined, force);
-              resultPackage = res.package;
-              successMessage = `Paquete ${codeToUse} asignado a tu ruta`;
-
-              // Upload photo in background
-              if (photoBase64 && resultPackage?.id) {
-                  api.updatePackage(resultPackage.id, { flexLabelPhotoBase64: photoBase64 })
-                     .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
+              // creates it already assigned to yourself, in one step. That requires a live
+              // lookup against Falabella's API for the recipient's real data, which is the
+              // actual source of the delay here — surface it so the wait doesn't read as the
+              // scanner being stuck. No success message afterward (by request): once it
+              // resolves, beep and resume scanning immediately instead of holding a toast.
+              setScanResult({ type: 'info', message: 'Consultando a Falabella...' });
+              await api.importFalabellaDirectScanned(rawCode, user!.id, photoBase64);
+              playBeep();
+              setScannedCount(prev => prev + 1);
+              setScanResult(null);
+              if (isManual) setManualCode('');
+              if (!isManual) {
+                  setIsScanning(true);
+                  scanLock.current = false;
+                  setLastScannedPhoto(null);
+              } else {
+                  setIsManualProcessing(false);
               }
+              return;
+          }
+
+          const res = await api.scanPackageForDispatch(codeToUse, user.id, rawCode, undefined, force);
+          const resultPackage = res.package;
+          const successMessage = `Paquete ${codeToUse} asignado a tu ruta`;
+
+          // Upload photo in background
+          if (photoBase64 && resultPackage?.id) {
+              api.updatePackage(resultPackage.id, { flexLabelPhotoBase64: photoBase64 })
+                 .catch(err => console.error("Error al subir foto de etiqueta en segundo plano:", err));
           }
 
           playBeep();
@@ -313,8 +325,8 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
       
       <div className="min-h-[4rem] mt-2 flex items-center justify-center py-2">
         {scanResult ? (
-            <div className={`flex items-center p-4 rounded-md text-white shadow-lg transition-all transform scale-105 ${scanResult.type === 'success' ? 'bg-green-600' : 'bg-red-500'}`}>
-                {scanResult.type === 'success' ? <IconCheckCircle className="w-6 h-6 mr-3" /> : <IconAlertTriangle className="w-6 h-6 mr-3" />}
+            <div className={`flex items-center p-4 rounded-md text-white shadow-lg transition-all transform scale-105 ${scanResult.type === 'success' ? 'bg-green-600' : scanResult.type === 'info' ? 'bg-blue-600' : 'bg-red-500'}`}>
+                {scanResult.type === 'success' ? <IconCheckCircle className="w-6 h-6 mr-3" /> : scanResult.type === 'info' ? <IconLoader className="w-6 h-6 mr-3 animate-spin" /> : <IconAlertTriangle className="w-6 h-6 mr-3" />}
                 <div className="flex flex-col">
                     <span className="font-medium text-lg">{scanResult.message}</span>
                     {scanResult.type === 'success' && user?.driverPermissions?.canZoning === true && systemSettings?.gisSectorsEnabled && scanResult.package?.recipientCommune && (
