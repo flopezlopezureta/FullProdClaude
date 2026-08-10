@@ -71,8 +71,13 @@ async function getDriverLocation(driverId) {
 // Auxiliar (or super admin) scans a Falabella "Directo" label at the moment of assigning it to a
 // driver — this mirrors the warehouse's real physical process, where receiving and assigning are
 // the same single action, not two separate steps. Fetches the real order from Falabella, creates
-// the package already assigned to the chosen driver, and reports OUT_FOR_DELIVERY_001 directly
-// (skipping the separate IN_TRANSIT_001 intake-only stage entirely).
+// the package already assigned to the chosen driver, and reports both IN_TRANSIT_001 and
+// OUT_FOR_DELIVERY_001 to Falabella, in that order. Originally this skipped straight to
+// OUT_FOR_DELIVERY_001 (one physical scan felt like it should be one status push) — Falabella's
+// own team flagged that directly: their side requires the shipment to pass through IN_TRANSIT_001
+// first (their "we received it" marker) before OUT_FOR_DELIVERY_001 or DELIVERED_001 are accepted,
+// regardless of how many physical actions it took on our end. So it's still one scan for the
+// Auxiliar, but two sequential webhook calls to Falabella.
 router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, async (req, res) => {
     const { rawCode, labelPhotoBase64, driverId } = req.body;
     if (!rawCode) {
@@ -124,7 +129,7 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             source: 'FALABELLA_DIRECTO',
             falabellaDirectLpn: lpn,
             falabellaDirectOrderNumber: order?.orderNumber || null,
-            falabellaDirectLastPushedStatus: 'OUT_FOR_DELIVERY_001',
+            falabellaDirectLastPushedStatus: 'IN_TRANSIT_001',
             falabellaDirectLastPushedAt: now,
             falabellaDirectLabelPhotoBase64: labelPhotoBase64 || null,
         };
@@ -139,11 +144,14 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             [newPackage.id, 'EN_TRANSITO', 'Centro de Distribución', `Escaneado y asignado a ${driver.name} por ${req.user.name || req.user.id} — Falabella Directo LPN ${lpn}.`, now]
         );
 
-        // Fire-and-forget: report to Falabella that the driver now has it, with the same
-        // inline-retry-then-queue pattern as the existing Falabella Seller Center/Envíame sync functions.
-        getDriverLocation(driver.id).then(({ latitude, longitude }) =>
-            pushStatusWithRetry(newPackage.id, lpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driver.name}, en reparto.`, { latitude, longitude })
-        ).catch(err => console.error('[FalabellaDirect] Error fetching driver location for status push:', err));
+        // Fire-and-forget from the HTTP response's perspective, but internally sequential: Falabella
+        // requires IN_TRANSIT_001 to land before OUT_FOR_DELIVERY_001 is accepted, so the second
+        // push must wait for the first to actually finish (success or exhausted-into-queue), not
+        // just be scheduled after it.
+        getDriverLocation(driver.id).then(async ({ latitude, longitude }) => {
+            await pushStatusWithRetry(newPackage.id, lpn, 'IN_TRANSIT_001', 'Paquete recibido por Full Envíos.', { latitude, longitude });
+            await pushStatusWithRetry(newPackage.id, lpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driver.name}, en reparto.`, { latitude, longitude });
+        }).catch(err => console.error('[FalabellaDirect] Error in sequential intake/dispatch status push:', err));
 
         res.status(201).json({ message: `Paquete Falabella Directo importado y asignado a ${driver.name} (LPN ${lpn}).`, pkg: newPackage });
     } catch (error) {
@@ -155,24 +163,33 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
 // Shared retry-then-queue helper for all Falabella Directo status pushes (intake, dispatch,
 // delivery, problem, return) — mirrors the exact shape of syncDeliveryToFalabella/syncDeliveryToEnviame
 // in routes/packages.js (3 attempts, linear backoff, then integration_sync_queue fallback).
-async function pushStatusWithRetry(packageId, lpn, statusCode, description, extra = {}, attempts = 1) {
+// Genuinely awaits its full retry cycle (real `await` delay between attempts, not a detached
+// setTimeout) so callers that need ordering — e.g. IN_TRANSIT_001 must land before
+// OUT_FOR_DELIVERY_001 is attempted — can `await` this and trust it's actually done, one way or
+// the other, before moving on. Existing call sites that don't await it (dispatch/deliver/
+// problem/return hooks in routes/packages.js) are unaffected: they were already fire-and-forget.
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function pushStatusWithRetry(packageId, lpn, statusCode, description, extra = {}) {
     const MAX_ATTEMPTS = 3;
     const DELAY_MULTIPLIER = 3000;
-    try {
-        await falabellaDirectService.pushStatusUpdate(lpn, statusCode, description, extra);
-        await db.query('UPDATE packages SET "falabellaDirectLastPushedStatus" = $1, "falabellaDirectLastPushedAt" = NOW() WHERE id = $2', [statusCode, packageId]);
-        console.log(`[FalabellaDirect] Status ${statusCode} pushed successfully for package ${packageId} (lpn=${lpn}).`);
-    } catch (error) {
-        console.error(`[FalabellaDirect] Fallo en intento ${attempts}/${MAX_ATTEMPTS} para paquete ${packageId} (statusCode=${statusCode}):`, error.message);
-        if (attempts < MAX_ATTEMPTS) {
-            const nextDelay = attempts * DELAY_MULTIPLIER;
-            setTimeout(() => pushStatusWithRetry(packageId, lpn, statusCode, description, extra, attempts + 1), nextDelay);
-        } else {
-            await db.query(
-                'INSERT INTO integration_sync_queue ("packageId", integration, action, payload, error, "nextAttemptAt") ' +
-                'VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL \'15 minutes\')',
-                [packageId, 'FALABELLA_DIRECTO', statusCode, JSON.stringify({ lpn, statusCode, description, extra }), error.message]
-            );
+    for (let attempts = 1; attempts <= MAX_ATTEMPTS; attempts++) {
+        try {
+            await falabellaDirectService.pushStatusUpdate(lpn, statusCode, description, extra);
+            await db.query('UPDATE packages SET "falabellaDirectLastPushedStatus" = $1, "falabellaDirectLastPushedAt" = NOW() WHERE id = $2', [statusCode, packageId]);
+            console.log(`[FalabellaDirect] Status ${statusCode} pushed successfully for package ${packageId} (lpn=${lpn}).`);
+            return;
+        } catch (error) {
+            console.error(`[FalabellaDirect] Fallo en intento ${attempts}/${MAX_ATTEMPTS} para paquete ${packageId} (statusCode=${statusCode}):`, error.message);
+            if (attempts < MAX_ATTEMPTS) {
+                await sleep(attempts * DELAY_MULTIPLIER);
+            } else {
+                await db.query(
+                    'INSERT INTO integration_sync_queue ("packageId", integration, action, payload, error, "nextAttemptAt") ' +
+                    'VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL \'15 minutes\')',
+                    [packageId, 'FALABELLA_DIRECTO', statusCode, JSON.stringify({ lpn, statusCode, description, extra }), error.message]
+                );
+            }
         }
     }
 }
