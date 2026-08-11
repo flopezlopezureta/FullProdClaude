@@ -152,14 +152,21 @@ async function pushStatusUpdate(lpn, statusCode, description, extra = {}) {
 }
 
 // --- INTERNAL STATUS -> FALABELLA STATUS CODE MAPPING ---
-// See docs/plan for the full table and the open question about CANCELADO (no matching code
-// exists in Falabella's catalog — confirm with their onboarding team, don't guess here).
+// Reference only today — routes/packages.js builds these status codes inline at each call site,
+// not through this map (mapInternalStatusToFalabella is currently unused). Kept in sync anyway so
+// it doesn't mislead. Confirmed 2026-08-10 against Falabella's real status-code dictionary
+// (https://developer-prod.falabella.com/docs/carriers/actualizar-estado):
+//   - No cancellation code exists, and none is needed — once a seller marks an order ready to
+//     dispatch, Falabella says it can no longer be cancelled on their side.
+//   - DELIVERY_ATTEMPTED_002 means specifically "failed due to recipient unavailability" — only
+//     matches our "Destinatario ausente en domicilio" reason. Every other failure reason has no
+//     more specific code and falls back to the generic DELIVERY_ATTEMPTED_001.
 const STATUS_MAP = {
     SCAN_INTAKE: 'IN_TRANSIT_001',
     DISPATCHED_TO_DRIVER: 'OUT_FOR_DELIVERY_001',
     DELIVERED: 'DELIVERED_001',
-    PROBLEM_RESCHEDULABLE: 'DELIVERY_ATTEMPTED_001',
-    PROBLEM_OTHER: 'DELIVERY_ATTEMPTED_002',
+    PROBLEM_RECIPIENT_ABSENT: 'DELIVERY_ATTEMPTED_002',
+    PROBLEM_OTHER: 'DELIVERY_ATTEMPTED_001',
     RETURNED: 'UNDELIVERED_001',
 };
 

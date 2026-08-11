@@ -2049,7 +2049,14 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
 
         // --- FALABELLA DIRECTO NOTIFICATION ---
         if (updatedPackage.source === 'FALABELLA_DIRECTO' && updatedPackage.falabellaDirectLpn) {
-            const falabellaDirectStatusCode = isReschedule ? 'DELIVERY_ATTEMPTED_001' : 'DELIVERY_ATTEMPTED_002';
+            // Confirmed against Falabella's real status-code dictionary (2026-08-10): DELIVERY_ATTEMPTED_002
+            // is specifically "failed due to recipient unavailability" — matches our "Destinatario ausente
+            // en domicilio" reason exactly. Every other reason (reagendar, dirección incorrecta, rechazado,
+            // acceso denegado, otro) has no more specific code, so it falls back to the generic
+            // DELIVERY_ATTEMPTED_001 ("attempted but failed"). Previously this reused isReschedule, which
+            // mapped most non-reschedule reasons (including a real recipient-absent case) to the wrong code.
+            const isRecipientAbsent = reason.toLowerCase().includes('ausente');
+            const falabellaDirectStatusCode = isRecipientAbsent ? 'DELIVERY_ATTEMPTED_002' : 'DELIVERY_ATTEMPTED_001';
             getDriverLocation(updatedPackage.driverId).then(({ latitude, longitude }) =>
                 falabellaDirectRoute.pushStatusWithRetry(updatedPackage.id, updatedPackage.falabellaDirectLpn, falabellaDirectStatusCode, reason, { latitude, longitude })
             ).catch(err => console.error('[Problem] Falabella Directo status push error:', err));

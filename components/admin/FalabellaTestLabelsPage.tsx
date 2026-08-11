@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 
-// The 4 fixed UAT test LPNs Falabella provided — no real physical label exists for these, so
-// this page generates a scannable stand-in encoding the same JSON payload a real Falabella
-// Directo label's QR would contain, so the driver/Auxiliar scanner UI can be exercised against
-// paper without needing an actual shipment.
-const TEST_LPNS = ['TEST_LPN_GOLIVERY1', 'TEST_LPN_GOLIVERY2', 'TEST_LPN_GOLIVERY3', 'TEST_LPN_GOLIVERY4'];
+// UAT test LPNs Falabella provided — no real physical label exists for these, so this page
+// generates a scannable stand-in encoding the same JSON payload a real Falabella Directo label's
+// QR would contain, so the driver/Auxiliar scanner UI can be exercised against paper without
+// needing an actual shipment. GOLIVERY2 dropped 2026-08-10 — Falabella's team re-listed 1/3/4 as
+// still usable but not 2, likely already consumed/closed from earlier testing; 5-8 added same day.
+const TEST_LPNS = ['TEST_LPN_GOLIVERY1', 'TEST_LPN_GOLIVERY3', 'TEST_LPN_GOLIVERY4', 'TEST_LPN_GOLIVERY5', 'TEST_LPN_GOLIVERY6', 'TEST_LPN_GOLIVERY7', 'TEST_LPN_GOLIVERY8'];
 const QA_HOST = 'https://logistic-api-qa.falabella.com';
 
 interface TestLabel {
