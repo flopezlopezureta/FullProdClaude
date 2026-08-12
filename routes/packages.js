@@ -1282,6 +1282,16 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
             return res.status(400).json({ message: `Paquete ya se encuentra ${currentPkg.status}.` });
         }
 
+        // Falabella Directo requires real GPS coordinates with every status push (this route
+        // pushes OUT_FOR_DELIVERY_001 further down for Falabella Directo packages) — checked here
+        // too, same block-not-fake-it policy as the delivery-confirmation requirements.
+        if (currentPkg.source === 'FALABELLA_DIRECTO') {
+            const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(driverId);
+            if (gpsLat === 0 && gpsLng === 0) {
+                return res.status(400).json({ message: 'Falabella Directo exige coordenadas GPS reales del conductor para asignar o reasignar el paquete. Verifica que el conductor tenga la ubicación activada.' });
+            }
+        }
+
         // Check duplicate and reassignment
         const { forceReassign } = req.body;
         if (['EN_TRANSITO', 'ASIGNADO'].includes(currentPkg.status)) {
@@ -1833,7 +1843,7 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
     try {
         // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — no other
         // source enforces a minimum today, so this check is scoped to that source only.
-        const { rows: sourceCheckRows } = await db.query('SELECT source, "falabellaDirectLpn" FROM packages WHERE id = $1', [id]);
+        const { rows: sourceCheckRows } = await db.query('SELECT source, "falabellaDirectLpn", "driverId" FROM packages WHERE id = $1', [id]);
         if (sourceCheckRows.length > 0 && sourceCheckRows[0].source === 'FALABELLA_DIRECTO') {
             if (!Array.isArray(photosBase64) || photosBase64.length < 2) {
                 return res.status(400).json({ message: 'Falabella Directo exige al menos 2 fotos de evidencia para confirmar la entrega.' });
@@ -1844,6 +1854,13 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             // just in the UI, since this field is optional for every other source.
             if (!receiverId || !/^[a-zA-Z0-9 _\-.]+$/.test(String(receiverId).trim())) {
                 return res.status(400).json({ message: 'Falabella Directo exige el RUT de quien recibe (solo letras, números, espacios, guiones y puntos) para confirmar la entrega.' });
+            }
+            // Falabella Directo requires real GPS coordinates with delivery evidence — a driver
+            // with no live-tracked location on file would otherwise silently send (0,0). Blocks
+            // the confirmation entirely rather than sending fake coordinates (user's explicit call).
+            const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(sourceCheckRows[0].driverId);
+            if (gpsLat === 0 && gpsLng === 0) {
+                return res.status(400).json({ message: 'Falabella Directo exige coordenadas GPS reales del conductor para confirmar la entrega. Verifica que el conductor tenga la ubicación activada.' });
             }
         }
 
@@ -2028,6 +2045,16 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { reason, photosBase64 } = req.body;
     try {
+        // Falabella Directo requires real GPS coordinates with every status push — checked before
+        // the update, same block-not-fake-it policy as the RUT/photo requirements on /:id/deliver.
+        const { rows: sourceCheckRows } = await db.query('SELECT source, "driverId" FROM packages WHERE id = $1', [id]);
+        if (sourceCheckRows.length > 0 && sourceCheckRows[0].source === 'FALABELLA_DIRECTO') {
+            const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(sourceCheckRows[0].driverId);
+            if (gpsLat === 0 && gpsLng === 0) {
+                return res.status(400).json({ message: 'Falabella Directo exige coordenadas GPS reales del conductor para reportar un problema. Verifica que el conductor tenga la ubicación activada.' });
+            }
+        }
+
         const isReschedule = reason.toLowerCase().includes('reagendar') || reason.toLowerCase().includes('reprogramar');
         const targetStatus = isReschedule ? 'REPROGRAMADO' : 'PROBLEMA';
 
@@ -2200,6 +2227,16 @@ router.post('/:id/return', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { receiverName, receiverId, photosBase64 } = req.body;
     try {
+        // Falabella Directo requires real GPS coordinates with every status push — checked before
+        // the update, same block-not-fake-it policy as the RUT/photo requirements on /:id/deliver.
+        const { rows: sourceCheckRows } = await db.query('SELECT source, "driverId" FROM packages WHERE id = $1', [id]);
+        if (sourceCheckRows.length > 0 && sourceCheckRows[0].source === 'FALABELLA_DIRECTO') {
+            const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(sourceCheckRows[0].driverId);
+            if (gpsLat === 0 && gpsLng === 0) {
+                return res.status(400).json({ message: 'Falabella Directo exige coordenadas GPS reales del conductor para confirmar la devolución. Verifica que el conductor tenga la ubicación activada.' });
+            }
+        }
+
         const { rows } = await db.query(
             'UPDATE packages SET status = $1, "deliveryReceiverName" = $2, "deliveryReceiverId" = $3, "deliveryPhotosBase64" = $4, "updatedAt" = $5 WHERE id = $6 RETURNING *',
             ['DEVUELTO', receiverName, receiverId, JSON.stringify(photosBase64), new Date(), id]

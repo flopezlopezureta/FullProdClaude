@@ -107,6 +107,14 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             return res.status(400).json({ message: 'Conductor no encontrado.' });
         }
 
+        // Falabella Directo requires real GPS coordinates with every status push (IN_TRANSIT_001
+        // and OUT_FOR_DELIVERY_001 both fire from this single scan) — checked before even calling
+        // Falabella's API, same block-not-fake-it policy as the delivery-confirmation requirements.
+        const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(driver.id);
+        if (gpsLat === 0 && gpsLng === 0) {
+            return res.status(400).json({ message: `${driver.name} no tiene coordenadas GPS reales registradas. Verifica que tenga la ubicación activada antes de asignarle paquetes de Falabella Directo.` });
+        }
+
         const order = await falabellaDirectService.getOrderByLpn(lpn);
 
         const now = new Date();
