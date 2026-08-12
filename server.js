@@ -472,6 +472,7 @@ async function initializeDatabase() {
                 'flexedAt TIMESTAMPTZ',
                 'destLatitude REAL',
                 'destLongitude REAL',
+                'destIsApproximate BOOLEAN DEFAULT false',
                 'flexLabelPhotoBase64 TEXT',
                 'recipientRut TEXT',
                 'assignedAt TIMESTAMPTZ',

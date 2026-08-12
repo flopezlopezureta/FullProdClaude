@@ -3,6 +3,7 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding, geocodeAddress } = require('./geocodingService');
+const gisService = require('./gisService');
 const { emitDriverEvent } = require('./driverEvents');
 
 // --- MELI API HELPERS (Duplicated from integrations.js for independence) ---
@@ -691,8 +692,15 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                     // 5. Region & Active Commune Check
                                     const stateName = shipment.receiver_address?.state?.name || '';
                                     const communeName = shipment.receiver_address?.city?.name || '';
-                                    const lowerCommune = normalizeCommune(communeName);
-                                    
+                                    // BUG FIXED 2026-08: validCommunes is always lowercase (built via
+                                    // normalizeCommune(...).toLowerCase() at line 213/565), but this was
+                                    // missing .toLowerCase() — normalizeCommune always returns UPPERCASE,
+                                    // so this comparison silently failed for every single order regardless
+                                    // of whether the commune was actually active. JIT/scan-triggered import
+                                    // has no such filter, which is why manually-scanned packages always
+                                    // imported fine while scheduled auto-import silently skipped everything.
+                                    const lowerCommune = normalizeCommune(communeName).toLowerCase();
+
                                     if (!validCommunes.includes(lowerCommune)) {
                                         console.log(`[MeliPolling] Skipping order ${orderId} - Commune "${communeName}" is INACTIVE or outside active zones.`);
                                         continue; 
@@ -904,11 +912,10 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
         const now = new Date();
 
         // [NUEVO] Geocodificación instantánea para JIT: obtener coordenadas inmediatamente
-        let lat = 0.000001;
-        let lng = 0.000001;
+        const recipientAddress = shipment.receiver_address?.address_line || 'N/A';
+        const recipientCommune = normalizeCommune(shipment.receiver_address?.city?.name || 'N/A');
+        let lat, lng, destIsApproximate = false;
         try {
-            const recipientAddress = shipment.receiver_address?.address_line || 'N/A';
-            const recipientCommune = normalizeCommune(shipment.receiver_address?.city?.name || 'N/A');
             const coords = await geocodeAddress(recipientAddress, recipientCommune, 'Región Metropolitana');
             if (coords && coords.lat !== null) {
                 lat = coords.lat;
@@ -916,6 +923,16 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
             }
         } catch (geoErr) {
             console.error(`[MeliPolling] Immediate JIT geocoding failed for shipment ${shipmentId}:`, geoErr.message);
+        }
+        if (lat === undefined) {
+            // Address geocoding failed — fall back to the commune's real centroid instead of the
+            // old 0.000001/0.000001 sentinel (a real point in the Gulf of Guinea that silently
+            // poisoned distance/routing calculations downstream). Flagged as approximate so the
+            // UI shows "~X km to <commune>" instead of presenting it as the exact address.
+            const centroid = gisService.getComunaCentroid(recipientCommune);
+            lat = centroid?.lat ?? 0.000001;
+            lng = centroid?.lng ?? 0.000001;
+            destIsApproximate = true;
         }
 
         const newPackage = {
@@ -940,7 +957,8 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
             trackingId: shipment.tracking_id ? String(shipment.tracking_id) : null,
             recipientRut: shipment.receiver_address?.federal_id || null,
             destLatitude: lat,
-            destLongitude: lng
+            destLongitude: lng,
+            destIsApproximate
         };
 
         const columns = Object.keys(newPackage).map(k => `"${k}"`).join(', ');

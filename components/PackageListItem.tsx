@@ -248,7 +248,10 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                             )}
                             {pkg.distance !== undefined && (
                                 <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                                    📍 {pkg.distance >= 1 ? `${pkg.distance.toFixed(1)} km` : `${Math.round(pkg.distance * 1000)} m`}{pkg.isRoadDistance ? ' (por calle)' : ' (línea recta)'}
+                                    📍 {pkg.destIsApproximate ? '~' : ''}{pkg.distance >= 1 ? `${pkg.distance.toFixed(1)} km` : `${Math.round(pkg.distance * 1000)} m`}
+                                    {pkg.destIsApproximate
+                                        ? ` a ${pkg.recipientCommune || 'la comuna'} (aprox.)`
+                                        : (pkg.isRoadDistance ? ' (por calle)' : ' (línea recta)')}
                                 </span>
                             )}
                             {/* [NUEVO] Mostrar ID de Referencia / Mercado Libre para identificación rápida */}

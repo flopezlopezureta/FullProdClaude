@@ -1,5 +1,6 @@
 
 const db = require('../db');
+const gisService = require('./gisService');
 
 let isGeocoding = false;
 
@@ -9,7 +10,12 @@ async function singleGeocodeCall(query) {
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'FullEnviosApp/1.0'
-            }
+            },
+            // Nominatim has no SLA and this call previously had no timeout at all — a slow/stalled
+            // response could hang a JIT dispatch (routes/packages.js awaits this synchronously)
+            // indefinitely, which is what made a stuck import look like a broken scanner to the
+            // operator. Capped at 3s per attempt.
+            signal: AbortSignal.timeout(3000),
         });
         if (response.ok) {
             const data = await response.json();
@@ -145,15 +151,22 @@ async function triggerBackgroundGeocoding() {
                 
                 if (coords.lat !== null) {
                     await db.query(
-                        'UPDATE packages SET "destLatitude" = $1, "destLongitude" = $2 WHERE id = $3',
+                        'UPDATE packages SET "destLatitude" = $1, "destLongitude" = $2, "destIsApproximate" = false WHERE id = $3',
                         [coords.lat, coords.lng, pkg.id]
                     );
                 } else {
-                    // Mark as tried by setting to a very small non-zero value if we want to avoid re-trying
-                    // To avoid infinite loops on bad addresses, let's set to 0.000001
+                    // Address couldn't be geocoded — fall back to the commune's real centroid
+                    // (computed from actual comuna polygons, see gisService.getComunaCentroid)
+                    // instead of the old 0.000001/0.000001 sentinel, a real point in the Gulf of
+                    // Guinea that silently poisoned every distance/routing calculation downstream
+                    // ("heading to the other side of the world"). Marked destIsApproximate so the
+                    // UI can show "~X km to <commune>" instead of presenting it as the exact address.
+                    const centroid = gisService.getComunaCentroid(pkg.recipientCommune);
+                    const fallbackLat = centroid?.lat ?? 0.000001;
+                    const fallbackLng = centroid?.lng ?? 0.000001;
                     await db.query(
-                        'UPDATE packages SET "destLatitude" = 0.000001, "destLongitude" = 0.000001 WHERE id = $1',
-                        [pkg.id]
+                        'UPDATE packages SET "destLatitude" = $1, "destLongitude" = $2, "destIsApproximate" = true WHERE id = $3',
+                        [fallbackLat, fallbackLng, pkg.id]
                     );
                 }
                 // Respect Nominatim rate limit (1 request per second)

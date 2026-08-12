@@ -297,6 +297,7 @@ export interface Package {
   creatorId: string | null;
   destLatitude?: number;
   destLongitude?: number;
+  destIsApproximate?: boolean;
   deliveryReceiverName?: string;
   deliveryReceiverId?: string;
   deliveryPhotosBase64?: string[];

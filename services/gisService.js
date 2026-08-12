@@ -140,6 +140,31 @@ function getComunaGeometry(comunaName) {
     return feature || null;
 }
 
+// Simple average-of-vertices centroid (not area-weighted — good enough for "approximate distance
+// to the commune" purposes, not for precise geographic center-of-mass). Used as the fallback
+// destination when an address fails to geocode, instead of the previous 0.000001/0.000001
+// sentinel — a real point in the Gulf of Guinea that was silently poisoning distance/routing
+// calculations (drivers seeing themselves "en route to the other side of the world").
+function getComunaCentroid(comunaName) {
+    const feature = getComunaGeometry(comunaName);
+    if (!feature || !feature.geometry) return null;
+
+    const points = [];
+    const collectRing = (ring) => ring.forEach(([lng, lat]) => points.push([lat, lng]));
+    const { type, coordinates } = feature.geometry;
+    if (type === 'Polygon') {
+        coordinates.forEach(collectRing);
+    } else if (type === 'MultiPolygon') {
+        coordinates.forEach(polygon => polygon.forEach(collectRing));
+    } else {
+        return null;
+    }
+    if (points.length === 0) return null;
+
+    const sum = points.reduce((acc, [lat, lng]) => [acc[0] + lat, acc[1] + lng], [0, 0]);
+    return { lat: sum[0] / points.length, lng: sum[1] / points.length };
+}
+
 /**
  * Lista de todas las comunas disponibles en el GeoJSON base.
  */
@@ -155,6 +180,7 @@ module.exports = {
     getSectorForCoordinates,
     getSectorDetailsForCoordinates,
     getComunaGeometry,
+    getComunaCentroid,
     getAllComunas,
     reloadSectors,
 };
