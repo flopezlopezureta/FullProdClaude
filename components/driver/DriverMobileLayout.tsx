@@ -298,6 +298,14 @@ const DriverMobileLayout: React.FC = () => {
                                 <p className="text-xs font-medium opacity-80 mb-1">EMPRESA</p>
                                 <h2 className="text-2xl font-bold tracking-tight">{systemSettings.companyName}</h2>
                             </div>
+                            {/* AN = running inside the native Android wrapper (window.AndroidApp exists,
+                                injected by MainActivity.kt's WebAppInterface); AW = plain web/browser.
+                                Lets you tell at a glance which one you're looking at, and confirms which
+                                version actually loaded — same version number either way since the wrapper
+                                just displays this same web app, but the prefix disambiguates the channel. */}
+                            <span className="absolute top-4 right-4 z-20 text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
+                                {typeof window !== 'undefined' && (window as any).AndroidApp ? 'AN' : 'AW'}{(import.meta as any).env.VITE_APP_VERSION}
+                            </span>
                             <IconCube className="absolute -right-4 -bottom-4 w-32 h-32 text-white opacity-10 rotate-12" />
                         </div>
 
