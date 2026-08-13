@@ -599,19 +599,36 @@ async function autoImportMeliPackages(activeCommunes = []) {
                             // --- CHECK INTERVAL PER ACCOUNT ---
                             // [MEJORADO] Reducimos el intervalo por defecto a 2 minutos para una importación más ágil
                             const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 2;
-                            const lastSync = settings.lastSync ? new Date(settings.lastSync).getTime() : 0;
+                            // Gated on lastAttemptAt (not lastSync): lastSync only advances on a
+                            // successful sync, so a permanently-broken refresh token (invalid_grant)
+                            // never advances it either, which previously caused a retry on every single
+                            // poll cycle (every ~5 min) forever instead of respecting syncInterval.
+                            const lastAttempt = settings.lastAttemptAt
+                                ? new Date(settings.lastAttemptAt).getTime()
+                                : (settings.lastSync ? new Date(settings.lastSync).getTime() : 0);
                             const nowTime = Date.now();
-                            
-                            if (nowTime - lastSync < (syncIntervalMin * 60 * 1000)) return;
+
+                            if (nowTime - lastAttempt < (syncIntervalMin * 60 * 1000)) return;
+
+                            const accountIndex = integrations.accounts.findIndex(acc => acc.id === account.id);
+                            const markAttempt = async () => {
+                                if (accountIndex > -1) {
+                                    integrations.accounts[accountIndex].settings.lastAttemptAt = new Date().toISOString();
+                                    await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
+                                }
+                            };
 
                             // Obtener token (refresca si es necesario)
                             const accessToken = await getValidMeliToken(clientId, account.id);
-                            if (!accessToken) return;
+                            if (!accessToken) {
+                                await markAttempt();
+                                return;
+                            }
 
                             // Actualizar lastSync para esta cuenta específica
-                            const accountIndex = integrations.accounts.findIndex(acc => acc.id === account.id);
                             if (accountIndex > -1) {
                                 integrations.accounts[accountIndex].settings.lastSync = new Date().toISOString();
+                                integrations.accounts[accountIndex].settings.lastAttemptAt = new Date().toISOString();
                                 await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
                             }
 
