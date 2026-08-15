@@ -134,4 +134,70 @@ router.post('/simulate-meli-closure', authMiddleware, async (req, res) => {
     }
 });
 
+// TEMPORARY — repairs the 2 Falabella Directo UAT test packages (GOLIVERY3/4) that got stuck
+// ENTREGADO locally but never actually closed on Falabella's side, because they were pushed
+// before the IN_TRANSIT_001-sequencing and empty-recipientId bugs were fixed. Retroactively
+// pushes the same status sequence a healthy delivery would have sent. Super-admin only, and
+// meant to be removed in a follow-up cleanup commit once run once successfully.
+const isSuperUserEmail = (email) => email === 'admin' || email === 'admin@admin.cl';
+async function requireSuperUserDebug(req, res, next) {
+    try {
+        const { rows } = await db.query('SELECT email FROM users WHERE id = $1', [req.user?.id]);
+        if (isSuperUserEmail(rows[0]?.email)) return next();
+    } catch (e) { /* falls through to 403 below */ }
+    return res.status(403).json({ message: 'Solo el super admin puede ejecutar esta reparación.' });
+}
+
+router.post('/repair-falabella-direct-stuck', authMiddleware, requireSuperUserDebug, async (req, res) => {
+    const falabellaDirectService = require('../services/falabellaDirectService');
+    const { signPhotoToken } = require('../services/falabellaCrypto');
+    const PACKAGE_IDS = ['FALDIR-8b6e5665', 'FALDIR-7c8ed7ac']; // GOLIVERY3, GOLIVERY4
+    const TEST_RUT = '11.111.111-1'; // placeholder — these are Falabella's own UAT test LPNs
+
+    const results = [];
+
+    for (const pkgId of PACKAGE_IDS) {
+        const steps = [];
+        try {
+            const { rows } = await db.query('SELECT * FROM packages WHERE id = $1', [pkgId]);
+            const pkg = rows[0];
+            if (!pkg) { results.push({ pkgId, skipped: true, reason: 'not found' }); continue; }
+
+            const { rows: driverRows } = await db.query('SELECT latitude, longitude FROM users WHERE id = $1', [pkg.driverId]);
+            const latitude = driverRows[0]?.latitude ?? 0;
+            const longitude = driverRows[0]?.longitude ?? 0;
+
+            await falabellaDirectService.pushStatusUpdate(pkg.falabellaDirectLpn, 'IN_TRANSIT_001', 'Paquete recibido por Full Envíos (registro retroactivo).', { latitude, longitude });
+            steps.push('IN_TRANSIT_001: OK');
+
+            await falabellaDirectService.pushStatusUpdate(pkg.falabellaDirectLpn, 'OUT_FOR_DELIVERY_001', 'Recibido por el conductor, en reparto (registro retroactivo).', { latitude, longitude });
+            steps.push('OUT_FOR_DELIVERY_001: OK');
+
+            await db.query('UPDATE packages SET "deliveryReceiverId" = $1 WHERE id = $2', [TEST_RUT, pkgId]);
+
+            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const images = Array.from({ length: 2 }, (_, i) =>
+                `${baseUrl}/api/packages/public/falabella-photo/${pkgId}/${i}?token=${signPhotoToken(pkgId, i)}`
+            );
+            await falabellaDirectService.pushStatusUpdate(pkg.falabellaDirectLpn, 'DELIVERED_001', `Entregado a ${pkg.deliveryReceiverName}.`, {
+                latitude, longitude,
+                deliveryProof: { recipientName: pkg.deliveryReceiverName, recipientId: TEST_RUT, images },
+            });
+            steps.push('DELIVERED_001: OK — cerrado correctamente en Falabella.');
+            await db.query('UPDATE packages SET "falabellaDirectLastPushedStatus" = $1, "falabellaDirectLastPushedAt" = NOW() WHERE id = $2', ['DELIVERED_001', pkgId]);
+
+            results.push({ pkgId, lpn: pkg.falabellaDirectLpn, success: true, steps });
+        } catch (e) {
+            results.push({ pkgId, success: false, steps, error: e.message });
+        }
+    }
+
+    const { rowCount } = await db.query(
+        `DELETE FROM integration_sync_queue WHERE "packageId" = ANY($1) AND integration = 'FALABELLA_DIRECTO'`,
+        [PACKAGE_IDS]
+    );
+
+    res.json({ results, removedQueuedRetries: rowCount });
+});
+
 module.exports = router;
