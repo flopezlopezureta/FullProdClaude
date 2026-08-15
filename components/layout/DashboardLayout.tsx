@@ -11,6 +11,7 @@ import { IconMenu, IconCheckCircle, IconX, IconAlertTriangle } from '../Icon';
 import SettingsPage from '../admin/SettingsPage';
 import IntegrationSettingsPage from '../admin/IntegrationSettingsPage';
 import FalabellaTestLabelsPage from '../admin/FalabellaTestLabelsPage';
+import CloudflareDiagnosticsPage from '../admin/CloudflareDiagnosticsPage';
 import SystemLogsPage from '../admin/SystemLogsPage';
 import ImportOrdersPage from '../admin/ImportOrdersPage';
 import BillingReportPage from '../admin/BillingReportPage';
@@ -270,6 +271,11 @@ const DashboardLayout: React.FC = () => {
       case 'falabella-direct-labels':
         if (isAdmin && isSuperUser) return { title: 'Etiquetas Falabella Directo (UAT)', content: <FalabellaTestLabelsPage /> };
         break;
+
+      case 'cloudflare-diagnostics':
+        if (isAdmin && isSuperUser) return { title: 'Diagnóstico Cloudflare', content: <CloudflareDiagnosticsPage /> };
+        break;
+
 
       case 'system-logs':
         if (isAdmin && isSuperUser) return { title: '', content: <SystemLogsPage /> };
