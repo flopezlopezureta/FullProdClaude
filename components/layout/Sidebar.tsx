@@ -411,8 +411,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
 
               {/* Desktop Flyout */}
               {hoveredMenu === item.id && (
-                <div className="hidden lg:block lg:absolute lg:left-full lg:top-0 lg:pl-2 lg:w-60 lg:z-50 animate-fade-in-up">
-                  <div className="lg:bg-[var(--background-secondary)] lg:border lg:border-[var(--border-primary)] lg:rounded-lg lg:shadow-lg lg:p-2 lg:space-y-1">
+                <div className="hidden lg:block lg:absolute lg:left-full lg:top-0 lg:pl-2 lg:w-60 lg:z-50 lg:max-h-[85vh] animate-fade-in-up">
+                  <div className="lg:bg-[var(--background-secondary)] lg:border lg:border-[var(--border-primary)] lg:rounded-lg lg:shadow-lg lg:p-2 lg:space-y-1 lg:max-h-[85vh] lg:overflow-y-auto custom-scrollbar">
                     {(item.subItems as any[]).map(subItem => {
                       const count = getSubItemCount(subItem.id);
                       return (

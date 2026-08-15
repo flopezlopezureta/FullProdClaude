@@ -51,14 +51,17 @@ app.use('/api', (req, res, next) => {
 
 // Feeds the super-admin "Tráfico de Red" report — records timing/status per request so
 // intermittent connectivity can be traced to a specific IP (e.g. a client's own congested
-// wifi) instead of being blamed on the app. req.ip respects X-Forwarded-For since
-// `trust proxy` is set above, so this is the real client IP, not Cloudflare's/Coolify's.
+// wifi) instead of being blamed on the app. Behind two chained proxies (Cloudflare Tunnel,
+// then coolify-proxy), `req.ip` with `trust proxy: 1` only unwinds one hop and ends up
+// resolving to coolify-proxy's own internal Docker IP, not the real visitor — same class of
+// issue as the http/https detection bug found earlier. Cloudflare always sets CF-Connecting-IP
+// to the true original client IP regardless of how many internal hops follow, so prefer that.
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     try {
       require('./services/networkMetrics').recordRequest({
-        ip: req.ip,
+        ip: req.headers['cf-connecting-ip'] || req.ip,
         method: req.method,
         path: req.path,
         statusCode: res.statusCode,
