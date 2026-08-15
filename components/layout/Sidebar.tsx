@@ -176,7 +176,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         ...(isSuperUser ? [
             { id: 'system-logs', label: 'Logs del Sistema', icon: <IconFileText className="h-5 w-5" /> },
             { id: 'falabella-direct-labels', label: 'Etiquetas Falabella Directo (UAT)', icon: <IconQrcode className="h-5 w-5" /> },
-            { id: 'cloudflare-diagnostics', label: 'Diagnóstico Cloudflare', icon: <IconWifi className="h-5 w-5" /> }
+            { id: 'cloudflare-diagnostics', label: 'Diagnóstico Cloudflare', icon: <IconWifi className="h-5 w-5" /> },
+            { id: 'network-traffic', label: 'Tráfico de Red', icon: <IconBarChart className="h-5 w-5" /> }
         ] : [])
       ]
     }

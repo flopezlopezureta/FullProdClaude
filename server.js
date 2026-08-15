@@ -49,6 +49,26 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Feeds the super-admin "Tráfico de Red" report — records timing/status per request so
+// intermittent connectivity can be traced to a specific IP (e.g. a client's own congested
+// wifi) instead of being blamed on the app. req.ip respects X-Forwarded-For since
+// `trust proxy` is set above, so this is the real client IP, not Cloudflare's/Coolify's.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    try {
+      require('./services/networkMetrics').recordRequest({
+        ip: req.ip,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - start,
+      });
+    } catch (e) { /* diagnostics must never break the real request */ }
+  });
+  next();
+});
+
 const PORT = process.env.PORT || 3000;
 
 async function startServer() {
@@ -209,6 +229,7 @@ async function startServer() {
     const assignmentsRoute = tryRequireRoute('./routes/assignments.js'); if (assignmentsRoute) app.use('/api/assignments', assignmentsRoute);
     const mobileRoute = tryRequireRoute('./routes/mobile.js'); if (mobileRoute) app.use('/api', mobileRoute);
     const debugRoute = tryRequireRoute('./routes/debug.js'); if (debugRoute) app.use('/api/debug', debugRoute);
+    const networkMetricsRoute = tryRequireRoute('./routes/networkMetrics.js'); if (networkMetricsRoute) app.use('/api/network-metrics', networkMetricsRoute);
     const appUpdatesRoute = tryRequireRoute('./routes/appUpdates.js'); if (appUpdatesRoute) app.use('/api/app-updates', appUpdatesRoute);
     const falabellaDirectRoute = tryRequireRoute('./routes/falabellaDirect.js'); if (falabellaDirectRoute) app.use('/api/falabella-direct', falabellaDirectRoute);
     const googleAuthRoute = tryRequireRoute('./routes/googleAuth.js'); if (googleAuthRoute) app.use('/api/auth/google', googleAuthRoute);

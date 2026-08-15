@@ -12,6 +12,7 @@ import SettingsPage from '../admin/SettingsPage';
 import IntegrationSettingsPage from '../admin/IntegrationSettingsPage';
 import FalabellaTestLabelsPage from '../admin/FalabellaTestLabelsPage';
 import CloudflareDiagnosticsPage from '../admin/CloudflareDiagnosticsPage';
+import NetworkTrafficPage from '../admin/NetworkTrafficPage';
 import SystemLogsPage from '../admin/SystemLogsPage';
 import ImportOrdersPage from '../admin/ImportOrdersPage';
 import BillingReportPage from '../admin/BillingReportPage';
@@ -276,6 +277,9 @@ const DashboardLayout: React.FC = () => {
         if (isAdmin && isSuperUser) return { title: 'Diagnóstico Cloudflare', content: <CloudflareDiagnosticsPage /> };
         break;
 
+      case 'network-traffic':
+        if (isAdmin && isSuperUser) return { title: 'Tráfico de Red', content: <NetworkTrafficPage /> };
+        break;
 
       case 'system-logs':
         if (isAdmin && isSuperUser) return { title: '', content: <SystemLogsPage /> };
