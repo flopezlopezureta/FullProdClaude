@@ -175,12 +175,19 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         { id: 'integrations', label: 'Integraciones', icon: <IconPlugConnected className="h-5 w-5" /> },
         ...(isSuperUser ? [
             { id: 'system-logs', label: 'Logs del Sistema', icon: <IconFileText className="h-5 w-5" /> },
-            { id: 'falabella-direct-labels', label: 'Etiquetas Falabella Directo (UAT)', icon: <IconQrcode className="h-5 w-5" /> },
-            { id: 'cloudflare-diagnostics', label: 'Diagnóstico Cloudflare', icon: <IconWifi className="h-5 w-5" /> },
-            { id: 'network-traffic', label: 'Tráfico de Red', icon: <IconBarChart className="h-5 w-5" /> }
+            { id: 'falabella-direct-labels', label: 'Etiquetas Falabella Directo (UAT)', icon: <IconQrcode className="h-5 w-5" /> }
         ] : [])
       ]
-    }
+    },
+    ...(isSuperUser ? [{
+      id: 'tools',
+      label: 'Herramientas',
+      icon: <IconWifi className="h-6 w-6" />,
+      subItems: [
+            { id: 'cloudflare-diagnostics', label: 'Diagnóstico Cloudflare', icon: <IconWifi className="h-5 w-5" /> },
+            { id: 'network-traffic', label: 'Tráfico de Red', icon: <IconBarChart className="h-5 w-5" /> }
+      ]
+    }] : [])
   ].filter(item => !('subItems' in item) || (item as any).subItems.length > 0);
 
   const operadorSistemasNavItems = [
