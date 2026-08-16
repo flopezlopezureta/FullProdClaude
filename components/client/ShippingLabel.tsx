@@ -414,12 +414,16 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creator
                    Contenedor interno de 80x100 rotado 90 grados.
                 */}
                 <div className="w-[80mm] h-[100mm] border-4 border-black p-3 flex flex-col rotate-90 origin-center scale-[0.98]">
-                    <div className="text-center mb-2">
-                        {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-6 max-w-[35mm] mx-auto mb-0.5 object-contain" />}
-                        <h2 className="text-[11px] font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
-                        <div className="flex flex-row flex-nowrap justify-between items-center mt-1 border-y border-black/10 py-1 px-2 overflow-hidden">
-                            <span className="text-[8px] font-black text-black uppercase truncate max-w-[40mm] text-left">{creatorName}</span>
-                            <span className="text-[8px] font-black text-black whitespace-nowrap text-right">{formattedDate}</span>
+                    <div className="mb-2">
+                        <div className="flex flex-row justify-between items-start border-y border-black/10 py-1 px-2 overflow-hidden gap-2">
+                            <div className="flex flex-col items-start text-left min-w-0">
+                                {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-6 max-w-[28mm] mb-0.5 object-contain" />}
+                                <span className="text-[8px] font-black text-black uppercase truncate max-w-[28mm]">{creatorName}</span>
+                            </div>
+                            <div className="flex flex-col items-end text-right flex-shrink-0">
+                                <h2 className="text-[11px] font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
+                                <span className="text-[8px] font-black text-black whitespace-nowrap mt-1">{formattedDate}</span>
+                            </div>
                         </div>
                     </div>
 
