@@ -109,6 +109,7 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creator
                              <p className="text-[7px] font-bold text-gray-400 uppercase leading-none">ID Operativo:</p>
                              <p className="text-[10px] font-mono font-black break-all leading-tight">{qrContent}</p>
                              <div className="w-full h-1.5 bg-black mt-1"></div>
+                             <p className="text-[6px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">Powered by Full Envíos</p>
                          </div>
                     </div>
                 </div>
@@ -455,6 +456,7 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creator
                                  <p className="text-[6px] font-bold text-gray-400 uppercase leading-none mb-0.5">ID Operativo:</p>
                                  <p className="text-[8px] font-mono font-black break-all leading-tight">{qrContent}</p>
                                  <div className="w-full h-1.5 bg-black mt-1"></div>
+                                 <p className="text-[5px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">Powered by Full Envíos</p>
                              </div>
                         </div>
                     </div>
