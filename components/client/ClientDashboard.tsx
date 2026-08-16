@@ -309,7 +309,9 @@ const ClientDashboard: React.FC = () => {
   // visita posterior o que efectivamente se canceló deja de aparecer aquí solo, porque ya no
   // coincide con el filtro de estado — no hace falta lógica extra para "resolver" la alerta.
   const [criticalAlerts, setCriticalAlerts] = useState<Package[]>([]);
-  const [showCriticalAlerts, setShowCriticalAlerts] = useState(true);
+  const [showCriticalAlerts, setShowCriticalAlerts] = useState(() => {
+    return localStorage.getItem('clientCriticalAlertsPanelOpen') !== 'false';
+  });
   const [alertView, setAlertView] = useState<'today' | 'history'>('today');
   const [alertDate, setAlertDate] = useState(getISODate(new Date()));
 
@@ -354,6 +356,17 @@ const ClientDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+        {!showCriticalAlerts && criticalAlerts.length > 0 && (
+          <button
+            onClick={() => {
+              setShowCriticalAlerts(true);
+              localStorage.setItem('clientCriticalAlertsPanelOpen', 'true');
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-bold uppercase tracking-wide hover:bg-red-100 transition-colors self-start"
+          >
+            <IconAlertTriangle className="w-4 h-4" /> Ver {criticalAlerts.length} alerta{criticalAlerts.length !== 1 ? 's' : ''} oculta{criticalAlerts.length !== 1 ? 's' : ''}
+          </button>
+        )}
         {showCriticalAlerts && (
           <div className="overflow-hidden border border-red-200 rounded-xl bg-white shadow-xl animate-fade-in-up relative">
             <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 bg-gradient-to-r from-red-600 to-amber-600 gap-4">
@@ -402,7 +415,10 @@ const ClientDashboard: React.FC = () => {
                   <IconRefresh className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setShowCriticalAlerts(false)}
+                  onClick={() => {
+                    setShowCriticalAlerts(false);
+                    localStorage.setItem('clientCriticalAlertsPanelOpen', 'false');
+                  }}
                   className="flex items-center justify-center p-2 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-all bg-white/5 backdrop-blur-sm"
                   title="Cerrar Centro de Alertas"
                 >
