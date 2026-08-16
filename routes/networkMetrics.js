@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const https = require('https');
+const http = require('http');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const networkMetrics = require('../services/networkMetrics');
@@ -35,7 +35,8 @@ function lookupIsp(ip) {
         if (cached && Date.now() - cached.cachedAt < ISP_CACHE_TTL_MS) return resolve(cached);
         if (isPrivateIp(ip)) return resolve({ isp: 'Red interna', org: null, city: null });
 
-        const req = https.get(`https://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,isp,org,city,query`, { timeout: 4000 }, (res) => {
+        // ip-api.com's free tier rejects HTTPS ("SSL unavailable for this endpoint") — plain HTTP only.
+        const req = http.get(`http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,isp,org,city,query`, { timeout: 4000 }, (res) => {
             let data = '';
             res.on('data', (c) => { data += c; });
             res.on('end', () => {
