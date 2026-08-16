@@ -1,9 +1,11 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import AccountManagement from './AccountManagement';
 import LogoSettings from './LogoSettings';
 
 const ClientSettingsPage: React.FC = () => {
+    const [activeTab, setActiveTab] = useState<'labels' | 'integrations'>('integrations');
+
     return (
         <div className="max-w-5xl mx-auto space-y-8 pb-12 animate-in fade-in duration-500">
             <header className="flex flex-col gap-2">
@@ -11,14 +13,31 @@ const ClientSettingsPage: React.FC = () => {
                 <p className="text-[var(--text-secondary)] font-medium">Administra tus integraciones y preferencias de despacho.</p>
             </header>
 
-            <div className="bg-[var(--background-secondary)] rounded-2xl shadow-xl border border-[var(--border-primary)] overflow-hidden">
-                <div className="p-1 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
-                <div className="p-8">
-                    <AccountManagement />
-                </div>
+            <div className="flex gap-1 border-b border-[var(--border-primary)]">
+                <button
+                    onClick={() => setActiveTab('integrations')}
+                    className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors border-b-2 ${activeTab === 'integrations' ? 'border-[var(--brand-primary)] text-[var(--brand-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                >
+                    Integraciones
+                </button>
+                <button
+                    onClick={() => setActiveTab('labels')}
+                    className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors border-b-2 ${activeTab === 'labels' ? 'border-[var(--brand-primary)] text-[var(--brand-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                >
+                    Etiquetas
+                </button>
             </div>
 
-            <LogoSettings />
+            {activeTab === 'integrations' && (
+                <div className="bg-[var(--background-secondary)] rounded-2xl shadow-xl border border-[var(--border-primary)] overflow-hidden">
+                    <div className="p-1 bg-gradient-to-r from-blue-600 to-indigo-600"></div>
+                    <div className="p-8">
+                        <AccountManagement />
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'labels' && <LogoSettings />}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="bg-[var(--background-secondary)] rounded-2xl p-8 shadow-lg border border-[var(--border-primary)]">
