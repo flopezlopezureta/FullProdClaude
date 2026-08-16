@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useMemo } from 'react';
-import { getLocalDateString } from '../../utils/dateUtils';
+import { getLocalDateString, getLogicalDateString } from '../../utils/dateUtils';
 import { AuthContext } from '../../contexts/AuthContext';
 import { api, PackageCreationData } from '../../services/api';
 import type { Package } from '../../types';
@@ -10,7 +10,7 @@ import CreatePackageModal from '../modals/CreatePackageModal';
 import ClientPackageFilters from './ClientPackageFilters';
 import ShippingLabelModal from './ShippingLabelModal';
 import BatchShippingLabelModal from './BatchShippingLabelModal';
-import { IconPlus, IconChevronLeft, IconChevronRight, IconChevronDown, IconFileSpreadsheet, IconPrinter, IconTrash, IconDownload, IconFileText, IconShopify, IconMercadoLibre, IconJumpseller, IconWoocommerce, IconFalabella } from '../Icon';
+import { IconPlus, IconChevronLeft, IconChevronRight, IconChevronDown, IconFileSpreadsheet, IconPrinter, IconTrash, IconDownload, IconFileText, IconShopify, IconMercadoLibre, IconJumpseller, IconWoocommerce, IconFalabella, IconAlertTriangle, IconRefresh, IconX } from '../Icon';
 import ImportPackagesModal from './ImportPackagesModal';
 import ExternalImportModal from '../modals/ExternalImportModal';
 import EditPackageModal from '../modals/EditPackageModal';
@@ -303,8 +303,142 @@ const ClientDashboard: React.FC = () => {
 
   const selectedPackageObjects = packages.filter(p => selectedPackages.has(p.id));
 
+  // --- Centro de Alertas Críticas (solo para clientes) ---
+  // Muestra paquetes que no se entregaron por algún motivo (reprogramado, con problema, o
+  // cancelado). Al re-consultar (cada 45s o al abrir), un paquete que ya se entregó en una
+  // visita posterior o que efectivamente se canceló deja de aparecer aquí solo, porque ya no
+  // coincide con el filtro de estado — no hace falta lógica extra para "resolver" la alerta.
+  const [criticalAlerts, setCriticalAlerts] = useState<Package[]>([]);
+  const [showCriticalAlerts, setShowCriticalAlerts] = useState(true);
+  const [alertView, setAlertView] = useState<'today' | 'history'>('today');
+  const [alertDate, setAlertDate] = useState(getISODate(new Date()));
+
+  const fetchCriticalAlerts = async () => {
+    try {
+      const tz = auth?.systemSettings?.timezone || 'America/Santiago';
+      const targetDate = alertView === 'today' ? getLogicalDateString(new Date(), tz) : alertDate;
+      const commonParams = { startDate: targetDate, endDate: targetDate, dateType: 'updated' as const, limit: 50 };
+
+      const [{ packages: rescheduled }, { packages: problem }, { packages: cancelled }] = await Promise.all([
+        api.getPackages({ ...commonParams, statusFilter: 'REPROGRAMADO' }),
+        api.getPackages({ ...commonParams, statusFilter: 'PROBLEMA' }),
+        api.getPackages({ ...commonParams, statusFilter: 'CANCELADO' }),
+      ]);
+
+      const merged = [...rescheduled, ...problem, ...cancelled].sort((a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+      const uniqueMerged = merged.filter((pkg, index, self) => self.findIndex(p => p.id === pkg.id) === index);
+      setCriticalAlerts(uniqueMerged);
+    } catch (err) {
+      console.error('Error fetching critical alerts:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCriticalAlerts();
+    const interval = setInterval(fetchCriticalAlerts, 45000);
+    return () => clearInterval(interval);
+  }, [alertView, alertDate]);
+
+  const alertStatusLabel = (status: string) => {
+    if (status === 'CANCELADO') return 'Cancelado';
+    if (status === 'PROBLEMA') return 'Con problema';
+    return 'Reprogramado';
+  };
+  const alertStatusColor = (status: string) => {
+    if (status === 'CANCELADO') return 'bg-red-50/30 border-red-100 hover:border-red-300 text-red-700';
+    if (status === 'PROBLEMA') return 'bg-orange-50/30 border-orange-100 hover:border-orange-300 text-orange-700';
+    return 'bg-amber-50/30 border-amber-100 hover:border-amber-300 text-amber-700';
+  };
+
   return (
     <div className="space-y-6">
+        {showCriticalAlerts && (
+          <div className="overflow-hidden border border-red-200 rounded-xl bg-white shadow-xl animate-fade-in-up relative">
+            <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 bg-gradient-to-r from-red-600 to-amber-600 gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-8 h-8 bg-white/20 rounded-lg backdrop-blur-md">
+                  <IconAlertTriangle className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex flex-col">
+                  <h2 className="text-sm font-black text-white uppercase tracking-[0.2em]">
+                    {alertView === 'today' ? 'Centro de Alertas (Hoy)' : `Historial de Alertas (${new Date(alertDate + 'T12:00:00').toLocaleDateString()})`}
+                  </h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button
+                      onClick={() => setAlertView('today')}
+                      className={`px-3 py-0.5 text-[9px] font-black rounded-full transition-all uppercase tracking-tighter ${alertView === 'today' ? 'bg-white text-red-600 shadow-sm' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+                    >
+                      Hoy
+                    </button>
+                    <button
+                      onClick={() => setAlertView('history')}
+                      className={`px-3 py-0.5 text-[9px] font-black rounded-full transition-all uppercase tracking-tighter ${alertView === 'history' ? 'bg-white text-red-600 shadow-sm' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+                    >
+                      Anteriores
+                    </button>
+                  </div>
+                </div>
+                <span className="px-3 py-1 text-[10px] font-black text-red-600 bg-white rounded-full">
+                  {criticalAlerts.length} PAQUETES
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                {alertView === 'history' && (
+                  <input
+                    type="date"
+                    value={alertDate}
+                    onChange={(e) => setAlertDate(e.target.value)}
+                    className="bg-white/20 border-none text-white text-[11px] font-black rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-white/50 outline-none backdrop-blur-sm placeholder-white/50"
+                  />
+                )}
+                <button
+                  onClick={fetchCriticalAlerts}
+                  className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+                  title="Refrescar alertas"
+                >
+                  <IconRefresh className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setShowCriticalAlerts(false)}
+                  className="flex items-center justify-center p-2 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-all bg-white/5 backdrop-blur-sm"
+                  title="Cerrar Centro de Alertas"
+                >
+                  <IconX className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex overflow-x-auto p-4 gap-4 scrollbar-hide bg-gray-50/50">
+              {criticalAlerts.length === 0 && (
+                <div className="flex-1 flex flex-col items-center justify-center py-8 opacity-60">
+                  <IconAlertTriangle className="w-10 h-10 text-gray-400 mb-2" />
+                  <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">Sin alertas para esta fecha</p>
+                </div>
+              )}
+              {criticalAlerts.map(pkg => (
+                <div
+                  key={pkg.id}
+                  onClick={() => handleSelectPackageDetails(pkg)}
+                  className={`flex-shrink-0 w-72 p-4 border rounded-xl shadow-sm cursor-pointer transition-all hover:shadow-md hover:scale-[1.02] ${alertStatusColor(pkg.status)}`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="px-2.5 py-1 text-[9px] font-black rounded-lg uppercase tracking-wider bg-white/70">
+                      {alertStatusLabel(pkg.status)}
+                    </span>
+                    <span className="text-[10px] text-gray-500">{new Date(pkg.updatedAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <p className="text-sm font-bold text-[var(--text-primary)] truncate">{pkg.recipientName}</p>
+                  <p className="text-xs text-gray-500 truncate">{pkg.recipientAddress}</p>
+                  {pkg.notes && <p className="text-xs text-gray-400 mt-1 truncate">{pkg.notes}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
                 <h1 className="text-2xl font-bold text-[var(--text-primary)]">¡Bienvenido, {auth?.user?.name}!</h1>
