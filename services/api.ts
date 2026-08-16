@@ -192,6 +192,7 @@ export interface UserCreationData extends RegisterData {
 }
 
 export interface UserUpdateData extends Partial<UserCreationData> {
+    logoBase64?: string;
     companyName?: string;
     companyRut?: string;
     companyAddress?: string;

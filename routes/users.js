@@ -113,7 +113,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
             updateData = { ...incomingData };
         } else {
             // Non-admins (Clients/Drivers) can only update specific safe fields
-            const safeFields = ['name', 'phone', 'address', 'pickupAddress', 'integrations', 'rut'];
+            const safeFields = ['name', 'phone', 'address', 'pickupAddress', 'integrations', 'rut', 'logoBase64'];
             safeFields.forEach(field => {
                 if (incomingData[field] !== undefined) {
                     updateData[field] = incomingData[field];

@@ -7,10 +7,11 @@ import { LabelFormat, PackageSource } from '../../constants';
 interface ShippingLabelProps {
   pkg: Package;
   creatorName: string;
+  creatorLogoBase64?: string;
   format?: LabelFormat;
 }
 
-const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format = LabelFormat.CompactThermal }) => {
+const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creatorLogoBase64, format = LabelFormat.CompactThermal }) => {
     const [qrCodeUrl, setQrCodeUrl] = useState('');
     const { systemSettings } = useContext(AuthContext)!;
 
@@ -64,6 +65,9 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format 
         return (
             <div className="bg-white p-5 font-sans text-black w-[100mm] h-[150mm] border-4 border-black flex flex-col overflow-hidden">
                 <div className="text-center mb-2">
+                    {creatorLogoBase64 && (
+                        <img src={creatorLogoBase64} alt="" className="h-8 max-w-[50mm] mx-auto mb-1 object-contain" />
+                    )}
                     <h2 className="text-md font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
                     <div className="flex flex-row flex-nowrap justify-between items-center mt-1.5 border-y border-black/10 py-1 px-2 overflow-hidden">
                         <span className="text-[10px] font-black text-black uppercase truncate max-w-[60mm] text-left">{creatorName}</span>
@@ -120,7 +124,8 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format 
                     <p className="text-lg font-black tracking-tighter">IDENTIFICACIÓN DE ENTREGA</p>
                 </div>
                 <div className="flex justify-between items-center px-4 mb-2 bg-gray-50 border-b border-black py-1">
-                    <div className="text-left flex-1 overflow-hidden pr-2">
+                    <div className="text-left flex-1 overflow-hidden pr-2 flex items-center gap-2">
+                        {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-6 max-w-[20mm] object-contain flex-shrink-0" />}
                         <p className="text-[11px] font-black text-black truncate uppercase">{creatorName}</p>
                     </div>
                     <div className="text-right whitespace-nowrap">
@@ -226,11 +231,14 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format 
         return (
             <div className="bg-white p-8 font-sans text-black w-full h-full min-h-[297mm] flex flex-col border-4 border-gray-100">
                 <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
-                    <div>
-                        <h1 className="text-2xl font-black tracking-tighter">{systemSettings.companyName.toUpperCase()}</h1>
-                        <div className="flex items-center space-x-6 mt-1">
-                            <p className="text-xl font-black text-black uppercase truncate max-w-[100mm]">{creatorName}</p>
-                            <p className="text-xl font-black text-black border-l-2 border-black pl-6">{formattedDate}</p>
+                    <div className="flex items-center gap-4">
+                        {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-14 max-w-[35mm] object-contain flex-shrink-0" />}
+                        <div>
+                            <h1 className="text-2xl font-black tracking-tighter">{systemSettings.companyName.toUpperCase()}</h1>
+                            <div className="flex items-center space-x-6 mt-1">
+                                <p className="text-xl font-black text-black uppercase truncate max-w-[100mm]">{creatorName}</p>
+                                <p className="text-xl font-black text-black border-l-2 border-black pl-6">{formattedDate}</p>
+                            </div>
                         </div>
                     </div>
                     <div className="bg-black text-white px-3 py-1 font-black text-xs">DISEÑO 4</div>
@@ -283,7 +291,8 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format 
             <div className="bg-white p-5 font-sans text-black w-full h-[148mm] border-2 border-black flex flex-col overflow-hidden relative">
                 <div className="absolute top-0 right-0 bg-black text-white p-1.5 font-black text-[7px] uppercase tracking-widest leading-none">DISEÑO 5</div>
                 <div className="flex justify-between items-end mb-4 border-b border-gray-100 pb-2">
-                    <div className="flex flex-col flex-1 overflow-hidden pr-3">
+                    <div className="flex items-center gap-2 flex-1 overflow-hidden pr-3">
+                        {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-7 max-w-[20mm] object-contain flex-shrink-0" />}
                         <p className="text-[13px] font-[1000] text-black uppercase truncate">{creatorName}</p>
                     </div>
                     <div className="text-right whitespace-nowrap">
@@ -401,6 +410,7 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, format 
                 */}
                 <div className="w-[80mm] h-[100mm] border-4 border-black p-3 flex flex-col rotate-90 origin-center scale-[0.98]">
                     <div className="text-center mb-2">
+                        {creatorLogoBase64 && <img src={creatorLogoBase64} alt="" className="h-6 max-w-[35mm] mx-auto mb-0.5 object-contain" />}
                         <h2 className="text-[11px] font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
                         <div className="flex flex-row flex-nowrap justify-between items-center mt-1 border-y border-black/10 py-1 px-2 overflow-hidden">
                             <span className="text-[8px] font-black text-black uppercase truncate max-w-[40mm] text-left">{creatorName}</span>

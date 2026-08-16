@@ -409,6 +409,7 @@ async function initializeDatabase() {
                 'rut TEXT',
                 'address TEXT',
                 'storesInfo TEXT',
+                'logoBase64 TEXT',
                 'invoices JSONB',
                 'hasCompany BOOLEAN',
                 'companyName TEXT',

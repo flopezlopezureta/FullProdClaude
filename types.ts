@@ -238,6 +238,7 @@ export interface User {
   address?: string;
   pickupAddress?: string;
   storesInfo?: string;
+  logoBase64?: string;
   pricing?: UserPricing;
   clientIdentifier?: string;
   pickupCost?: number;

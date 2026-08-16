@@ -1,6 +1,7 @@
 
 import React from 'react';
 import AccountManagement from './AccountManagement';
+import LogoSettings from './LogoSettings';
 
 const ClientSettingsPage: React.FC = () => {
     return (
@@ -16,6 +17,8 @@ const ClientSettingsPage: React.FC = () => {
                     <AccountManagement />
                 </div>
             </div>
+
+            <LogoSettings />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="bg-[var(--background-secondary)] rounded-2xl p-8 shadow-lg border border-[var(--border-primary)]">

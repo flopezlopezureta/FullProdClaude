@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { IconX, IconPrinter } from '../Icon';
 import { Package } from '../../types';
 import ShippingLabel from './ShippingLabel';
 import { LabelFormat, PackageSource } from '../../constants';
 import { api } from '../../services/api';
+import { AuthContext } from '../../contexts/AuthContext';
 
 interface BatchShippingLabelModalProps {
   packages: Package[];
@@ -24,6 +25,7 @@ const formatOptions = [
 ];
 
 const BatchShippingLabelModal: React.FC<BatchShippingLabelModalProps> = ({ packages: initialPackages, creatorName, onClose }) => {
+    const { user } = useContext(AuthContext)!;
     const [packages, setPackages] = useState<Package[]>(initialPackages);
     // Hardcode Carta as default
     const [format, setFormat] = useState<LabelFormat>(LabelFormat.LetterMulti);
@@ -97,7 +99,7 @@ const BatchShippingLabelModal: React.FC<BatchShippingLabelModalProps> = ({ packa
                         <div className="letter-grid">
                             {packages.slice(pageIdx * 4, pageIdx * 4 + 4).map((pkg) => (
                                 <div key={pkg.id} className="label-wrapper-letter">
-                                    <ShippingLabel pkg={pkg} creatorName={creatorName} format={format === LabelFormat.LetterMulti ? letterDesign : format} />
+                                    <ShippingLabel pkg={pkg} creatorName={creatorName} creatorLogoBase64={user?.logoBase64} format={format === LabelFormat.LetterMulti ? letterDesign : format} />
                                 </div>
                             ))}
                         </div>
@@ -106,7 +108,7 @@ const BatchShippingLabelModal: React.FC<BatchShippingLabelModalProps> = ({ packa
             ) : (
                 packages.map((pkg, idx) => (
                     <div key={pkg.id} className={`label-wrapper ${idx < packages.length - 1 ? 'print-page-break' : 'last-label'}`}>
-                        <ShippingLabel pkg={pkg} creatorName={creatorName} format={format} />
+                        <ShippingLabel pkg={pkg} creatorName={creatorName} creatorLogoBase64={user?.logoBase64} format={format} />
                     </div>
                 ))
             )}
@@ -207,7 +209,7 @@ const BatchShippingLabelModal: React.FC<BatchShippingLabelModalProps> = ({ packa
                                      {loadingIds.has(pkg.id) && <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>}
                                      {pkg.source === PackageSource.MercadoLibre && !loadingIds.has(pkg.id) && pkg.trackingId && <div className="text-[10px] font-black bg-black text-white px-2 py-0.5 rounded-full">SCA OK</div>}
                                 </div>
-                                <ShippingLabel pkg={pkg} creatorName={creatorName} format={format === LabelFormat.LetterMulti ? letterDesign : (isMultiLabel ? format : format)} />
+                                <ShippingLabel pkg={pkg} creatorName={creatorName} creatorLogoBase64={user?.logoBase64} format={format === LabelFormat.LetterMulti ? letterDesign : (isMultiLabel ? format : format)} />
                             </div>
                         ))}
                     </div>

@@ -24,7 +24,7 @@ const formatOptions = [
 ];
 
 const ShippingLabelModal: React.FC<ShippingLabelModalProps> = ({ pkg: initialPkg, creatorName, onClose }) => {
-    const { systemSettings } = useContext(AuthContext)!;
+    const { systemSettings, user } = useContext(AuthContext)!;
     const [pkg, setPkg] = useState<Package>(initialPkg);
     const [format, setFormat] = useState<LabelFormat>(systemSettings.labelFormat || LabelFormat.CompactThermal);
     const [loadingTracking, setLoadingTracking] = useState(false);
@@ -127,7 +127,7 @@ const ShippingLabelModal: React.FC<ShippingLabelModalProps> = ({ pkg: initialPkg
                     {/* Preview Area */}
                     <div className="flex-1 overflow-auto p-12 flex flex-col items-center justify-start custom-scrollbar bg-slate-200 shadow-inner">
                         <div className={`bg-white shadow-[0_35px_60px_-15px_rgba(0,0,0,0.5)] scale-90 origin-top transform transition-transform duration-300`}>
-                             <ShippingLabel pkg={pkg} creatorName={creatorName} format={format} />
+                             <ShippingLabel pkg={pkg} creatorName={creatorName} creatorLogoBase64={user?.logoBase64} format={format} />
                         </div>
                     </div>
                 </div>
@@ -166,7 +166,7 @@ const ShippingLabelModal: React.FC<ShippingLabelModalProps> = ({ pkg: initialPkg
                     zIndex: -100
                 }}
             >
-                <ShippingLabel pkg={pkg} creatorName={creatorName} format={format} />
+                <ShippingLabel pkg={pkg} creatorName={creatorName} creatorLogoBase64={user?.logoBase64} format={format} />
             </div>,
             document.body
         )}
