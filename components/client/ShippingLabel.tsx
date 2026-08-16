@@ -64,14 +64,18 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creator
     if (format === LabelFormat.CompactThermal) {
         return (
             <div className="bg-white p-5 font-sans text-black w-[100mm] h-[150mm] border-4 border-black flex flex-col overflow-hidden">
-                <div className="text-center mb-2">
-                    {creatorLogoBase64 && (
-                        <img src={creatorLogoBase64} alt="" className="h-8 max-w-[50mm] mx-auto mb-1 object-contain" />
-                    )}
-                    <h2 className="text-md font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
-                    <div className="flex flex-row flex-nowrap justify-between items-center mt-1.5 border-y border-black/10 py-1 px-2 overflow-hidden">
-                        <span className="text-[10px] font-black text-black uppercase truncate max-w-[60mm] text-left">{creatorName}</span>
-                        <span className="text-[10px] font-black text-black whitespace-nowrap text-right">{formattedDate}</span>
+                <div className="mb-2">
+                    <div className="flex flex-row justify-between items-start border-y border-black/10 py-1.5 px-2 overflow-hidden gap-2">
+                        <div className="flex flex-col items-start text-left min-w-0">
+                            {creatorLogoBase64 && (
+                                <img src={creatorLogoBase64} alt="" className="h-8 max-w-[35mm] mb-1 object-contain" />
+                            )}
+                            <span className="text-[10px] font-black text-black uppercase truncate max-w-[35mm]">{creatorName}</span>
+                        </div>
+                        <div className="flex flex-col items-end text-right flex-shrink-0">
+                            <h2 className="text-md font-black tracking-tight leading-none">{systemSettings.companyName.toUpperCase()}</h2>
+                            <span className="text-[10px] font-black text-black whitespace-nowrap mt-1">{formattedDate}</span>
+                        </div>
                     </div>
                 </div>
                 <div className="bg-white text-black p-3 text-center border-2 border-black rounded-xl mb-4">
@@ -109,7 +113,7 @@ const ShippingLabel: React.FC<ShippingLabelProps> = ({ pkg, creatorName, creator
                              <p className="text-[7px] font-bold text-gray-400 uppercase leading-none">ID Operativo:</p>
                              <p className="text-[10px] font-mono font-black break-all leading-tight">{qrContent}</p>
                              <div className="w-full h-1.5 bg-black mt-1"></div>
-                             <p className="text-[6px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">Powered by Full Envíos</p>
+                             <p className="text-[8px] font-bold text-gray-400 uppercase tracking-wider mt-2">Powered by Full Envíos</p>
                          </div>
                     </div>
                 </div>
