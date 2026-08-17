@@ -137,11 +137,29 @@ router.post('/simulate-meli-closure', authMiddleware, async (req, res) => {
 // TEMPORARY — forces an immediate Mercado Libre token refresh check for one client, instead of
 // waiting for the next automatic poll cycle. Useful right after a client reconnects their ML
 // account to confirm the new refresh token actually works, without a 5-10min wait.
+// Tests EVERY linked Mercado Libre account individually (by account.id) — calling
+// getValidMeliToken without an accountId falls back to a legacy integrations.meli field first,
+// which can silently test a stale token instead of the one just reconnected under integrations.accounts.
 router.get('/meli-token-check/:userId', authMiddleware, requireSuperUserDebug, async (req, res) => {
     const meliPollingService = require('../services/meliPollingService');
     try {
-        const token = await meliPollingService.getValidMeliToken(req.params.userId);
-        res.json({ userId: req.params.userId, ok: !!token, message: token ? 'Token válido, refresco exitoso.' : 'No se pudo obtener un token válido (revisa el mensaje de error en los logs del servidor).' });
+        const { rows } = await db.query('SELECT integrations FROM users WHERE id = $1', [req.params.userId]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
+        const integrations = rows[0].integrations || {};
+        const accounts = (integrations.accounts || []).filter(acc => acc.type === 'MERCADO_LIBRE');
+
+        if (accounts.length === 0) {
+            // No hay cuentas en el array multi-cuenta — probar la estructura legacy tal cual.
+            const token = await meliPollingService.getValidMeliToken(req.params.userId);
+            return res.json({ userId: req.params.userId, accounts: [{ nickname: '(legacy integrations.meli)', ok: !!token }] });
+        }
+
+        const results = [];
+        for (const acc of accounts) {
+            const token = await meliPollingService.getValidMeliToken(req.params.userId, acc.id);
+            results.push({ accountId: acc.id, nickname: acc.nickname, ok: !!token });
+        }
+        res.json({ userId: req.params.userId, accounts: results });
     } catch (e) {
         res.status(500).json({ userId: req.params.userId, ok: false, message: e.message });
     }
