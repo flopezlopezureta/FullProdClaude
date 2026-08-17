@@ -1413,6 +1413,14 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
             ).catch(err => console.error('[Dispatch] Falabella Directo status push error:', err));
         }
 
+        // Falabella Seller Center: mark the order ready-to-ship once our courier physically takes
+        // the package for dispatch — the only seller-facing status transition Falabella's API
+        // actually supports (see syncReadyToShipToFalabella for why SetStatusToShipped/Delivered
+        // were never valid calls in the first place).
+        if (currentPkg.source === 'FALABELLA') {
+            syncReadyToShipToFalabella(realId).catch(err => console.error('[Dispatch] Falabella ready-to-ship sync error:', err));
+        }
+
         res.json({
             message: `Paquete ${realId} asignado a ${driverName} y en tránsito.`,
             package: updatedPkg
@@ -1573,6 +1581,95 @@ async function getDriverLocation(driverId) {
         console.error('[FalabellaDirect] Error fetching driver location:', e);
     }
     return { latitude: 0, longitude: 0 };
+}
+
+// Marks the order's items as ready-to-ship in Falabella Seller Center at dispatch time (when our
+// courier actually takes possession) — the one real, documented seller-facing status action.
+// Confirmed 2026-08-17 against Falabella's own "Flujos de Órdenes" docs: SetStatusToShipped and
+// SetStatusToDelivered (used below in syncDeliveryToFalabella) are NOT valid seller actions —
+// they're set automatically by Falabella's own systems based on courier tracking, which is why
+// those calls were failing with "E008 Invalid Action" for every order. SetStatusToReadyToShip is
+// the only status transition a seller can actually make via this API.
+async function syncReadyToShipToFalabella(packageId, attempts = 1) {
+    const MAX_ATTEMPTS = 3;
+    const DELAY_MULTIPLIER = 3000;
+    try {
+        let apiKey = null;
+        let sellerId = null;
+        const { rows: pkgRows } = await db.query(
+            'SELECT p."sourceAccountId", p."falabellaOrderId", u.integrations FROM packages p JOIN users u ON p."creatorId" = u.id WHERE p.id = $1',
+            [packageId]
+        );
+        if (pkgRows.length === 0) throw new Error('Paquete no encontrado.');
+        const falabellaOrderId = pkgRows[0].falabellaOrderId;
+        if (pkgRows[0].integrations) {
+            const integrations = typeof pkgRows[0].integrations === 'string' ? JSON.parse(pkgRows[0].integrations) : pkgRows[0].integrations;
+            const accounts = integrations.accounts || [];
+            const falabellaAccount = accounts.find(acc => acc.id === pkgRows[0].sourceAccountId && acc.type === 'FALABELLA')
+                                     || accounts.find(acc => acc.type === 'FALABELLA');
+            if (falabellaAccount && falabellaAccount.credentials) {
+                apiKey = falabellaAccount.credentials.falabellaApiKey;
+                sellerId = falabellaAccount.credentials.falabellaSellerId;
+            }
+        }
+        if (!apiKey || !sellerId) {
+            const { rows: settingsRows } = await db.query('SELECT falabella_api_key, falabella_seller_id FROM integration_settings WHERE id = 1');
+            if (settingsRows.length > 0 && settingsRows[0].falabella_api_key) {
+                apiKey = decrypt(settingsRows[0].falabella_api_key);
+                sellerId = settingsRows[0].falabella_seller_id;
+            }
+        }
+        if (!apiKey || !sellerId) throw new Error('Credenciales de Falabella no configuradas.');
+        if (!falabellaOrderId) throw new Error('ID de orden de Falabella no encontrado en el paquete.');
+
+        const makeFalabellaApiCall = async (action, extraParams = null) => {
+            const params = { Action: action, Timestamp: new Date().toISOString(), UserID: sellerId, Version: '1.0', Format: 'JSON', ...extraParams };
+            params.Signature = buildFalabellaSignature(params, apiKey);
+            const queryString = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+            const https = require('https');
+            return new Promise((resolve, reject) => {
+                const request = https.request({ hostname: 'sellercenter-api.falabella.com', path: `/?${queryString}`, method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' } }, (res) => {
+                    let data = '';
+                    res.on('data', c => data += c);
+                    res.on('end', () => {
+                        if (res.statusCode >= 200 && res.statusCode < 300) {
+                            try { resolve(JSON.parse(data)); } catch (e) { resolve(data); }
+                        } else {
+                            reject(new Error(`Falabella API returned HTTP ${res.statusCode}: ${data}`));
+                        }
+                    });
+                });
+                request.on('error', reject);
+                request.end();
+            });
+        };
+
+        const itemsResponse = await makeFalabellaApiCall('GetOrderItems', { OrderId: falabellaOrderId });
+        const orderItemsRaw = itemsResponse?.SuccessResponse?.Body?.OrderItems;
+        let orderItemIds = [];
+        if (orderItemsRaw) {
+            const items = Array.isArray(orderItemsRaw) ? orderItemsRaw : (orderItemsRaw.OrderItem ? (Array.isArray(orderItemsRaw.OrderItem) ? orderItemsRaw.OrderItem : [orderItemsRaw.OrderItem]) : []);
+            orderItemIds = items.map(item => item.OrderItemId).filter(Boolean);
+        }
+        if (orderItemIds.length === 0) throw new Error(`No se encontraron ítems para la orden Falabella ID ${falabellaOrderId}`);
+
+        await makeFalabellaApiCall('SetStatusToReadyToShip', { OrderItemIds: JSON.stringify(orderItemIds) });
+        await db.query(
+            'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+            [packageId, 'SYNC_FALABELLA_READY_TO_SHIP', 'Falabella API', `Marcado como "listo para envío" en Falabella (Items: ${orderItemIds.join(', ')}).`, new Date()]
+        );
+        console.log(`[FalabellaSync] Package ${packageId} marked ready-to-ship in Falabella.`);
+    } catch (error) {
+        console.error(`[FalabellaSync] ReadyToShip fallo en intento ${attempts}/${MAX_ATTEMPTS} para paquete ${packageId}:`, error.message);
+        if (attempts < MAX_ATTEMPTS) {
+            setTimeout(() => syncReadyToShipToFalabella(packageId, attempts + 1), attempts * DELAY_MULTIPLIER);
+        } else {
+            await db.query(
+                'INSERT INTO integration_sync_queue ("packageId", integration, action, payload, error, "nextAttemptAt") VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL \'15 minutes\')',
+                [packageId, 'FALABELLA', 'READY_TO_SHIP', '{}', error.message]
+            );
+        }
+    }
 }
 
 async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
@@ -2690,4 +2787,5 @@ module.exports = router;
 // Named exports so the generic integration_sync_queue processor (services/falabellaDirectService.js)
 // can retry Falabella Seller Center / Envíame pushes too, not just Falabella Directo's own.
 module.exports.syncDeliveryToFalabella = syncDeliveryToFalabella;
+module.exports.syncReadyToShipToFalabella = syncReadyToShipToFalabella;
 module.exports.syncDeliveryToEnviame = syncDeliveryToEnviame;

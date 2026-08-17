@@ -200,7 +200,11 @@ async function processIntegrationSyncQueue() {
                 // Lazy require to avoid a circular dependency (routes/packages.js requires this
                 // service for the outbound status-push hooks).
                 const packagesRoute = require('../routes/packages.js');
-                if (typeof packagesRoute.syncDeliveryToFalabella === 'function') {
+                if (row.action === 'READY_TO_SHIP') {
+                    if (typeof packagesRoute.syncReadyToShipToFalabella === 'function') {
+                        await packagesRoute.syncReadyToShipToFalabella(row.packageId, 1);
+                    }
+                } else if (typeof packagesRoute.syncDeliveryToFalabella === 'function') {
                     await packagesRoute.syncDeliveryToFalabella(row.packageId, payload.trackingId, 1);
                 }
             } else if (row.integration === 'ENVIAME') {
