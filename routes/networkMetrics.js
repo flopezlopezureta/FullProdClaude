@@ -92,7 +92,10 @@ router.get('/history-days', authMiddleware, requireSuperUser, async (req, res) =
              WHERE date >= (CURRENT_DATE - INTERVAL '3 days')
              GROUP BY date ORDER BY date DESC`
         );
-        res.json({ days: rows.map(r => ({ date: r.date, requestCount: r.requestCount })) });
+        // node-postgres parses a DATE column into a JS Date at UTC midnight of that calendar day —
+        // res.json() then serializes it as a full ISO timestamp ("2026-08-16T04:00:00.000Z"), not
+        // the plain YYYY-MM-DD the frontend day-picker and /history's ?date= param expect.
+        res.json({ days: rows.map(r => ({ date: r.date.toISOString().slice(0, 10), requestCount: r.requestCount })) });
     } catch (e) {
         res.status(500).json({ message: 'No se pudo cargar el historial de días.', error: e.message });
     }
