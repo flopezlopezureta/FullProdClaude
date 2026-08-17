@@ -15,6 +15,7 @@ interface IpEntry {
     isp?: string | null;
     org?: string | null;
     city?: string | null;
+    users?: string[];
 }
 
 interface HourEntry {
@@ -130,6 +131,7 @@ const NetworkTrafficPage: React.FC = () => {
                                     <tr className="text-left text-xs text-[var(--text-muted)] border-b border-[var(--border-primary)]">
                                         <th className="p-3">IP</th>
                                         <th className="p-3">Proveedor / Red</th>
+                                        <th className="p-3">Usuario(s)</th>
                                         <th className="p-3 text-right">Peticiones</th>
                                         <th className="p-3 text-right">Prom.</th>
                                         <th className="p-3 text-right">Máx.</th>
@@ -146,6 +148,13 @@ const NetworkTrafficPage: React.FC = () => {
                                                     <span>{row.isp || row.org}{row.city ? ` (${row.city})` : ''}</span>
                                                 ) : (
                                                     <span className="italic">—</span>
+                                                )}
+                                            </td>
+                                            <td className="p-3 text-xs">
+                                                {row.users && row.users.length > 0 ? (
+                                                    <span className="text-[var(--text-primary)] font-medium">{row.users.join(', ')}</span>
+                                                ) : (
+                                                    <span className="italic text-[var(--text-muted)]">—</span>
                                                 )}
                                             </td>
                                             <td className="p-3 text-right">{row.requestCount}</td>

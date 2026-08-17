@@ -70,7 +70,7 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
     for (const r of records) {
         const key = r.ip || 'desconocida';
         if (!byIpMap.has(key)) {
-            byIpMap.set(key, { ip: key, requestCount: 0, totalMs: 0, maxMs: 0, errorCount: 0, firstSeen: r.ts, lastSeen: r.ts });
+            byIpMap.set(key, { ip: key, requestCount: 0, totalMs: 0, maxMs: 0, errorCount: 0, firstSeen: r.ts, lastSeen: r.ts, userIds: new Set() });
         }
         const entry = byIpMap.get(key);
         entry.requestCount++;
@@ -79,6 +79,16 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
         if (r.statusCode >= 400 || r.statusCode === 0) entry.errorCount++;
         entry.firstSeen = Math.min(entry.firstSeen, r.ts);
         entry.lastSeen = Math.max(entry.lastSeen, r.ts);
+        if (r.userId) entry.userIds.add(r.userId);
+    }
+
+    // Resuelve nombre/rol de todos los usuarios vistos, en una sola consulta — permite mostrar
+    // qué admin/conductor generó el tráfico de cada IP (varios pueden compartir la misma wifi).
+    const allUserIds = [...new Set(records.map(r => r.userId).filter(Boolean))];
+    const userNameById = new Map();
+    if (allUserIds.length > 0) {
+        const { rows: userRows } = await db.query('SELECT id, name, role FROM users WHERE id = ANY($1)', [allUserIds]);
+        for (const u of userRows) userNameById.set(u.id, u.name || u.id);
     }
 
     const byIpArray = Array.from(byIpMap.values())
@@ -91,6 +101,7 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
             errorCount: e.errorCount,
             firstSeen: e.firstSeen,
             lastSeen: e.lastSeen,
+            users: [...e.userIds].map(id => userNameById.get(id) || id),
         }))
         .sort((a, b) => (b.avgMs * (1 + b.errorRate / 100)) - (a.avgMs * (1 + a.errorRate / 100)));
 

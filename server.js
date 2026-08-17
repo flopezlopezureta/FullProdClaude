@@ -58,6 +58,18 @@ app.use('/api', (req, res, next) => {
 // to the true original client IP regardless of how many internal hops follow, so prefer that.
 app.use((req, res, next) => {
   const start = Date.now();
+  // This middleware runs before any route's authMiddleware, so req.user isn't populated yet —
+  // decode the token independently (read-only, never blocks the request on a bad/missing token)
+  // just to attribute the request to a logged-in admin/driver in the traffic report.
+  let userId = null;
+  try {
+    const authHeader = req.header('Authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token || null);
+    if (token) {
+      const decoded = require('jsonwebtoken').verify(token, process.env.JWT_SECRET);
+      userId = decoded?.user?.id || null;
+    }
+  } catch (e) { /* not logged in, expired token, etc. — leave userId null */ }
   res.on('finish', () => {
     try {
       require('./services/networkMetrics').recordRequest({
@@ -66,6 +78,7 @@ app.use((req, res, next) => {
         path: req.path,
         statusCode: res.statusCode,
         durationMs: Date.now() - start,
+        userId,
       });
     } catch (e) { /* diagnostics must never break the real request */ }
   });

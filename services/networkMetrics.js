@@ -5,8 +5,8 @@
 const MAX_RECORDS = 8000;
 const records = [];
 
-function recordRequest({ ip, method, path, statusCode, durationMs }) {
-    records.push({ ts: Date.now(), ip, method, path, statusCode, durationMs });
+function recordRequest({ ip, method, path, statusCode, durationMs, userId }) {
+    records.push({ ts: Date.now(), ip, method, path, statusCode, durationMs, userId: userId || null });
     if (records.length > MAX_RECORDS) records.shift();
 }
 
