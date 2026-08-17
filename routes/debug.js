@@ -200,6 +200,79 @@ router.post('/repair-falabella-direct-stuck', authMiddleware, requireSuperUserDe
     res.json({ results, removedQueuedRetries: rowCount });
 });
 
+// TEMPORARY — read-only diagnostic for the Falabella Seller Center "E008 Invalid Action" errors
+// seen repeatedly for Kanino's packages (KANI-4b67-*) failing SetStatusToShipped/SetStatusToDelivered
+// in routes/packages.js#syncDeliveryToFalabella. That code only ever extracts OrderItemId from
+// GetOrderItems, discarding the item's actual current Status field — so we've been guessing at
+// why the transition is rejected instead of just reading it. This makes the exact same signed
+// GetOrderItems call and returns the raw item data (Status included) for one package, no writes.
+router.get('/falabella-order-status/:packageId', authMiddleware, requireSuperUserDebug, async (req, res) => {
+    const { decrypt, buildFalabellaSignature } = require('../services/falabellaCrypto');
+    const https = require('https');
+    const { packageId } = req.params;
+
+    try {
+        const { rows: pkgRows } = await db.query(
+            'SELECT p.id, p."falabellaOrderId", u.integrations FROM packages p JOIN users u ON p."creatorId" = u.id WHERE p.id = $1',
+            [packageId]
+        );
+        if (pkgRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
+        const pkg = pkgRows[0];
+        if (!pkg.falabellaOrderId) return res.status(400).json({ message: 'Este paquete no tiene falabellaOrderId.' });
+
+        let apiKey = null, sellerId = null;
+        if (pkg.integrations) {
+            const integrations = typeof pkg.integrations === 'string' ? JSON.parse(pkg.integrations) : pkg.integrations;
+            const falabellaAccount = (integrations.accounts || []).find(acc => acc.type === 'FALABELLA');
+            if (falabellaAccount?.credentials) {
+                apiKey = falabellaAccount.credentials.falabellaApiKey;
+                sellerId = falabellaAccount.credentials.falabellaSellerId;
+            }
+        }
+        if (!apiKey || !sellerId) {
+            const { rows: settingsRows } = await db.query('SELECT falabella_api_key, falabella_seller_id FROM integration_settings WHERE id = 1');
+            if (settingsRows.length > 0 && settingsRows[0].falabella_api_key) {
+                apiKey = decrypt(settingsRows[0].falabella_api_key);
+                sellerId = settingsRows[0].falabella_seller_id;
+            }
+        }
+        if (!apiKey || !sellerId) return res.status(400).json({ message: 'Credenciales de Falabella no configuradas para este paquete.' });
+
+        const params = {
+            Action: 'GetOrderItems',
+            Timestamp: new Date().toISOString(),
+            UserID: sellerId,
+            Version: '1.0',
+            Format: 'JSON',
+            OrderId: pkg.falabellaOrderId,
+        };
+        params.Signature = buildFalabellaSignature(params, apiKey);
+        const queryString = Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+
+        const raw = await new Promise((resolve, reject) => {
+            const request = https.request({ hostname: 'sellercenter-api.falabella.com', path: `/?${queryString}`, method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' } }, (r) => {
+                let data = '';
+                r.on('data', c => data += c);
+                r.on('end', () => resolve({ statusCode: r.statusCode, body: data }));
+            });
+            request.on('error', reject);
+            request.end();
+        });
+
+        let parsed = null;
+        try { parsed = JSON.parse(raw.body); } catch (e) { /* leave as raw string below */ }
+
+        res.json({
+            packageId,
+            falabellaOrderId: pkg.falabellaOrderId,
+            httpStatus: raw.statusCode,
+            response: parsed || raw.body,
+        });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
 // TEMPORARY — companion to the repair endpoint above, but for the case where Falabella wants a
 // genuine corrected resend rather than a silent backend patch: deletes the 2 stuck GOLIVERY3/4
 // test packages entirely (and their tracking_events/queued retries) so their LPN is free again —
