@@ -264,6 +264,14 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                                 </span>
                             )}
                             <div className="flex items-center gap-1.5 pl-1 border-l border-[var(--border-secondary)]">
+                                {pkg.source === 'FALABELLA_DIRECTO' && pkg.falabellaDirectLpn?.startsWith('TEST_LPN_') && (
+                                    <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-tight bg-amber-100 text-amber-800 border border-amber-300"
+                                        title={`Paquete de pruebas UAT — LPN ${pkg.falabellaDirectLpn}, no es una entrega real.`}
+                                    >
+                                        ⚠ Prueba UAT
+                                    </span>
+                                )}
                                 {displaySource && (
                                     <div className="flex items-center gap-1 bg-[var(--background-secondary)] px-1.5 py-0.5 rounded border border-[var(--border-secondary)]" title={displaySource === PackageSource.Manual ? `Creado por ${creatorName || 'Usuario'}` : `Importado desde ${displaySource}`}>
                                         {sourceIcons[displaySource] || (
