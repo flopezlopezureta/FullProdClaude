@@ -1909,7 +1909,7 @@ router.get('/meli/callback', async (req, res) => {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>ConexiÃ³n Exitosa | Full EnvÃ­os</title>
+                <title>Conexión Exitosa | Full Envíos</title>
                 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
                 <style>
                     :root {
@@ -1980,9 +1980,9 @@ router.get('/meli/callback', async (req, res) => {
                     <div class="icon-circle">
                         <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                     </div>
-                    <h1>ConexiÃ³n Exitosa</h1>
-                    <p>Tu cuenta de Mercado Libre <strong>${nickname}</strong> ha sido vinculada correctamente a Full EnvÃ­os.</p>
-                    <button onclick="window.close()" class="btn">Volver al Sistema</button>
+                    <h1>Conexión Exitosa</h1>
+                    <p>Tu cuenta de Mercado Libre <strong>${nickname}</strong> ha sido vinculada correctamente a Full Envíos.</p>
+                    <button onclick="if (window.opener) { window.close(); } else { window.location.href = '/'; }" class="btn">Volver al Sistema</button>
                 </div>
                 <script>
                     // Intentar avisar al sistema principal si es un popup
@@ -2108,7 +2108,7 @@ router.get('/shopify/callback', async (req, res) => {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>ConexiÃ³n Exitosa | Full EnvÃ­os</title>
+                <title>Conexión Exitosa | Full Envíos</title>
                 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
                 <style>
                     :root {
@@ -2179,9 +2179,9 @@ router.get('/shopify/callback', async (req, res) => {
                     <div class="icon-circle">
                         <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                     </div>
-                    <h1>ConexiÃ³n Exitosa</h1>
+                    <h1>Conexión Exitosa</h1>
                     <p>Tu tienda de Shopify <strong>${shop}</strong> ha sido vinculada correctamente.</p>
-                    <button onclick="window.close()" class="btn">Volver al Sistema</button>
+                    <button onclick="if (window.opener) { window.close(); } else { window.location.href = '/'; }" class="btn">Volver al Sistema</button>
                 </div>
                 <script>
                     if (window.opener) {
