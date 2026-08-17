@@ -1672,6 +1672,11 @@ async function syncReadyToShipToFalabella(packageId, attempts = 1) {
     }
 }
 
+// Despite the name, this no longer writes a status change to Falabella — see the comment at
+// step 4 below for why (SetStatusToShipped/Delivered aren't real seller actions). It queries
+// Falabella's real item status and records it in the package's own tracking_events history,
+// so an admin looking at this package can see what Falabella actually shows without needing to
+// ask. Kept the name/signature for compatibility with existing callers and the retry-queue.
 async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
     const MAX_ATTEMPTS = 3;
     const DELAY_MULTIPLIER = 3000;
@@ -1785,8 +1790,8 @@ async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
         
         const orderItemsRaw = itemsResponse?.SuccessResponse?.Body?.OrderItems;
         let orderItemIds = [];
+        let items = [];
         if (orderItemsRaw) {
-            let items = [];
             if (Array.isArray(orderItemsRaw)) {
                 items = orderItemsRaw;
             } else if (orderItemsRaw.OrderItem) {
@@ -1801,27 +1806,21 @@ async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
 
         console.log(`[FalabellaSync] Found item IDs to update:`, orderItemIds);
 
-        // 4. Intentar marcar la orden como 'shipped' (enviada) primero, por si acaso (algunos Seller Center restringen saltarse este paso)
-        try {
-            await makeFalabellaApiCall('SetStatusToShipped', {
-                OrderItemIds: JSON.stringify(orderItemIds)
-            });
-            console.log(`[FalabellaSync] Items marked as shipped in Falabella.`);
-        } catch (shippedErr) {
-            console.warn(`[FalabellaSync] Transition to 'shipped' failed (might already be shipped): ${shippedErr.message}`);
-        }
+        // 4. NO intentamos SetStatusToShipped/SetStatusToDelivered — confirmado 2026-08-17 contra
+        // la documentación oficial de Falabella (Flujos de Órdenes) que esas dos acciones no
+        // existen para el vendedor; Falabella las setea sola según el tracking del transportista,
+        // por eso cada intento anterior fallaba con "E008 Invalid Action" sin excepción. En vez de
+        // seguir insistiendo, dejamos registrado el estado real que Falabella ya tiene, visible en
+        // el historial del paquete.
+        const itemStatuses = [...new Set(items.map(item => item.Status).filter(Boolean))];
+        const statusSummary = itemStatuses.length > 0 ? itemStatuses.join(', ') : 'desconocido';
 
-        // 5. Marcar la orden como 'delivered' (entregada)
-        await makeFalabellaApiCall('SetStatusToDelivered', {
-            OrderItemIds: JSON.stringify(orderItemIds)
-        });
-        
         await db.query(
             'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
-            [packageId, 'SYNC_FALABELLA_OK', 'Falabella API', `Pedido sincronizado y cerrado exitosamente en Falabella (Items: ${orderItemIds.join(', ')}).`, new Date()]
+            [packageId, 'FALABELLA_ESTADO_CONSULTADO', 'Falabella API', `Estado real en Falabella: ${statusSummary} (Items: ${orderItemIds.join(', ')}). No se modifica: "enviado"/"entregado" los define Falabella automáticamente según el transportista, no el vendedor.`, new Date()]
         );
-        console.log(`[FalabellaSync] Package ${packageId} synced successfully (delivered) with Falabella.`);
-        
+        console.log(`[FalabellaSync] Package ${packageId} — Falabella item status: ${statusSummary}. No write attempted (not a valid seller action).`);
+
     } catch (error) {
         console.error(`[FalabellaSync] Fallo en intento ${attempts}/${MAX_ATTEMPTS} para paquete ${packageId}:`, error.message);
         
