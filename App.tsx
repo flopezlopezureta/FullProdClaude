@@ -25,6 +25,16 @@ const AppContent: React.FC = () => {
         console.log('Service Worker unregistration failed: ', err);
       });
     }
+    // Unregistering the SW does NOT clear what it already precached — those responses stay in
+    // Cache Storage indefinitely and keep getting served on normal reloads, which is exactly the
+    // "shows an old version, only a full browser cache clear fixes it, then it goes stale again
+    // on the next reload" symptom. Purge every Workbox cache explicitly so a reload always hits
+    // the network for a genuinely fresh index.html/bundle.
+    if ('caches' in window) {
+      caches.keys().then(keys => {
+        keys.forEach(key => { if (key.startsWith('workbox-')) caches.delete(key); });
+      }).catch(err => console.log('Cache cleanup failed: ', err));
+    }
   }, []); // Run only once on component mount
 
   useEffect(() => {
