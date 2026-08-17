@@ -1,9 +1,14 @@
 // In-memory rolling log of HTTP requests, used to build the super-admin "Tráfico de Red" report.
-// Deliberately not persisted to the DB — this is a diagnostic tool (is a client's own network
-// flaky, not a system-of-record), and an in-memory ring buffer is enough for that; it resets on
-// deploy, which is fine since each deploy is a natural "start a fresh window" point anyway.
+// This "live" buffer is deliberately not persisted to the DB — it's a diagnostic tool, and it
+// resets on every deploy, which is fine for "what's happening right now". For a real day-to-day
+// history (up to 3 days back), flushToDaily() periodically rolls it up into the persisted
+// network_traffic_daily table (per-IP daily totals, not raw per-request rows — that would grow
+// unbounded), and purgeOldDays() enforces the 3-day retention.
+const db = require('../db');
+
 const MAX_RECORDS = 8000;
 const records = [];
+let lastFlushedTs = 0;
 
 function recordRequest({ ip, method, path, statusCode, durationMs, userId }) {
     records.push({ ts: Date.now(), ip, method, path, statusCode, durationMs, userId: userId || null });
@@ -14,4 +19,66 @@ function getRecords() {
     return records;
 }
 
-module.exports = { recordRequest, getRecords, MAX_RECORDS };
+async function flushToDaily() {
+    const toFlush = records.filter(r => r.ts > lastFlushedTs);
+    const flushedThrough = Date.now();
+    if (toFlush.length === 0) { lastFlushedTs = flushedThrough; return; }
+
+    // Bucket by calendar day in the system's configured timezone, matching how "today" is
+    // resolved everywhere else in the app (process.env.SYSTEM_TZ, set from system_settings).
+    const groups = new Map();
+    for (const r of toFlush) {
+        const dateStr = new Date(r.ts).toLocaleDateString('en-CA', { timeZone: process.env.SYSTEM_TZ || undefined }); // en-CA => YYYY-MM-DD
+        const ip = r.ip || 'desconocida';
+        const key = `${dateStr}|${ip}`;
+        if (!groups.has(key)) {
+            groups.set(key, { date: dateStr, ip, requestCount: 0, totalMs: 0, maxMs: 0, errorCount: 0, userIds: new Set(), firstSeen: r.ts, lastSeen: r.ts });
+        }
+        const g = groups.get(key);
+        g.requestCount++;
+        g.totalMs += r.durationMs;
+        g.maxMs = Math.max(g.maxMs, r.durationMs);
+        if (r.statusCode >= 400 || r.statusCode === 0) g.errorCount++;
+        if (r.userId) g.userIds.add(r.userId);
+        g.firstSeen = Math.min(g.firstSeen, r.ts);
+        g.lastSeen = Math.max(g.lastSeen, r.ts);
+    }
+
+    for (const g of groups.values()) {
+        try {
+            await db.query(
+                `INSERT INTO network_traffic_daily (date, ip, "requestCount", "totalMs", "maxMs", "errorCount", "userIds", "firstSeen", "lastSeen")
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (date, ip) DO UPDATE SET
+                   "requestCount" = network_traffic_daily."requestCount" + EXCLUDED."requestCount",
+                   "totalMs" = network_traffic_daily."totalMs" + EXCLUDED."totalMs",
+                   "maxMs" = GREATEST(network_traffic_daily."maxMs", EXCLUDED."maxMs"),
+                   "errorCount" = network_traffic_daily."errorCount" + EXCLUDED."errorCount",
+                   "userIds" = ARRAY(SELECT DISTINCT unnest(network_traffic_daily."userIds" || EXCLUDED."userIds")),
+                   "firstSeen" = LEAST(network_traffic_daily."firstSeen", EXCLUDED."firstSeen"),
+                   "lastSeen" = GREATEST(network_traffic_daily."lastSeen", EXCLUDED."lastSeen")`,
+                [g.date, g.ip, g.requestCount, g.totalMs, g.maxMs, g.errorCount, [...g.userIds], new Date(g.firstSeen), new Date(g.lastSeen)]
+            );
+        } catch (e) {
+            console.error('[NetworkMetrics] Failed to flush daily aggregate:', g.date, g.ip, e.message);
+        }
+    }
+    lastFlushedTs = flushedThrough;
+}
+
+async function purgeOldDays() {
+    try {
+        await db.query(`DELETE FROM network_traffic_daily WHERE date < (CURRENT_DATE - INTERVAL '3 days')`);
+    } catch (e) {
+        console.error('[NetworkMetrics] Failed to purge old daily traffic rows:', e.message);
+    }
+}
+
+function start(intervalMs = 10 * 60 * 1000) {
+    setInterval(() => {
+        flushToDaily().catch(e => console.error('[NetworkMetrics] Error in flushToDaily:', e.message));
+        purgeOldDays().catch(e => console.error('[NetworkMetrics] Error in purgeOldDays:', e.message));
+    }, intervalMs);
+}
+
+module.exports = { recordRequest, getRecords, flushToDaily, purgeOldDays, start, MAX_RECORDS };

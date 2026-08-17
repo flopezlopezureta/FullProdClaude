@@ -346,6 +346,11 @@ async function startServer() {
             console.log('Background Service: Integration Sync Queue processor scheduled (5min interval).');
         }
 
+        // Rolls the in-memory network-metrics ring buffer into the persisted daily history table
+        // and purges anything past the 3-day retention window.
+        require('./services/networkMetrics').start(10 * 60 * 1000);
+        console.log('Background Service: Network Traffic daily rollup scheduled (10min interval).');
+
       } catch (initErr) {
         console.error('Failed to initialize database during startup:', initErr);
       }
@@ -1028,6 +1033,28 @@ async function initializeDatabase() {
             );
         `);
         console.log('Table "integration_sync_queue" is ready.');
+
+        // --- NETWORK TRAFFIC DAILY HISTORY ---
+        // Persisted, per-day aggregate of the in-memory network-metrics ring buffer (which resets
+        // on every deploy and only holds the last MAX_RECORDS requests). services/networkMetrics.js
+        // flushes into this table periodically; a separate purge job enforces the 3-day retention
+        // the user asked for — this is deliberately NOT a raw per-request log (that would grow
+        // unbounded), just daily totals per IP.
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS network_traffic_daily (
+                date DATE NOT NULL,
+                ip TEXT NOT NULL,
+                "requestCount" INTEGER NOT NULL DEFAULT 0,
+                "totalMs" BIGINT NOT NULL DEFAULT 0,
+                "maxMs" INTEGER NOT NULL DEFAULT 0,
+                "errorCount" INTEGER NOT NULL DEFAULT 0,
+                "userIds" TEXT[] NOT NULL DEFAULT '{}',
+                "firstSeen" TIMESTAMPTZ,
+                "lastSeen" TIMESTAMPTZ,
+                PRIMARY KEY (date, ip)
+            );
+        `);
+        console.log('Table "network_traffic_daily" is ready.');
 
         // --- MIGRATIONS: Add Shopify fields ---
         try {

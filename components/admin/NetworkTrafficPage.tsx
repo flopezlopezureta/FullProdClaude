@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, ComposedChart } from 'recharts';
-import { IconRefresh, IconLoader, IconAlertTriangle, IconWifi } from '../Icon';
+import { IconRefresh, IconLoader, IconAlertTriangle, IconWifi, IconCalendar } from '../Icon';
 import { api } from '../../services/api';
 
 interface IpEntry {
@@ -27,13 +27,22 @@ interface HourEntry {
 
 interface Report {
     byIp: IpEntry[];
-    byHour: HourEntry[];
+    byHour?: HourEntry[];
     totalRecords: number;
-    windowStart: number | null;
-    windowEnd: number | null;
+    windowStart?: number | null;
+    windowEnd?: number | null;
 }
 
 const fmtTime = (ts: number) => new Date(ts).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+const dayLabel = (dateStr: string) => {
+    const today = new Date().toLocaleDateString('en-CA');
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA');
+    if (dateStr === today) return 'Hoy';
+    if (dateStr === yesterday) return 'Ayer';
+    const [, m, d] = dateStr.split('-');
+    return `${d}/${m}`;
+};
 
 const severityColor = (avgMs: number, errorRate: number) => {
     if (errorRate >= 10 || avgMs >= 2000) return 'text-red-600 bg-red-50 border-red-100';
@@ -45,12 +54,14 @@ const NetworkTrafficPage: React.FC = () => {
     const [report, setReport] = useState<Report | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [selectedDay, setSelectedDay] = useState<'live' | string>('live');
+    const [historyDays, setHistoryDays] = useState<{ date: string; requestCount: number }[]>([]);
 
-    const load = useCallback(async () => {
+    const load = useCallback(async (day: 'live' | string) => {
         setLoading(true);
         setError(null);
         try {
-            const data = await api.getNetworkMetricsReport();
+            const data = day === 'live' ? await api.getNetworkMetricsReport() : await api.getNetworkMetricsHistory(day);
             setReport(data);
         } catch (e: any) {
             setError(e.message || 'No se pudo cargar el reporte.');
@@ -59,7 +70,8 @@ const NetworkTrafficPage: React.FC = () => {
         }
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => { load(selectedDay); }, [selectedDay, load]);
+    useEffect(() => { api.getNetworkMetricsHistoryDays().then(d => setHistoryDays(d.days)).catch(() => {}); }, []);
 
     return (
         <div className="max-w-5xl mx-auto">
@@ -68,7 +80,7 @@ const NetworkTrafficPage: React.FC = () => {
                     Registro de todas las peticiones al servidor, agrupadas por dirección IP de origen — sirve para demostrar si una intermitencia viene de una red específica (por ejemplo, la wifi de un cliente saturada en horas pico) en vez del sistema.
                 </p>
                 <button
-                    onClick={load}
+                    onClick={() => load(selectedDay)}
                     disabled={loading}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--brand-primary)] text-white text-sm font-semibold disabled:opacity-50 flex-shrink-0"
                 >
@@ -76,6 +88,29 @@ const NetworkTrafficPage: React.FC = () => {
                     Actualizar
                 </button>
             </div>
+
+            {/* Selector de día — en vivo (desde el último despliegue) o historial persistido (hasta 3 días atrás) */}
+            <div className="flex items-center gap-2 mb-5 flex-wrap">
+                <IconCalendar className="w-4 h-4 text-[var(--text-muted)]" />
+                <button
+                    onClick={() => setSelectedDay('live')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors ${selectedDay === 'live' ? 'bg-[var(--brand-primary)] text-white' : 'bg-[var(--background-secondary)] text-[var(--text-muted)] border border-[var(--border-primary)] hover:text-[var(--text-primary)]'}`}
+                >
+                    En vivo
+                </button>
+                {historyDays.map(d => (
+                    <button
+                        key={d.date}
+                        onClick={() => setSelectedDay(d.date)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors ${selectedDay === d.date ? 'bg-[var(--brand-primary)] text-white' : 'bg-[var(--background-secondary)] text-[var(--text-muted)] border border-[var(--border-primary)] hover:text-[var(--text-primary)]'}`}
+                    >
+                        {dayLabel(d.date)}
+                    </button>
+                ))}
+            </div>
+            {selectedDay === 'live' && (
+                <p className="text-xs text-[var(--text-muted)] -mt-3 mb-5">"En vivo" solo cubre el tráfico desde el último despliegue del servidor. El historial por día se guarda aparte y se conserva un máximo de 3 días atrás.</p>
+            )}
 
             {error && (
                 <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-100 rounded-lg text-red-700 text-sm mb-4">
@@ -85,7 +120,9 @@ const NetworkTrafficPage: React.FC = () => {
 
             {report && report.totalRecords === 0 && !loading && (
                 <div className="p-6 text-center text-[var(--text-muted)] bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-xl">
-                    Todavía no hay tráfico registrado en esta ventana (se reinicia con cada despliegue del servidor). Vuelve a revisar después de un rato de uso normal.
+                    {selectedDay === 'live'
+                        ? 'Todavía no hay tráfico registrado en esta ventana (se reinicia con cada despliegue del servidor). Vuelve a revisar después de un rato de uso normal.'
+                        : 'No hay tráfico registrado para ese día.'}
                 </div>
             )}
 
@@ -98,24 +135,26 @@ const NetworkTrafficPage: React.FC = () => {
                         )}
                     </div>
 
-                    {/* Gráfico por hora del día */}
-                    <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-xl p-4 mb-6">
-                        <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">Tiempo de respuesta y errores por hora del día</h3>
-                        <ResponsiveContainer width="100%" height={220}>
-                            <ComposedChart data={report.byHour} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
-                                <XAxis dataKey="hour" tickFormatter={(h) => `${h}h`} fontSize={11} stroke="var(--text-muted)" />
-                                <YAxis yAxisId="left" fontSize={11} stroke="var(--text-muted)" label={{ value: 'ms', angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                                <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="var(--text-muted)" label={{ value: '% error', angle: 90, position: 'insideRight', fontSize: 10 }} />
-                                <Tooltip
-                                    formatter={(value: any, name: any) => [name === 'avgMs' ? `${value} ms` : `${value}%`, name === 'avgMs' ? 'Tiempo promedio' : 'Tasa de error']}
-                                    labelFormatter={(h: any) => `${h}:00 - ${h}:59`}
-                                />
-                                <Bar yAxisId="left" dataKey="avgMs" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-                                <Line yAxisId="right" type="monotone" dataKey="errorRate" stroke="#ef4444" strokeWidth={2} dot={false} />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    </div>
+                    {/* Gráfico por hora del día — solo disponible en la vista "En vivo" */}
+                    {report.byHour && (
+                        <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-xl p-4 mb-6">
+                            <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">Tiempo de respuesta y errores por hora del día</h3>
+                            <ResponsiveContainer width="100%" height={220}>
+                                <ComposedChart data={report.byHour} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
+                                    <XAxis dataKey="hour" tickFormatter={(h) => `${h}h`} fontSize={11} stroke="var(--text-muted)" />
+                                    <YAxis yAxisId="left" fontSize={11} stroke="var(--text-muted)" label={{ value: 'ms', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                                    <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="var(--text-muted)" label={{ value: '% error', angle: 90, position: 'insideRight', fontSize: 10 }} />
+                                    <Tooltip
+                                        formatter={(value: any, name: any) => [name === 'avgMs' ? `${value} ms` : `${value}%`, name === 'avgMs' ? 'Tiempo promedio' : 'Tasa de error']}
+                                        labelFormatter={(h: any) => `${h}:00 - ${h}:59`}
+                                    />
+                                    <Bar yAxisId="left" dataKey="avgMs" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                                    <Line yAxisId="right" type="monotone" dataKey="errorRate" stroke="#ef4444" strokeWidth={2} dot={false} />
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
 
                     {/* Tabla por IP */}
                     <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-xl overflow-hidden">

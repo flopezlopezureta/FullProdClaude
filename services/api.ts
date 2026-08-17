@@ -479,10 +479,16 @@ export const api = {
   }>(`/users/fleet-control-center${date ? `?date=${date}` : ''}`),
   notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
   getNetworkMetricsReport: () => get<{
-    byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null }[];
+    byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null; users?: string[] }[];
     byHour: { hour: number; requestCount: number; avgMs: number; errorRate: number }[];
     totalRecords: number;
     windowStart: number | null;
     windowEnd: number | null;
   }>('/network-metrics/report'),
+  getNetworkMetricsHistoryDays: () => get<{ days: { date: string; requestCount: number }[] }>('/network-metrics/history-days'),
+  getNetworkMetricsHistory: (date: string) => get<{
+    byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null; users?: string[] }[];
+    totalRecords: number;
+    date: string;
+  }>(`/network-metrics/history?date=${encodeURIComponent(date)}`),
 };

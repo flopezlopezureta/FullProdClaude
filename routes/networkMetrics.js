@@ -57,6 +57,93 @@ function lookupIsp(ip) {
     });
 }
 
+// Shared by /report (live, in-memory) and /history (persisted, per day): resolves ISP for the
+// top 15 IPs and attaches the given usersById map, mutating each entry in place.
+async function enrichByIp(byIpArray, usersById) {
+    const topIps = byIpArray.slice(0, 15);
+    await Promise.all(topIps.map(async (entry) => {
+        const info = await lookupIsp(entry.ip);
+        entry.isp = info.isp;
+        entry.org = info.org;
+        entry.city = info.city;
+    }));
+    for (const entry of byIpArray) {
+        entry.users = (entry.userIds || []).map(id => usersById.get(id) || id);
+        delete entry.userIds;
+    }
+}
+
+async function resolveUserNames(userIds) {
+    const usersById = new Map();
+    const distinct = [...new Set(userIds.filter(Boolean))];
+    if (distinct.length > 0) {
+        const { rows } = await db.query('SELECT id, name FROM users WHERE id = ANY($1)', [distinct]);
+        for (const u of rows) usersById.set(u.id, u.name || u.id);
+    }
+    return usersById;
+}
+
+// GET /api/network-metrics/history-days — which of the last 3 days actually have data, for the
+// day picker on the frontend (no point offering a day with nothing recorded).
+router.get('/history-days', authMiddleware, requireSuperUser, async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT date, SUM("requestCount")::int AS "requestCount" FROM network_traffic_daily
+             WHERE date >= (CURRENT_DATE - INTERVAL '3 days')
+             GROUP BY date ORDER BY date DESC`
+        );
+        res.json({ days: rows.map(r => ({ date: r.date, requestCount: r.requestCount })) });
+    } catch (e) {
+        res.status(500).json({ message: 'No se pudo cargar el historial de días.', error: e.message });
+    }
+});
+
+// GET /api/network-metrics/history?date=YYYY-MM-DD — persisted per-day traffic (up to 3 days
+// back, enforced by the retention purge in services/networkMetrics.js, not just this query).
+router.get('/history', authMiddleware, requireSuperUser, async (req, res) => {
+    const { date } = req.query;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ message: 'Parámetro "date" inválido (esperado YYYY-MM-DD).' });
+    }
+    try {
+        const { rows } = await db.query(
+            `SELECT ip, "requestCount", "totalMs", "maxMs", "errorCount", "userIds", "firstSeen", "lastSeen"
+             FROM network_traffic_daily WHERE date = $1 AND date >= (CURRENT_DATE - INTERVAL '3 days')`,
+            [date]
+        );
+        if (rows.length === 0) {
+            return res.json({ byIp: [], totalRecords: 0, date });
+        }
+
+        const allUserIds = rows.flatMap(r => r.userIds || []);
+        const usersById = await resolveUserNames(allUserIds);
+
+        const byIpArray = rows
+            .map(r => ({
+                ip: r.ip,
+                requestCount: r.requestCount,
+                avgMs: Math.round(r.totalMs / r.requestCount),
+                maxMs: r.maxMs,
+                errorRate: Math.round((r.errorCount / r.requestCount) * 1000) / 10,
+                errorCount: r.errorCount,
+                firstSeen: new Date(r.firstSeen).getTime(),
+                lastSeen: new Date(r.lastSeen).getTime(),
+                userIds: r.userIds || [],
+            }))
+            .sort((a, b) => (b.avgMs * (1 + b.errorRate / 100)) - (a.avgMs * (1 + a.errorRate / 100)));
+
+        await enrichByIp(byIpArray, usersById);
+
+        res.json({
+            byIp: byIpArray,
+            totalRecords: byIpArray.reduce((sum, e) => sum + e.requestCount, 0),
+            date,
+        });
+    } catch (e) {
+        res.status(500).json({ message: 'No se pudo cargar el historial de ese día.', error: e.message });
+    }
+});
+
 // GET /api/network-metrics/report
 router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
     const records = networkMetrics.getRecords();
@@ -82,14 +169,9 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
         if (r.userId) entry.userIds.add(r.userId);
     }
 
-    // Resuelve nombre/rol de todos los usuarios vistos, en una sola consulta — permite mostrar
-    // qué admin/conductor generó el tráfico de cada IP (varios pueden compartir la misma wifi).
-    const allUserIds = [...new Set(records.map(r => r.userId).filter(Boolean))];
-    const userNameById = new Map();
-    if (allUserIds.length > 0) {
-        const { rows: userRows } = await db.query('SELECT id, name, role FROM users WHERE id = ANY($1)', [allUserIds]);
-        for (const u of userRows) userNameById.set(u.id, u.name || u.id);
-    }
+    // Resuelve nombre de todos los usuarios vistos, en una sola consulta — permite mostrar qué
+    // admin/conductor generó el tráfico de cada IP (varios pueden compartir la misma wifi).
+    const usersById = await resolveUserNames(records.map(r => r.userId));
 
     const byIpArray = Array.from(byIpMap.values())
         .map(e => ({
@@ -101,18 +183,12 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
             errorCount: e.errorCount,
             firstSeen: e.firstSeen,
             lastSeen: e.lastSeen,
-            users: [...e.userIds].map(id => userNameById.get(id) || id),
+            userIds: [...e.userIds],
         }))
         .sort((a, b) => (b.avgMs * (1 + b.errorRate / 100)) - (a.avgMs * (1 + a.errorRate / 100)));
 
     // Solo se consulta el ISP de las IPs con más tráfico, para no gastar el límite de la API gratuita.
-    const topIps = byIpArray.slice(0, 15);
-    await Promise.all(topIps.map(async (entry) => {
-        const info = await lookupIsp(entry.ip);
-        entry.isp = info.isp;
-        entry.org = info.org;
-        entry.city = info.city;
-    }));
+    await enrichByIp(byIpArray, usersById);
 
     // --- Agrupado por hora del día (para ver si coincide con horas pico) ---
     const byHourMap = new Map();
