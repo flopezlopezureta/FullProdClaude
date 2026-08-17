@@ -200,4 +200,20 @@ router.post('/repair-falabella-direct-stuck', authMiddleware, requireSuperUserDe
     res.json({ results, removedQueuedRetries: rowCount });
 });
 
+// TEMPORARY — companion to the repair endpoint above, but for the case where Falabella wants a
+// genuine corrected resend rather than a silent backend patch: deletes the 2 stuck GOLIVERY3/4
+// test packages entirely (and their tracking_events/queued retries) so their LPN is free again —
+// routes/falabellaDirect.js's /import-scanned is idempotent on falabellaDirectLpn, so as long as
+// the old row exists, rescanning just returns "ya había sido escaneado" and does nothing new.
+// Super-admin only, meant to be removed in a follow-up cleanup commit once run once successfully.
+router.post('/reset-falabella-direct-stuck', authMiddleware, requireSuperUserDebug, async (req, res) => {
+    const PACKAGE_IDS = ['FALDIR-8b6e5665', 'FALDIR-7c8ed7ac']; // GOLIVERY3, GOLIVERY4
+
+    await db.query('DELETE FROM integration_sync_queue WHERE "packageId" = ANY($1)', [PACKAGE_IDS]);
+    await db.query('DELETE FROM tracking_events WHERE "packageId" = ANY($1)', [PACKAGE_IDS]);
+    const { rows } = await db.query('DELETE FROM packages WHERE id = ANY($1) RETURNING id, "falabellaDirectLpn"', [PACKAGE_IDS]);
+
+    res.json({ deleted: rows, message: 'Listo. Los LPN de GOLIVERY3 y GOLIVERY4 quedan libres para volver a escanearse como paquetes nuevos.' });
+});
+
 module.exports = router;
