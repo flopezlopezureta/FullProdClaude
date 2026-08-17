@@ -273,6 +273,24 @@ router.get('/falabella-order-status/:packageId', authMiddleware, requireSuperUse
     }
 });
 
+// TEMPORARY — manually triggers the new SetStatusToReadyToShip sync (routes/packages.js) for one
+// package. The automatic hook only fires on a fresh /dispatch call, so it never runs for orders
+// (like Kanino's KANI-4b67-* ones) that were already dispatched before this fix existed. Lets us
+// verify the fix against a real already-failing order without needing a brand-new test order.
+router.post('/trigger-falabella-ready-to-ship/:packageId', authMiddleware, requireSuperUserDebug, async (req, res) => {
+    const packagesRoute = require('./packages.js');
+    const { packageId } = req.params;
+    try {
+        if (typeof packagesRoute.syncReadyToShipToFalabella !== 'function') {
+            return res.status(500).json({ message: 'syncReadyToShipToFalabella no está exportado.' });
+        }
+        await packagesRoute.syncReadyToShipToFalabella(packageId, 1);
+        res.json({ message: `Disparado para ${packageId}. Revisa los tracking_events del paquete o vuelve a consultar /falabella-order-status para confirmar.` });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
 // TEMPORARY — companion to the repair endpoint above, but for the case where Falabella wants a
 // genuine corrected resend rather than a silent backend patch: deletes the 2 stuck GOLIVERY3/4
 // test packages entirely (and their tracking_events/queued retries) so their LPN is free again —
