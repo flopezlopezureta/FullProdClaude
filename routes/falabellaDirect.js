@@ -95,10 +95,44 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
     }
 
     try {
-        // Idempotent re-scan: if this LPN was already imported, just return it instead of erroring.
+        // Idempotent re-scan: if this LPN was already imported, redispatch it to whoever is
+        // scanning it now (same "re-egress" idea as the generic /:id/dispatch endpoint) instead of
+        // silently no-op'ing — a rescan is a deliberate driver action, and the previous behavior
+        // (just returning the stale package with no update) beeped as if it worked while doing
+        // nothing, which is exactly what caused this bug to go unnoticed.
         const { rows: existing } = await db.query('SELECT * FROM packages WHERE "falabellaDirectLpn" = $1', [lpn]);
         if (existing.length > 0) {
-            return res.status(200).json({ message: `El paquete con LPN ${lpn} ya había sido escaneado.`, pkg: existing[0], alreadyImported: true });
+            const pkg = existing[0];
+            if (['ENTREGADO', 'DEVUELTO'].includes(pkg.status)) {
+                return res.status(200).json({ message: `El paquete con LPN ${lpn} ya había sido escaneado y está ${pkg.status.toLowerCase()} — no se puede redespachar.`, pkg, alreadyImported: true });
+            }
+
+            const { rows: driverRows } = await db.query('SELECT id, name FROM users WHERE id = $1', [driverId]);
+            const driver = driverRows[0];
+            if (!driver) {
+                return res.status(400).json({ message: 'Conductor no encontrado.' });
+            }
+
+            const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(driver.id);
+            if (gpsLat === 0 && gpsLng === 0) {
+                return res.status(400).json({ message: `${driver.name} no tiene coordenadas GPS reales registradas. Verifica que tenga la ubicación activada antes de asignarle paquetes de Falabella Directo.` });
+            }
+
+            const now = new Date();
+            const { rows: updatedRows } = await db.query(
+                'UPDATE packages SET "driverId" = $1, status = $2, "assignedAt" = $3, "updatedAt" = $3 WHERE id = $4 RETURNING *',
+                [driver.id, 'EN_TRANSITO', now, pkg.id]
+            );
+            await db.query(
+                'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                [pkg.id, 'EN_TRANSITO', 'Centro de Distribución', `Redespachado a ${driver.name} por ${req.user.name || req.user.id} — Falabella Directo LPN ${lpn} (reescaneo).`, now]
+            );
+
+            getDriverLocation(driver.id).then(({ latitude, longitude }) =>
+                pushStatusWithRetry(pkg.id, lpn, 'OUT_FOR_DELIVERY_001', `Recibido por el conductor ${driver.name}, en reparto (reescaneo).`, { latitude, longitude })
+            ).catch(err => console.error('[FalabellaDirect] Error pushing OUT_FOR_DELIVERY_001 on rescan:', err));
+
+            return res.status(200).json({ message: `Paquete Falabella Directo redespachado a ${driver.name} (LPN ${lpn}).`, pkg: updatedRows[0], alreadyImported: true, redispatched: true });
         }
 
         const { rows: driverRows } = await db.query('SELECT id, name FROM users WHERE id = $1', [driverId]);
