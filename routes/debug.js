@@ -134,6 +134,19 @@ router.post('/simulate-meli-closure', authMiddleware, async (req, res) => {
     }
 });
 
+// TEMPORARY — forces an immediate Mercado Libre token refresh check for one client, instead of
+// waiting for the next automatic poll cycle. Useful right after a client reconnects their ML
+// account to confirm the new refresh token actually works, without a 5-10min wait.
+router.get('/meli-token-check/:userId', authMiddleware, requireSuperUserDebug, async (req, res) => {
+    const meliPollingService = require('../services/meliPollingService');
+    try {
+        const token = await meliPollingService.getValidMeliToken(req.params.userId);
+        res.json({ userId: req.params.userId, ok: !!token, message: token ? 'Token válido, refresco exitoso.' : 'No se pudo obtener un token válido (revisa el mensaje de error en los logs del servidor).' });
+    } catch (e) {
+        res.status(500).json({ userId: req.params.userId, ok: false, message: e.message });
+    }
+});
+
 // TEMPORARY — repairs the 2 Falabella Directo UAT test packages (GOLIVERY3/4) that got stuck
 // ENTREGADO locally but never actually closed on Falabella's side, because they were pushed
 // before the IN_TRANSIT_001-sequencing and empty-recipientId bugs were fixed. Retroactively
