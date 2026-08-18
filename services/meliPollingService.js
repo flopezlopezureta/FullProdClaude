@@ -601,7 +601,7 @@ async function autoImportMeliPackages(activeCommunes = []) {
         // even though each account is capped at 45s — confirmed on Production
         // (a client's last successful sync was 36 minutes old despite a
         // 5-minute schedule).
-        await runWithLimit(5, users, async (user) => {
+        await runWithLimit(10, users, async (user) => {
           // runWithLimit uses Promise.race/Promise.all internally — a single
           // rejected item there aborts scheduling of every user still queued
           // behind it (confirmed: one client's unhandled error silently froze
@@ -684,7 +684,13 @@ async function autoImportMeliPackages(activeCommunes = []) {
                             //   budget is left, so large backlogs still get fully covered over time.
                             const PAGE_LIMIT = 50;
                             const FRESH_CHECK_ORDERS = 200; // always re-checked every cycle, regardless of sweep progress
-                            const MAX_ORDERS_PER_CYCLE = 500; // total budget (fresh + sweep) per account per cycle, bounds the 45s per-account timeout
+                            // Lowered from 500: accounts with a huge historical backlog were hitting
+                            // this cap (and its ~45s worth of API calls) every single cycle, holding
+                            // their concurrency slot the whole time and delaying other clients queued
+                            // behind them — confirmed on Production/Staging as the reason a freshly
+                            // created order could sit unimported well past its own account's configured
+                            // interval. Backlogs still get fully swept over more cycles either way.
+                            const MAX_ORDERS_PER_CYCLE = 250; // total budget (fresh + sweep) per account per cycle, bounds the 45s per-account timeout
                             let totalFetched = 0;
                             let flexSeenThisAccount = 0;
                             let nonFlexSeenThisAccount = 0;
