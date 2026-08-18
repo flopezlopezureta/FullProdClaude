@@ -473,9 +473,14 @@ router.delete('/:clientId/:source', authMiddleware, async (req, res) => {
 const makeMeliRequest = (options, postData = null) => {
     return new Promise((resolve, reject) => {
         const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
+            const chunks = [];
+            res.on('data', (chunk) => { chunks.push(chunk); });
             res.on('end', () => {
+                // Concatenate raw Buffers before decoding — string-concatenating chunks
+                // (`data += chunk`) decodes each partial chunk as UTF-8 independently,
+                // corrupting any multi-byte character (Ñ, á, é...) split across a chunk
+                // boundary (e.g. commune names like "Ñuñoa" in shipment addresses).
+                const data = Buffer.concat(chunks).toString('utf8');
                 try {
                     const parsedData = JSON.parse(data);
                     if (res.statusCode >= 200 && res.statusCode < 300) {

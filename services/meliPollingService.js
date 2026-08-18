@@ -10,9 +10,16 @@ const { emitDriverEvent } = require('./driverEvents');
 const makeMeliRequest = (options, postData = null) => {
     return new Promise((resolve, reject) => {
         const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
+            const chunks = [];
+            res.on('data', (chunk) => { chunks.push(chunk); });
             res.on('end', () => {
+                // Buffers must be concatenated before decoding — appending chunks to a
+                // string (`data += chunk`) calls toString('utf8') on each partial chunk
+                // individually, corrupting any multi-byte character (Ñ, á, é...) that
+                // happens to be split across a chunk boundary. Confirmed as the cause of
+                // commune names like "Ñuñoa" intermittently failing to match the active
+                // zones list and being wrongly skipped by auto-import.
+                const data = Buffer.concat(chunks).toString('utf8');
                 try {
                     const parsedData = JSON.parse(data);
                     if (res.statusCode >= 200 && res.statusCode < 300) {
