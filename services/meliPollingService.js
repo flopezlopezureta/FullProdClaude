@@ -219,16 +219,23 @@ async function pollMeliPackages() {
             autoImportEnabled = true; // Safety default
         }
 
+        // [NUEVO] Limpieza automática de registros fuera de zona (Santiago/RM)
+        // Runs BEFORE the import sweep below (not after) — with large accounts
+        // that have tens of thousands of historical orders, a full sweep across
+        // every client can run long enough that a deploy restarts the process
+        // before reaching whatever comes after it, so cleanup was silently never
+        // executing at all (confirmed: zero occurrences in Production logs).
+        // Cleanup only reads existing packages, so it has no dependency on the
+        // import step running first.
+        await cleanupOutOfZonePackages();
+
         if (autoImportEnabled) {
             // Fetch active communes once per cycle
             const { rows: activeRows } = await db.query('SELECT name FROM active_communes WHERE "isActive" = true');
             const activeCommunes = activeRows.map(r => normalizeCommune(r.name).toLowerCase());
-            
+
             await autoImportMeliPackages(activeCommunes);
         }
-
-        // [NUEVO] Limpieza automática de registros fuera de zona (Santiago/RM)
-        await cleanupOutOfZonePackages();
 
         // 1. Get all active Mercado Libre packages that are not finished
         const { rows: packages } = await db.query(`
