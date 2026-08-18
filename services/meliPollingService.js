@@ -445,14 +445,26 @@ async function pollMeliPackages() {
     } catch (err) {
         console.error('[MeliPolling] Fatal error in poll cycle:', err);
     } finally {
+        // Schedule the NEXT cycle on a fixed cadence from when THIS one started,
+        // not currentIntervalMs after it finished. The cycle also polls status
+        // for every active package and runs geocoding, not just the ML
+        // auto-import — when that whole thing takes longer than the interval
+        // (confirmed happening), always adding a full interval on top compounded
+        // the delay every cycle instead of catching back up.
+        const elapsed = Date.now() - pollingStartTime;
+        const delay = Math.max(0, currentIntervalMs - elapsed);
+        if (elapsed > currentIntervalMs) {
+            console.warn(`[MeliPolling] Cycle took ${Math.round(elapsed / 1000)}s, longer than the ${Math.round(currentIntervalMs / 1000)}s interval — starting next cycle immediately.`);
+        }
+
         isPolling = false;
         pollingStartTime = null;
         totalPackagesCount = 0;
         processedPackagesCount = 0;
-        nextScheduledTime = Date.now() + currentIntervalMs;
+        nextScheduledTime = Date.now() + delay;
         // Schedule next poll using setTimeout for better reliability
         if (timeoutId !== null) {
-            timeoutId = setTimeout(pollMeliPackages, currentIntervalMs);
+            timeoutId = setTimeout(pollMeliPackages, delay);
         }
     }
 }
