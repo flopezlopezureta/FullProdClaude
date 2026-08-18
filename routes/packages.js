@@ -1479,8 +1479,12 @@ router.post('/:id/flex', authMiddleware, async (req, res) => {
 // POST /api/packages/sync-meli-all
 router.post('/sync-meli-all', authMiddleware, async (req, res) => {
     try {
-        const result = await meliPollingService.pollMeliPackages();
-        res.json({ message: 'Sincronización masiva completada.', result });
+        // Import + status-check are now two independently-scheduled cycles
+        // (see meliPollingService.js) — call both here so "sync all" still
+        // means everything, matching this endpoint's previous behavior.
+        await meliPollingService.pollMeliPackages();
+        await meliPollingService.pollPackageStatuses();
+        res.json({ message: 'Sincronización masiva completada.' });
     } catch (err) {
         console.error('Error in POST /api/packages/sync-meli-all:', err);
         res.status(500).json({ message: err.message || 'Error al actualizar paquetes.' });

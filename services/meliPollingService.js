@@ -176,6 +176,15 @@ let totalPackagesCount = 0;
 let processedPackagesCount = 0;
 let lastImportCount = 0;
 
+// Separate scheduling state for pollPackageStatuses (status-check for every
+// already-tracked package, one ML API call each). Kept independent from the
+// import cycle above — see the comment on pollPackageStatuses for why.
+let isPollingStatuses = false;
+let statusPollingStartTime = null;
+let statusTimeoutId = null;
+let statusIntervalMs = 15 * 60 * 1000;
+let nextStatusScheduledTime = Date.now() + statusIntervalMs;
+
 // Helper function for limited concurrency
 async function runWithLimit(concurrency, items, fn) {
     const results = [];
@@ -201,18 +210,14 @@ async function pollMeliPackages() {
     isPolling = true;
     pollingStartTime = Date.now();
     lastPollTime = Date.now();
-    processedPackagesCount = 0;
-    totalPackagesCount = 0;
     console.log('[MeliPolling] Starting poll cycle...');
     try {
-        // 0. Check if auto-import and auto-prompt are enabled
+        // 0. Check if auto-import is enabled
         let autoImportEnabled = false;
-        let meliAutoPromptPhotos = false;
         try {
-            const { rows: settingsRows } = await db.query('SELECT "meliAutoImport", "meliAutoPromptPhotos" FROM system_settings WHERE id = 1');
+            const { rows: settingsRows } = await db.query('SELECT "meliAutoImport" FROM system_settings WHERE id = 1');
             if (settingsRows.length > 0) {
                 autoImportEnabled = settingsRows[0].meliAutoImport;
-                meliAutoPromptPhotos = settingsRows[0].meliAutoPromptPhotos;
             }
         } catch (settingsErr) {
             console.warn('[MeliPolling] Could not fetch settings from DB or column missing. Defaulting...', settingsErr.message);
@@ -235,6 +240,57 @@ async function pollMeliPackages() {
             const activeCommunes = activeRows.map(r => normalizeCommune(r.name).toLowerCase());
 
             await autoImportMeliPackages(activeCommunes);
+        }
+    } catch (err) {
+        console.error('[MeliPolling] Fatal error in poll cycle:', err);
+    } finally {
+        // Schedule the NEXT cycle on a fixed cadence from when THIS one started,
+        // not currentIntervalMs after it finished — see pollPackageStatuses for
+        // why this cycle used to run much longer than the configured interval.
+        const elapsed = Date.now() - pollingStartTime;
+        const delay = Math.max(0, currentIntervalMs - elapsed);
+        if (elapsed > currentIntervalMs) {
+            console.warn(`[MeliPolling] Cycle took ${Math.round(elapsed / 1000)}s, longer than the ${Math.round(currentIntervalMs / 1000)}s interval — starting next cycle immediately.`);
+        }
+
+        isPolling = false;
+        pollingStartTime = null;
+        nextScheduledTime = Date.now() + delay;
+        // Schedule next poll using setTimeout for better reliability
+        if (timeoutId !== null) {
+            timeoutId = setTimeout(pollMeliPackages, delay);
+        }
+    }
+}
+
+// Status-checking for every already-tracked, unfinished ML package (one API
+// call each — tens of thousands in Production) is deliberately NOT part of
+// pollMeliPackages above. Bundled together, this step alone could take far
+// longer than the 5-minute import interval, so the fixed-cadence scheduling
+// in pollMeliPackages just meant "run back to back constantly" instead of
+// actually respecting each client's configured minutes — confirmed on both
+// Staging and Production (client accounts consistently ~2x their own
+// interval overdue). This runs independently on its own longer interval so
+// catching new orders promptly never has to wait for this to finish.
+async function pollPackageStatuses() {
+    if (isPollingStatuses) {
+        console.log('[MeliPolling] Already polling statuses, skipping...');
+        return;
+    }
+    isPollingStatuses = true;
+    statusPollingStartTime = Date.now();
+    processedPackagesCount = 0;
+    totalPackagesCount = 0;
+    console.log('[MeliPolling] Starting package-status poll cycle...');
+    try {
+        let meliAutoPromptPhotos = false;
+        try {
+            const { rows: settingsRows } = await db.query('SELECT "meliAutoPromptPhotos" FROM system_settings WHERE id = 1');
+            if (settingsRows.length > 0) {
+                meliAutoPromptPhotos = settingsRows[0].meliAutoPromptPhotos;
+            }
+        } catch (settingsErr) {
+            console.warn('[MeliPolling] Could not fetch meliAutoPromptPhotos setting. Defaulting to false.', settingsErr.message);
         }
 
         // 1. Get all active Mercado Libre packages that are not finished
@@ -443,28 +499,21 @@ async function pollMeliPackages() {
         }
 
     } catch (err) {
-        console.error('[MeliPolling] Fatal error in poll cycle:', err);
+        console.error('[MeliPolling] Fatal error in status poll cycle:', err);
     } finally {
-        // Schedule the NEXT cycle on a fixed cadence from when THIS one started,
-        // not currentIntervalMs after it finished. The cycle also polls status
-        // for every active package and runs geocoding, not just the ML
-        // auto-import — when that whole thing takes longer than the interval
-        // (confirmed happening), always adding a full interval on top compounded
-        // the delay every cycle instead of catching back up.
-        const elapsed = Date.now() - pollingStartTime;
-        const delay = Math.max(0, currentIntervalMs - elapsed);
-        if (elapsed > currentIntervalMs) {
-            console.warn(`[MeliPolling] Cycle took ${Math.round(elapsed / 1000)}s, longer than the ${Math.round(currentIntervalMs / 1000)}s interval — starting next cycle immediately.`);
+        const elapsed = Date.now() - statusPollingStartTime;
+        const delay = Math.max(0, statusIntervalMs - elapsed);
+        if (elapsed > statusIntervalMs) {
+            console.warn(`[MeliPolling] Status poll cycle took ${Math.round(elapsed / 1000)}s, longer than the ${Math.round(statusIntervalMs / 1000)}s interval — starting next cycle immediately.`);
         }
 
-        isPolling = false;
-        pollingStartTime = null;
+        isPollingStatuses = false;
+        statusPollingStartTime = null;
         totalPackagesCount = 0;
         processedPackagesCount = 0;
-        nextScheduledTime = Date.now() + delay;
-        // Schedule next poll using setTimeout for better reliability
-        if (timeoutId !== null) {
-            timeoutId = setTimeout(pollMeliPackages, delay);
+        nextStatusScheduledTime = Date.now() + delay;
+        if (statusTimeoutId !== null) {
+            statusTimeoutId = setTimeout(pollPackageStatuses, delay);
         }
     }
 }
@@ -1200,24 +1249,36 @@ async function optimizedJITDiscovery(shipmentId) {
 
 let timeoutId = null;
 
-function start(intervalMs = 5 * 60 * 1000, delayMs = 0) { // Default 5 minutes
+function start(intervalMs = 5 * 60 * 1000, delayMs = 0, statusIntervalMsArg = 15 * 60 * 1000) { // Default 5 minutes for import, 15 for status checks
     if (timeoutId !== null) return;
     currentIntervalMs = intervalMs;
     nextScheduledTime = Date.now() + delayMs;
-    
+
     // Run cleanup once on start
     cleanupDuplicates();
-    
-    console.log(`[MeliPolling] Service starting (Interval: ${intervalMs/1000/60} min, Initial Delay: ${delayMs/1000}s)`);
-    
+
+    console.log(`[MeliPolling] Service starting (Import interval: ${intervalMs/1000/60} min, Status interval: ${statusIntervalMsArg/1000/60} min, Initial Delay: ${delayMs/1000}s)`);
+
     // Initial delay then start the recursive timeout chain
     timeoutId = setTimeout(pollMeliPackages, delayMs);
+
+    // Independent, slower-cadence loop for per-package status checks — see
+    // pollPackageStatuses for why this is deliberately not the same loop.
+    if (statusTimeoutId === null) {
+        statusIntervalMs = statusIntervalMsArg;
+        nextStatusScheduledTime = Date.now() + delayMs;
+        statusTimeoutId = setTimeout(pollPackageStatuses, delayMs);
+    }
 }
 
 function stop() {
     if (timeoutId !== null) {
         clearTimeout(timeoutId);
         timeoutId = null;
+    }
+    if (statusTimeoutId !== null) {
+        clearTimeout(statusTimeoutId);
+        statusTimeoutId = null;
     }
 }
 
@@ -1233,6 +1294,17 @@ function getStatus() {
             timeoutId = setTimeout(pollMeliPackages, currentIntervalMs);
         }
     }
+    // Same safety net for the status loop, with a longer threshold since it's
+    // expected to legitimately take longer (tens of thousands of packages).
+    if (isPollingStatuses && statusPollingStartTime && (Date.now() - statusPollingStartTime > 30 * 60 * 1000)) {
+        console.warn('[MeliPolling] Status poll cycle took too long (>30m), triggering emergency reset.');
+        isPollingStatuses = false;
+        statusPollingStartTime = null;
+        if (statusTimeoutId !== null) {
+            clearTimeout(statusTimeoutId);
+            statusTimeoutId = setTimeout(pollPackageStatuses, statusIntervalMs);
+        }
+    }
 
     return {
         nextPollTime: nextScheduledTime,
@@ -1241,12 +1313,16 @@ function getStatus() {
         intervalMs: currentIntervalMs,
         totalPackages: totalPackagesCount,
         processedPackages: processedPackagesCount,
-        lastImportCount
+        lastImportCount,
+        nextStatusPollTime: nextStatusScheduledTime,
+        isPollingStatuses,
+        statusIntervalMs
     };
 }
 
 const triggerSync = async () => {
     await pollMeliPackages();
+    await pollPackageStatuses();
 };
 
 const lastDriverSyncs = new Map();
@@ -1364,6 +1440,7 @@ module.exports = {
     stop,
     getStatus,
     pollMeliPackages,
+    pollPackageStatuses,
     syncPackage,
     getValidMeliToken,
     autoImportMeliPackages,
