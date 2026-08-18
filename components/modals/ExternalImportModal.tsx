@@ -59,7 +59,7 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
     const [isImporting, setIsImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [lastSync, setLastSync] = useState<string | null>(null);
+    const [syncInfo, setSyncInfo] = useState<{ lastSync: string | null; nextExpectedAt: string | null }>({ lastSync: null, nextExpectedAt: null });
 
     const fetchOrders = async () => {
         setIsLoading(true);
@@ -76,14 +76,15 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
         if (source === 'MERCADO_LIBRE') {
             try {
                 const status = await api.fetchMeliSyncStatus(client.id);
-                const mostRecent = status.accounts
-                    .map(a => a.lastSync)
-                    .filter((d): d is string => !!d)
-                    .sort()
-                    .pop();
-                setLastSync(mostRecent || null);
+                // Pick the account with the most recent lastSync, so the "last"
+                // and "next" figures shown always refer to the same account.
+                const withSync = status.accounts.filter(a => a.lastSync);
+                const chosen = withSync.length > 0
+                    ? withSync.reduce((a, b) => (a.lastSync! > b.lastSync! ? a : b))
+                    : status.accounts[0];
+                setSyncInfo({ lastSync: chosen?.lastSync ?? null, nextExpectedAt: chosen?.nextExpectedAt ?? null });
             } catch {
-                setLastSync(null); // Non-critical — just skip showing the timestamp
+                setSyncInfo({ lastSync: null, nextExpectedAt: null }); // Non-critical — just skip showing the timestamps
             }
         }
     };
@@ -103,7 +104,15 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
         return new Date(iso).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     };
 
-    const filteredOrders = orders.filter(order => 
+    const formatNextImport = (iso: string | null): string => {
+        if (!iso) return 'Sin datos';
+        const diffMin = Math.ceil((new Date(iso).getTime() - Date.now()) / 60000);
+        if (diffMin <= 0) return 'en breve';
+        if (diffMin === 1) return 'en 1 min';
+        return `en ${diffMin} min`;
+    };
+
+    const filteredOrders = orders.filter(order =>
         order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
         order.recipientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (order.address && order.address.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -186,8 +195,10 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                     </div>
                     <div className="flex items-center gap-4">
                         {source === 'MERCADO_LIBRE' && (
-                            <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
-                                Última importación automática: <span className="font-semibold">{formatLastSync(lastSync)}</span>
+                            <span className="text-xs text-[var(--text-muted)] whitespace-nowrap text-right">
+                                Última importación: <span className="font-semibold">{formatLastSync(syncInfo.lastSync)}</span>
+                                <br />
+                                Próxima: <span className="font-semibold">{formatNextImport(syncInfo.nextExpectedAt)}</span>
                             </span>
                         )}
                         <button onClick={onClose} className="p-2 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-6 h-6" /></button>

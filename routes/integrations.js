@@ -921,13 +921,24 @@ router.get('/:clientId/meli/sync-status', authMiddleware, async (req, res) => {
         const meliAccounts = integrations.accounts.filter(acc => acc.type === 'MERCADO_LIBRE');
 
         res.json({
-            accounts: meliAccounts.map(acc => ({
-                id: acc.id,
-                nickname: acc.nickname,
-                lastSync: acc.settings?.lastSync || null,
-                lastAttemptAt: acc.settings?.lastAttemptAt || null,
-                autoImport: acc.settings?.autoImport ?? false
-            }))
+            accounts: meliAccounts.map(acc => {
+                const settings = acc.settings || {};
+                // Same default as the poller itself (meliPollingService.js) so this
+                // matches what will actually happen, not just a guess.
+                const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 2;
+                const lastAttempt = settings.lastAttemptAt || settings.lastSync || null;
+                const nextExpectedAt = lastAttempt
+                    ? new Date(new Date(lastAttempt).getTime() + syncIntervalMin * 60000).toISOString()
+                    : null;
+                return {
+                    id: acc.id,
+                    nickname: acc.nickname,
+                    lastSync: settings.lastSync || null,
+                    lastAttemptAt: settings.lastAttemptAt || null,
+                    autoImport: settings.autoImport ?? false,
+                    nextExpectedAt
+                };
+            })
         });
     } catch (err) {
         console.error("Meli Sync Status Error:", err.body || err);
