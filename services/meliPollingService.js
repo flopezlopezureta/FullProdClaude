@@ -602,6 +602,14 @@ async function autoImportMeliPackages(activeCommunes = []) {
         // (a client's last successful sync was 36 minutes old despite a
         // 5-minute schedule).
         await runWithLimit(5, users, async (user) => {
+          // runWithLimit uses Promise.race/Promise.all internally — a single
+          // rejected item there aborts scheduling of every user still queued
+          // behind it (confirmed: one client's unhandled error silently froze
+          // auto-import for other clients queued after it, indefinitely,
+          // since nothing ever re-throws or retries on its own). This outer
+          // try/catch guarantees this callback always resolves, so one
+          // client's failure can never block any other client's turn.
+          try {
             const clientId = user.id;
             const clientIdentifier = user.clientIdentifier || 'CLI';
 
@@ -880,6 +888,9 @@ async function autoImportMeliPackages(activeCommunes = []) {
                     }
                 }
             }
+          } catch (userErr) {
+              console.error(`[MeliPolling] Unhandled error processing client ${user.id}:`, userErr.message || userErr);
+          }
         });
 
         // Trigger background geocoding
