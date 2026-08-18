@@ -632,40 +632,35 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                 await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
                             }
 
-                            // 2. Fetch recent orders for this seller, paginated — a flat limit=100
-                            // with no offset meant any paid order older than the newest 100 (by
-                            // date) was never seen again by auto-import, ever. That's the real
-                            // reason some Flex packages only ever showed up via manual scan (which
-                            // looks up by ID directly, unaffected by this window): the shipment
-                            // just wasn't ready yet on an earlier poll and aged out of the top-100
-                            // by the time it was. Flex-specific statuses (ready_to_print/
-                            // ready_to_ship/handling) were never actually filtered out below —
-                            // this pagination gap was the actual bug, confirmed 2026-08-17.
-                            // CHECKPOINT (2026-08-17 fix #2): restarting at offset=0 every single
-                            // cycle meant an account with more paid orders than
-                            // MAX_ORDERS_PER_CYCLE could *never* progress past its newest ~500 by
-                            // date — same class of bug as the original flat limit=100, just with a
-                            // higher ceiling. Persist how far this account got (settings.lastOffset,
-                            // stored right next to lastSync/lastAttemptAt) so consecutive 5-minute
-                            // cycles walk forward through the whole backlog instead of repeating the
-                            // same newest slice forever. Resets to 0 once a full pass completes.
+                            // 2. Fetch orders for this seller. History of this block:
+                            // - Originally a flat limit=100 with no offset — any paid order older
+                            //   than the newest 100 by date was never seen again, ever. That's why
+                            //   some Flex packages only ever showed up via manual scan.
+                            // - First fix (2026-08-17) added pagination with a persisted checkpoint
+                            //   (settings.lastOffset) so multi-cycle sweeps could reach deep into a
+                            //   large backlog. But a checkpoint deep in a sweep meant offset=0 (the
+                            //   newest orders) stopped being checked until the whole sweep finished —
+                            //   confirmed for real against Kanino's account: 20 genuinely new orders
+                            //   sat unimported because the sweep was elsewhere in their history.
+                            // - This fix (same day) splits it into two passes so neither starves the
+                            //   other: a FRESH pass always re-checks the newest FRESH_CHECK_ORDERS
+                            //   orders every cycle (cheap even at scale — an already-imported order
+                            //   is skipped with one DB lookup, no ML API call), and a SWEEP pass
+                            //   continues the persisted checkpoint through older pages with whatever
+                            //   budget is left, so large backlogs still get fully covered over time.
                             const PAGE_LIMIT = 50;
-                            const MAX_ORDERS_PER_CYCLE = 500; // safety cap so one huge account can't starve the 45s per-account timeout
-                            let offset = settings.lastOffset || 0;
+                            const FRESH_CHECK_ORDERS = 200; // always re-checked every cycle, regardless of sweep progress
+                            const MAX_ORDERS_PER_CYCLE = 500; // total budget (fresh + sweep) per account per cycle, bounds the 45s per-account timeout
                             let totalFetched = 0;
                             let flexSeenThisAccount = 0;
                             let nonFlexSeenThisAccount = 0;
                             const importedBeforeThisAccount = importedThisCycle;
                             let pageTotal = 0;
-                            let reachedEndOfBacklog = true; // flipped to false only if the MAX_ORDERS_PER_CYCLE cap cuts the pass short
 
-                            do {
-                                const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=${PAGE_LIMIT}&offset=${offset}`, accessToken);
-
-                                if (!ordersData.results || ordersData.results.length === 0) break;
-
-                                pageTotal = ordersData.paging?.total ?? 0;
-                                console.log(`[MeliPolling] Page offset=${offset}: ${ordersData.results.length} orders (total=${pageTotal || 'unknown'}) for client ${clientId} (${account.nickname})`);
+                            const fetchAndProcessPage = async (pageOffset) => {
+                                const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=${PAGE_LIMIT}&offset=${pageOffset}`, accessToken);
+                                if (!ordersData.results || ordersData.results.length === 0) return 0;
+                                pageTotal = ordersData.paging?.total ?? pageTotal;
 
                             for (const order of ordersData.results) {
                                 try {
@@ -804,30 +799,49 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                     console.error(`[MeliPolling] Error processing order ${order.id}:`, orderErr.message);
                                 }
                             }
+                                return ordersData.results.length;
+                            };
 
-                                totalFetched += ordersData.results.length;
-                                offset += PAGE_LIMIT;
+                            // (a) FRESH pass — always runs first, every cycle, regardless of sweep progress.
+                            let freshOffset = 0;
+                            while (freshOffset < FRESH_CHECK_ORDERS) {
+                                const count = await fetchAndProcessPage(freshOffset);
+                                if (count === 0) break;
+                                totalFetched += count;
+                                console.log(`[MeliPolling] Fresh page offset=${freshOffset}: ${count} orders (total=${pageTotal || 'unknown'}) for client ${clientId} (${account.nickname})`);
+                                freshOffset += PAGE_LIMIT;
+                                if (freshOffset >= pageTotal) break;
+                            }
 
+                            // (b) SWEEP pass — continues the persisted checkpoint through older
+                            // pages with whatever budget remains, never starting below
+                            // FRESH_CHECK_ORDERS since that range is already covered by (a) above.
+                            let sweepOffset = Math.max(settings.lastOffset || FRESH_CHECK_ORDERS, FRESH_CHECK_ORDERS);
+                            let reachedEndOfBacklog = true; // flipped to false only if the MAX_ORDERS_PER_CYCLE cap cuts the sweep short
+                            while (totalFetched < MAX_ORDERS_PER_CYCLE && sweepOffset < pageTotal) {
+                                const count = await fetchAndProcessPage(sweepOffset);
+                                if (count === 0) break;
+                                totalFetched += count;
+                                console.log(`[MeliPolling] Sweep page offset=${sweepOffset}: ${count} orders (total=${pageTotal || 'unknown'}) for client ${clientId} (${account.nickname})`);
+                                sweepOffset += PAGE_LIMIT;
                                 if (totalFetched >= MAX_ORDERS_PER_CYCLE) {
-                                    console.warn(`[MeliPolling] Hit MAX_ORDERS_PER_CYCLE (${MAX_ORDERS_PER_CYCLE}) cap for client ${clientId} (${account.nickname}) — resuming from offset=${offset} next cycle.`);
+                                    console.warn(`[MeliPolling] Hit MAX_ORDERS_PER_CYCLE (${MAX_ORDERS_PER_CYCLE}) cap for client ${clientId} (${account.nickname}) — resuming sweep from offset=${sweepOffset} next cycle.`);
                                     reachedEndOfBacklog = false;
                                     break;
                                 }
-                            } while (offset < pageTotal);
+                            }
 
-                            // Persist the checkpoint: 0 if we finished the whole backlog this cycle
-                            // (so the next cycle starts fresh at the newest orders again), otherwise
-                            // the offset we got to, so the next cycle picks up right there instead
-                            // of re-scanning the same newest slice forever.
+                            // Persist the sweep checkpoint: back to FRESH_CHECK_ORDERS (the sweep's
+                            // floor) once a full pass completes, otherwise wherever the sweep got to.
                             if (accountIndex > -1) {
-                                integrations.accounts[accountIndex].settings.lastOffset = reachedEndOfBacklog ? 0 : offset;
+                                integrations.accounts[accountIndex].settings.lastOffset = reachedEndOfBacklog ? FRESH_CHECK_ORDERS : sweepOffset;
                                 await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
                             }
 
                             if (totalFetched === 0) {
                                 console.log(`[MeliPolling] No recent paid orders for client ${clientId} (Account: ${account.nickname})`);
                             } else {
-                                console.log(`[MeliPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${totalFetched}, imported=${importedThisCycle - importedBeforeThisAccount}, flexSeen=${flexSeenThisAccount}, nonFlexSeen=${nonFlexSeenThisAccount}, nextOffset=${reachedEndOfBacklog ? 0 : offset}${reachedEndOfBacklog ? ' (full pass complete)' : ' (resuming next cycle)'}`);
+                                console.log(`[MeliPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${totalFetched}, imported=${importedThisCycle - importedBeforeThisAccount}, flexSeen=${flexSeenThisAccount}, nonFlexSeen=${nonFlexSeenThisAccount}, sweepNextOffset=${reachedEndOfBacklog ? FRESH_CHECK_ORDERS : sweepOffset}${reachedEndOfBacklog ? ' (full sweep pass complete)' : ' (sweep resuming next cycle)'}`);
                             }
                         })(),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_ACCOUNT')), 45000))
