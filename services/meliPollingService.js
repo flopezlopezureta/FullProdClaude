@@ -641,14 +641,23 @@ async function autoImportMeliPackages(activeCommunes = []) {
                             // by the time it was. Flex-specific statuses (ready_to_print/
                             // ready_to_ship/handling) were never actually filtered out below —
                             // this pagination gap was the actual bug, confirmed 2026-08-17.
+                            // CHECKPOINT (2026-08-17 fix #2): restarting at offset=0 every single
+                            // cycle meant an account with more paid orders than
+                            // MAX_ORDERS_PER_CYCLE could *never* progress past its newest ~500 by
+                            // date — same class of bug as the original flat limit=100, just with a
+                            // higher ceiling. Persist how far this account got (settings.lastOffset,
+                            // stored right next to lastSync/lastAttemptAt) so consecutive 5-minute
+                            // cycles walk forward through the whole backlog instead of repeating the
+                            // same newest slice forever. Resets to 0 once a full pass completes.
                             const PAGE_LIMIT = 50;
                             const MAX_ORDERS_PER_CYCLE = 500; // safety cap so one huge account can't starve the 45s per-account timeout
-                            let offset = 0;
+                            let offset = settings.lastOffset || 0;
                             let totalFetched = 0;
                             let flexSeenThisAccount = 0;
                             let nonFlexSeenThisAccount = 0;
                             const importedBeforeThisAccount = importedThisCycle;
                             let pageTotal = 0;
+                            let reachedEndOfBacklog = true; // flipped to false only if the MAX_ORDERS_PER_CYCLE cap cuts the pass short
 
                             do {
                                 const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=${PAGE_LIMIT}&offset=${offset}`, accessToken);
@@ -800,15 +809,25 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                 offset += PAGE_LIMIT;
 
                                 if (totalFetched >= MAX_ORDERS_PER_CYCLE) {
-                                    console.warn(`[MeliPolling] Hit MAX_ORDERS_PER_CYCLE (${MAX_ORDERS_PER_CYCLE}) cap for client ${clientId} (${account.nickname}) — some older paid orders may not be checked this cycle.`);
+                                    console.warn(`[MeliPolling] Hit MAX_ORDERS_PER_CYCLE (${MAX_ORDERS_PER_CYCLE}) cap for client ${clientId} (${account.nickname}) — resuming from offset=${offset} next cycle.`);
+                                    reachedEndOfBacklog = false;
                                     break;
                                 }
                             } while (offset < pageTotal);
 
+                            // Persist the checkpoint: 0 if we finished the whole backlog this cycle
+                            // (so the next cycle starts fresh at the newest orders again), otherwise
+                            // the offset we got to, so the next cycle picks up right there instead
+                            // of re-scanning the same newest slice forever.
+                            if (accountIndex > -1) {
+                                integrations.accounts[accountIndex].settings.lastOffset = reachedEndOfBacklog ? 0 : offset;
+                                await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
+                            }
+
                             if (totalFetched === 0) {
                                 console.log(`[MeliPolling] No recent paid orders for client ${clientId} (Account: ${account.nickname})`);
                             } else {
-                                console.log(`[MeliPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${totalFetched}, imported=${importedThisCycle - importedBeforeThisAccount}, flexSeen=${flexSeenThisAccount}, nonFlexSeen=${nonFlexSeenThisAccount}`);
+                                console.log(`[MeliPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${totalFetched}, imported=${importedThisCycle - importedBeforeThisAccount}, flexSeen=${flexSeenThisAccount}, nonFlexSeen=${nonFlexSeenThisAccount}, nextOffset=${reachedEndOfBacklog ? 0 : offset}${reachedEndOfBacklog ? ' (full pass complete)' : ' (resuming next cycle)'}`);
                             }
                         })(),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_ACCOUNT')), 45000))
