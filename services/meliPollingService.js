@@ -593,15 +593,23 @@ async function autoImportMeliPackages(activeCommunes = []) {
             AND (integrations->'meli' IS NOT NULL OR integrations->'accounts' IS NOT NULL)
         `);
         
-        for (const user of users) {
+        // Users run concurrently (bounded) since each owns an independent DB
+        // row/token; accounts WITHIN a user stay sequential below because they
+        // share and mutate the same `integrations` object before writing it
+        // back, which isn't safe to race. Sequential per-user processing was
+        // the reason a full cycle across many clients could take 30+ minutes
+        // even though each account is capped at 45s — confirmed on Production
+        // (a client's last successful sync was 36 minutes old despite a
+        // 5-minute schedule).
+        await runWithLimit(5, users, async (user) => {
             const clientId = user.id;
             const clientIdentifier = user.clientIdentifier || 'CLI';
-            
+
             // Asegurar estructura multi-cuenta
             let integrations = ensureMultiAccountStructure(user.integrations);
             const meliAccounts = integrations.accounts.filter(acc => acc.type === 'MERCADO_LIBRE');
 
-            if (meliAccounts.length === 0) continue;
+            if (meliAccounts.length === 0) return;
 
             for (const account of meliAccounts) {
                 try {
@@ -872,8 +880,8 @@ async function autoImportMeliPackages(activeCommunes = []) {
                     }
                 }
             }
-        }
-        
+        });
+
         // Trigger background geocoding
         setTimeout(() => triggerBackgroundGeocoding(), 2000);
     } catch (err) {
