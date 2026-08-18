@@ -905,6 +905,36 @@ router.get('/:clientId/meli/orders', authMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/integrations/:clientId/meli/sync-status
+router.get('/:clientId/meli/sync-status', authMiddleware, async (req, res) => {
+    const { clientId } = req.params;
+
+    if (req.user.role !== 'ADMIN' && req.user.id !== clientId) {
+        return res.status(403).json({ message: 'No tienes permiso para ver este estado.' });
+    }
+
+    try {
+        const { rows: userRows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
+        if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
+
+        const integrations = ensureMultiAccountStructure(userRows[0].integrations);
+        const meliAccounts = integrations.accounts.filter(acc => acc.type === 'MERCADO_LIBRE');
+
+        res.json({
+            accounts: meliAccounts.map(acc => ({
+                id: acc.id,
+                nickname: acc.nickname,
+                lastSync: acc.settings?.lastSync || null,
+                lastAttemptAt: acc.settings?.lastAttemptAt || null,
+                autoImport: acc.settings?.autoImport ?? false
+            }))
+        });
+    } catch (err) {
+        console.error("Meli Sync Status Error:", err.body || err);
+        res.status(500).json({ message: err.message || 'Error al obtener el estado de sincronización.' });
+    }
+});
+
 // POST /api/integrations/:clientId/meli/import
 router.post('/:clientId/meli/import', authMiddleware, async (req, res) => {
     const { clientId } = req.params;

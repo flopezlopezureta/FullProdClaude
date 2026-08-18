@@ -59,6 +59,7 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
     const [isImporting, setIsImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [lastSync, setLastSync] = useState<string | null>(null);
 
     const fetchOrders = async () => {
         setIsLoading(true);
@@ -71,12 +72,36 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
         } finally {
             setIsLoading(false);
         }
+
+        if (source === 'MERCADO_LIBRE') {
+            try {
+                const status = await api.fetchMeliSyncStatus(client.id);
+                const mostRecent = status.accounts
+                    .map(a => a.lastSync)
+                    .filter((d): d is string => !!d)
+                    .sort()
+                    .pop();
+                setLastSync(mostRecent || null);
+            } catch {
+                setLastSync(null); // Non-critical — just skip showing the timestamp
+            }
+        }
     };
 
     // Initial fetch
     React.useEffect(() => {
         fetchOrders();
     }, [client.id, source]);
+
+    const formatLastSync = (iso: string | null): string => {
+        if (!iso) return 'Sin datos';
+        const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+        if (diffMin < 1) return 'hace instantes';
+        if (diffMin < 60) return `hace ${diffMin} min`;
+        const diffH = Math.floor(diffMin / 60);
+        if (diffH < 24) return `hace ${diffH} h`;
+        return new Date(iso).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    };
 
     const filteredOrders = orders.filter(order => 
         order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -159,7 +184,14 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                             <p className="text-sm text-[var(--text-muted)]">Cliente: {client.name}</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-6 h-6" /></button>
+                    <div className="flex items-center gap-4">
+                        {source === 'MERCADO_LIBRE' && (
+                            <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
+                                Última importación automática: <span className="font-semibold">{formatLastSync(lastSync)}</span>
+                            </span>
+                        )}
+                        <button onClick={onClose} className="p-2 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-6 h-6" /></button>
+                    </div>
                 </header>
 
                 <div className="p-4 border-b border-[var(--border-primary)] flex gap-4">

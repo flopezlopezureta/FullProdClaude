@@ -376,6 +376,7 @@ export const api = {
   disconnectGoogleSmtp: () => post<{message: string}>('/settings/disconnect-google-smtp', {}),
   
   fetchMeliOrders: (clientId: string) => get<MeliOrder[]>(`/integrations/${clientId}/meli/orders`),
+  fetchMeliSyncStatus: (clientId: string) => get<{ accounts: { id: string; nickname: string; lastSync: string | null; lastAttemptAt: string | null; autoImport: boolean }[] }>(`/integrations/${clientId}/meli/sync-status`),
   importMeliOrders: (clientId: string, orderIds: string[]) => post<void>(`/integrations/${clientId}/meli/import`, { orderIds }),
   fetchShopifyOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/shopify/orders`),
   fetchWooCommerceOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/woocommerce/orders`),
