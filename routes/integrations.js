@@ -844,9 +844,25 @@ router.get('/:clientId/meli/orders', authMiddleware, async (req, res) => {
             try {
                 const meliIntegration = await getValidMeliIntegration(clientId, account.id);
                 const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=30`, meliIntegration.accessToken);
-                
+
                 if (ordersData && ordersData.results) {
-                    const mappedOrders = await Promise.all(ordersData.results.map(async (order) => {
+                    // Exclude orders already imported into our system (e.g. by the
+                    // auto-import worker) so this manual browsing list only shows
+                    // orders that genuinely still need to be imported.
+                    const orderIds = ordersData.results.map(o => o.id.toString());
+                    const shipmentIds = ordersData.results.map(o => o.shipping?.id?.toString()).filter(Boolean);
+                    const { rows: existingPackages } = await db.query(
+                        'SELECT "meliOrderId", "meliFlexCode" FROM packages WHERE "meliOrderId" = ANY($1) OR "meliFlexCode" = ANY($2)',
+                        [orderIds, shipmentIds]
+                    );
+                    const importedOrderIds = new Set(existingPackages.map(p => p.meliOrderId).filter(Boolean));
+                    const importedShipmentIds = new Set(existingPackages.map(p => p.meliFlexCode).filter(Boolean));
+                    const pendingOrders = ordersData.results.filter(order => {
+                        const shipmentId = order.shipping?.id?.toString();
+                        return !importedOrderIds.has(order.id.toString()) && !(shipmentId && importedShipmentIds.has(shipmentId));
+                    });
+
+                    const mappedOrders = await Promise.all(pendingOrders.map(async (order) => {
                         const shipmentId = order.shipping?.id;
                         let shipment = null;
                         if (shipmentId) {
