@@ -632,15 +632,31 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                 await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
                             }
 
-                            // 2. Fetch recent orders for this seller
-                            const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=100`, accessToken);
-                            
-                            if (!ordersData.results || ordersData.results.length === 0) {
-                                console.log(`[MeliPolling] No recent paid orders for client ${clientId} (Account: ${account.nickname})`);
-                                return;
-                            }
+                            // 2. Fetch recent orders for this seller, paginated — a flat limit=100
+                            // with no offset meant any paid order older than the newest 100 (by
+                            // date) was never seen again by auto-import, ever. That's the real
+                            // reason some Flex packages only ever showed up via manual scan (which
+                            // looks up by ID directly, unaffected by this window): the shipment
+                            // just wasn't ready yet on an earlier poll and aged out of the top-100
+                            // by the time it was. Flex-specific statuses (ready_to_print/
+                            // ready_to_ship/handling) were never actually filtered out below —
+                            // this pagination gap was the actual bug, confirmed 2026-08-17.
+                            const PAGE_LIMIT = 50;
+                            const MAX_ORDERS_PER_CYCLE = 500; // safety cap so one huge account can't starve the 45s per-account timeout
+                            let offset = 0;
+                            let totalFetched = 0;
+                            let flexSeenThisAccount = 0;
+                            let nonFlexSeenThisAccount = 0;
+                            const importedBeforeThisAccount = importedThisCycle;
+                            let pageTotal = 0;
 
-                            console.log(`[MeliPolling] Found ${ordersData.results.length} recent paid orders for client ${clientId} (${account.nickname}). Processing...`);
+                            do {
+                                const ordersData = await makeMeliGetRequest(`/orders/search?seller=${meliIntegration.userId}&order.status=paid&sort=date_desc&limit=${PAGE_LIMIT}&offset=${offset}`, accessToken);
+
+                                if (!ordersData.results || ordersData.results.length === 0) break;
+
+                                pageTotal = ordersData.paging?.total ?? 0;
+                                console.log(`[MeliPolling] Page offset=${offset}: ${ordersData.results.length} orders (total=${pageTotal || 'unknown'}) for client ${clientId} (${account.nickname})`);
 
                             for (const order of ordersData.results) {
                                 try {
@@ -670,7 +686,15 @@ async function autoImportMeliPackages(activeCommunes = []) {
 
                                     // 4. Get Shipment Details to check address
                                     const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
-                                    
+
+                                    // Flex audit logging — logistic_type is the real ML flag for Mercado
+                                    // Envíos Flex ('self_service'), already used elsewhere (routes/integrations.js)
+                                    // but never read here before. Purely observational: does not change
+                                    // any filtering below.
+                                    const isFlex = shipment.logistic_type === 'self_service';
+                                    if (isFlex) flexSeenThisAccount++; else nonFlexSeenThisAccount++;
+                                    console.log(`[MeliPolling] Order ${orderId} shipment ${shipmentId}: logistic_type=${shipment.logistic_type || 'unknown'} (${isFlex ? 'FLEX' : 'non-Flex'}), status=${shipment.status}`);
+
                                     if (shipment.status === 'delivered' || shipment.status === 'cancelled') continue;
 
                                     // 4.5 Deep Search for Phone Number
@@ -770,6 +794,21 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                 } catch (orderErr) {
                                     console.error(`[MeliPolling] Error processing order ${order.id}:`, orderErr.message);
                                 }
+                            }
+
+                                totalFetched += ordersData.results.length;
+                                offset += PAGE_LIMIT;
+
+                                if (totalFetched >= MAX_ORDERS_PER_CYCLE) {
+                                    console.warn(`[MeliPolling] Hit MAX_ORDERS_PER_CYCLE (${MAX_ORDERS_PER_CYCLE}) cap for client ${clientId} (${account.nickname}) — some older paid orders may not be checked this cycle.`);
+                                    break;
+                                }
+                            } while (offset < pageTotal);
+
+                            if (totalFetched === 0) {
+                                console.log(`[MeliPolling] No recent paid orders for client ${clientId} (Account: ${account.nickname})`);
+                            } else {
+                                console.log(`[MeliPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${totalFetched}, imported=${importedThisCycle - importedBeforeThisAccount}, flexSeen=${flexSeenThisAccount}, nonFlexSeen=${nonFlexSeenThisAccount}`);
                             }
                         })(),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_ACCOUNT')), 45000))
