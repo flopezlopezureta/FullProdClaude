@@ -73,10 +73,14 @@ const ensureMultiAccountStructure = (integrations) => {
                 type: 'MERCADO_LIBRE',
                 nickname: 'Mercado Libre (Principal)',
                 credentials: { ...integrations.meli },
-                settings: { 
-                    autoImport: true, 
-                    syncInterval: 30,
-                    lastSync: integrations.meli.lastSync 
+                settings: {
+                    autoImport: true,
+                    // The outer poll cycle itself only fires every 5 minutes
+                    // (see start()), so any per-account interval below that has
+                    // no effect — 30 here was a stale legacy default that left
+                    // migrated accounts checked only once every ~6 cycles.
+                    syncInterval: 5,
+                    lastSync: integrations.meli.lastSync
                 },
                 connectedAt: integrations.meli.connectedAt || new Date().toISOString()
             });
