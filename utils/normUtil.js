@@ -84,6 +84,17 @@ const fuzzyMatchCommune = (noSpaceInput) => {
     return null;
 };
 
+// Exact (non-fuzzy) match against the canonical/no-space maps only — used both
+// by the main flow below and by the "COMUNA - SECTOR" split fallback, where
+// only a confident exact match on a partial string is trustworthy.
+const resolveExactCommune = (text) => {
+    const clean = text.toUpperCase().replace(/\s+/g, ' ').trim().split('').map(char => ACCENT_MAP[char] || char).join('');
+    if (CANONICAL_MAP[clean]) return CANONICAL_MAP[clean];
+    const noSpace = clean.replace(/\s+/g, '');
+    if (NO_SPACE_MAP[noSpace]) return NO_SPACE_MAP[noSpace];
+    return null;
+};
+
 /**
  * Normalizes a commune name:
  * 1. Trims whitespace, collapses internal whitespace, treats hyphens/underscores as spaces
@@ -96,18 +107,29 @@ const fuzzyMatchCommune = (noSpaceInput) => {
 const normalizeCommune = (commune) => {
     if (!commune) return 'SIN COMUNA';
 
+    // Some sources (confirmed: Falabella) send "COMUNA - SECTOR" — the actual
+    // commune plus a neighborhood/sector suffix — rather than just the
+    // commune, e.g. "Lo Barnechea - La Dehesa". If the text before the first
+    // hyphen alone resolves EXACTLY to a real commune, prefer that over
+    // merging the whole string into one (which would only match a real
+    // commune by coincidence). Doesn't affect genuine hyphenated commune
+    // names like "Puente-Alto" — "Puente" alone isn't a real commune, so
+    // this falls through to the existing merge-into-one-string logic below.
+    if (commune.includes('-')) {
+        const bySegment = resolveExactCommune(commune.split('-')[0]);
+        if (bySegment) return bySegment;
+    }
+
     let normalized = commune.trim().toUpperCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
     let clean = normalized.split('').map(char => ACCENT_MAP[char] || char).join('');
 
     // Word-level aliases that aren't just accent/spacing variants
     if (clean === 'SANTIAGO CENTRO' || clean === 'STGO CENTRO' || clean === 'STGO') return 'SANTIAGO';
 
-    if (CANONICAL_MAP[clean]) return CANONICAL_MAP[clean];
+    const exact = resolveExactCommune(normalized);
+    if (exact) return exact;
 
-    const noSpace = clean.replace(/\s+/g, '');
-    if (NO_SPACE_MAP[noSpace]) return NO_SPACE_MAP[noSpace];
-
-    const fuzzy = fuzzyMatchCommune(noSpace);
+    const fuzzy = fuzzyMatchCommune(clean.replace(/\s+/g, ''));
     if (fuzzy) return fuzzy;
 
     return clean;
