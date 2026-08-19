@@ -8,6 +8,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 
 const meliPollingService = require('../services/meliPollingService');
+const { normalizeCommune } = require('../utils/normUtil');
 
 // --- MULTI-ACCOUNT HELPERS ---
 const ensureMultiAccountStructure = (integrations) => {
@@ -882,7 +883,11 @@ router.get('/:clientId/meli/orders', authMiddleware, async (req, res) => {
                             id: order.id.toString(),
                             recipientName: shipment?.receiver_address?.receiver_name || order.buyer?.nickname || 'N/A',
                             address: shipment?.receiver_address?.address_line || 'N/A',
-                            commune: shipment?.receiver_address?.city?.name || 'N/A',
+                            // Normalized so this matches auth.activeCommunes exactly on the
+                            // frontend (raw ML values can have missing accents/spacing quirks
+                            // that the actual import already tolerates via normalizeCommune,
+                            // but a naive string comparison here would not).
+                            commune: normalizeCommune(shipment?.receiver_address?.city?.name || 'N/A'),
                             city: shipment?.receiver_address?.state?.name || 'N/A',
                             notes: `ML Order: ${order.id} (${account.nickname})`,
                             shipmentId: shipmentId,
@@ -1449,7 +1454,7 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
                         recipientName: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim() || order.customer?.first_name || 'N/A',
                         recipientPhone: order.shipping_address?.phone || order.customer?.phone || 'N/A',
                         address: `${order.shipping_address?.address1 || ''} ${order.shipping_address?.address2 || ''}`.trim() || 'N/A',
-                        commune: order.shipping_address?.city || 'N/A',
+                        commune: normalizeCommune(order.shipping_address?.city || 'N/A'),
                         city: order.shipping_address?.province || 'N/A',
                         notes: `Shopify Order: ${order.name || order.id} (${account.nickname})`,
                         orderNumber: order.order_number?.toString() || order.name || order.id.toString(),
@@ -1610,7 +1615,7 @@ router.get('/:clientId/woocommerce/orders', authMiddleware, async (req, res) => 
                         recipientName: `${order.shipping?.first_name || ''} ${order.shipping?.last_name || ''}`.trim() || `${order.billing?.first_name || ''} ${order.billing?.last_name || ''}`.trim() || 'N/A',
                         recipientPhone: order.billing?.phone || 'N/A',
                         address: `${order.shipping?.address_1 || ''} ${order.shipping?.address_2 || ''}`.trim() || order.billing?.address_1 || 'N/A',
-                        commune: order.shipping?.city || order.billing?.city || 'N/A',
+                        commune: normalizeCommune(order.shipping?.city || order.billing?.city || 'N/A'),
                         city: order.shipping?.state || order.billing?.state || 'N/A',
                         notes: `Woo Order: ${order.number || order.id} (${account.nickname})`,
                         sourceAccountId: account.id,
@@ -1727,7 +1732,12 @@ router.get('/:clientId/falabella/orders', authMiddleware, async (req, res) => {
                             recipientName: fullName || 'N/A',
                             recipientPhone: order.AddressShipping?.Phone || order.AddressBilling?.Phone || order.CustomerPhone || 'N/A',
                             address: fullAddress || 'N/A',
-                            commune: decodeHtmlEntities(order.AddressShipping?.Ward || order.AddressBilling?.Ward || 'N/A').toUpperCase().trim(),
+                            // Falabella sends "COMUNA - SECTOR" (e.g. "Lo Barnechea - La Dehesa")
+                            // for Ward — normalizeCommune resolves that to the real commune name
+                            // so this matches auth.activeCommunes exactly, instead of the raw
+                            // string never matching and showing every order as wrongly "inactive"
+                            // (with its checkbox disabled) in the import screen.
+                            commune: normalizeCommune(decodeHtmlEntities(order.AddressShipping?.Ward || order.AddressBilling?.Ward || 'N/A')),
                             city: decodeHtmlEntities(order.AddressShipping?.City || order.AddressBilling?.City || 'N/A').toUpperCase().trim(),
                             notes: decodeHtmlEntities(order.Remarks || order.Notes || `Falabella Order: ${order.OrderNumber || order.OrderId}`),
                             orderNumber: order.OrderNumber ? order.OrderNumber.toString() : (order.OrderId ? order.OrderId.toString() : 'N/A'),
@@ -2684,7 +2694,7 @@ router.get('/:clientId/jumpseller/orders', authMiddleware, async (req, res) => {
                                 id: order.id.toString(),
                                 recipientName: shipping.fullname || customer.fullname || 'N/A',
                                 address: shipping.address || 'N/A',
-                                commune: shipping.municipality || 'N/A',
+                                commune: normalizeCommune(shipping.municipality || 'N/A'),
                                 city: shipping.city || 'N/A',
                                 notes: `Jump Order: ${order.id} (${account.nickname})`,
                                 shipmentId: order.id.toString(),
