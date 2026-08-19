@@ -246,6 +246,7 @@ async function startServer() {
     const mobileRoute = tryRequireRoute('./routes/mobile.js'); if (mobileRoute) app.use('/api', mobileRoute);
     const debugRoute = tryRequireRoute('./routes/debug.js'); if (debugRoute) app.use('/api/debug', debugRoute);
     const networkMetricsRoute = tryRequireRoute('./routes/networkMetrics.js'); if (networkMetricsRoute) app.use('/api/network-metrics', networkMetricsRoute);
+    const emergencyLookupsRoute = tryRequireRoute('./routes/emergencyLookups.js'); if (emergencyLookupsRoute) app.use('/api/emergency-lookups', emergencyLookupsRoute);
     const appUpdatesRoute = tryRequireRoute('./routes/appUpdates.js'); if (appUpdatesRoute) app.use('/api/app-updates', appUpdatesRoute);
     const falabellaDirectRoute = tryRequireRoute('./routes/falabellaDirect.js'); if (falabellaDirectRoute) app.use('/api/falabella-direct', falabellaDirectRoute);
     const googleAuthRoute = tryRequireRoute('./routes/googleAuth.js'); if (googleAuthRoute) app.use('/api/auth/google', googleAuthRoute);
@@ -1293,7 +1294,25 @@ async function initializeDatabase() {
             );
         `);
         console.log('Table "system_logs" is ready.');
-        
+
+        // Records every time a driver's scan-to-dispatch doesn't find the package
+        // locally and has to fall back to an emergency live lookup against Mercado
+        // Libre (optimizedJITDiscovery) — lets us see which clients/times this is
+        // happening for, and how long the emergency lookup itself takes, to
+        // diagnose the "assignment gets stuck" complaint.
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS meli_emergency_lookups (
+                id SERIAL PRIMARY KEY,
+                "searchedCode" TEXT NOT NULL,
+                "driverId" TEXT,
+                "clientId" TEXT,
+                success BOOLEAN NOT NULL,
+                "durationMs" INTEGER,
+                "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('Table "meli_emergency_lookups" is ready.');
+
         await db.query(`
             CREATE TABLE IF NOT EXISTS daily_closures (
                 id SERIAL PRIMARY KEY,

@@ -13,6 +13,7 @@ import IntegrationSettingsPage from '../admin/IntegrationSettingsPage';
 import FalabellaTestLabelsPage from '../admin/FalabellaTestLabelsPage';
 import CloudflareDiagnosticsPage from '../admin/CloudflareDiagnosticsPage';
 import NetworkTrafficPage from '../admin/NetworkTrafficPage';
+import EmergencyLookupsPage from '../admin/EmergencyLookupsPage';
 import SystemLogsPage from '../admin/SystemLogsPage';
 import ImportOrdersPage from '../admin/ImportOrdersPage';
 import BillingReportPage from '../admin/BillingReportPage';
@@ -279,6 +280,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'network-traffic':
         if (isAdmin && isSuperUser) return { title: 'Tráfico de Red', content: <NetworkTrafficPage /> };
+        break;
+
+      case 'emergency-lookups':
+        if (isAdmin && isSuperUser) return { title: 'Búsquedas de Emergencia Meli', content: <EmergencyLookupsPage /> };
         break;
 
       case 'system-logs':

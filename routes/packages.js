@@ -1263,12 +1263,23 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
         // [NUEVO] IMPORTACIÓN BAJO DEMANDA (Just-In-Time) - ALTAMENTE OPTIMIZADA (Unificado)
         if (pkgRows.length === 0 && isMeliCode(id)) {
             console.log(`[Dispatch] Package ${id} NOT found in DB. Starting Unified JIT Discovery...`);
+            const jitStart = Date.now();
             const importedId = await meliPollingService.optimizedJITDiscovery(id);
+            const jitDurationMs = Date.now() - jitStart;
+            let jitClientId = null;
             if (importedId) {
                 console.log(`[Dispatch] SUCCESS! Shipment ${id} discovered and imported as ${importedId}.`);
-                const { rows: reCheck } = await db.query('SELECT id, status, "driverId", "meliFlexCode", source FROM packages WHERE id = $1', [importedId]);
+                const { rows: reCheck } = await db.query('SELECT id, status, "driverId", "meliFlexCode", source, "creatorId" FROM packages WHERE id = $1', [importedId]);
                 pkgRows = reCheck;
+                jitClientId = reCheck[0]?.creatorId || null;
             }
+            // Logged unconditionally (found or not) — this is the "assignment gets
+            // stuck" monitoring the user asked for: when it happens, for which
+            // client, and how long the emergency lookup itself took.
+            db.query(
+                'INSERT INTO meli_emergency_lookups ("searchedCode", "driverId", "clientId", success, "durationMs") VALUES ($1, $2, $3, $4, $5)',
+                [id, driverId || null, jitClientId, !!importedId, jitDurationMs]
+            ).catch(err => console.error('[Dispatch] Failed to record emergency lookup log:', err.message));
         }
 
         if (pkgRows.length === 0) {
