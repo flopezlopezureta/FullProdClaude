@@ -38,6 +38,7 @@ export interface SystemSettings {
     meliAutoImport?: boolean;
     shopifyAutoImport?: boolean;
     woocommerceAutoImport?: boolean;
+    falabellaAutoImport?: boolean;
     publicTrackingEnabled?: boolean;
     isRutRequired?: boolean;
     flexDiscrepancyReportEnabled?: boolean;

@@ -1770,6 +1770,46 @@ router.get('/:clientId/falabella/orders', authMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/integrations/:clientId/falabella/sync-status
+router.get('/:clientId/falabella/sync-status', authMiddleware, async (req, res) => {
+    const { clientId } = req.params;
+
+    if (req.user.role !== 'ADMIN' && req.user.id !== clientId) {
+        return res.status(403).json({ message: 'No tienes permiso para ver este estado.' });
+    }
+
+    try {
+        const { rows: userRows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
+        if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
+
+        const integrations = ensureMultiAccountStructure(userRows[0].integrations);
+        const falabellaAccounts = integrations.accounts.filter(acc => acc.type === 'FALABELLA');
+
+        res.json({
+            accounts: falabellaAccounts.map(acc => {
+                const settings = acc.settings || {};
+                // Same default as the poller itself (falabellaPollingService.js).
+                const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 5;
+                const lastAttempt = settings.lastAttemptAt || settings.lastSync || null;
+                const nextExpectedAt = lastAttempt
+                    ? new Date(new Date(lastAttempt).getTime() + syncIntervalMin * 60000).toISOString()
+                    : null;
+                return {
+                    id: acc.id,
+                    nickname: acc.nickname,
+                    lastSync: settings.lastSync || null,
+                    lastAttemptAt: settings.lastAttemptAt || null,
+                    autoImport: settings.autoImport ?? false,
+                    nextExpectedAt
+                };
+            })
+        });
+    } catch (err) {
+        console.error("Falabella Sync Status Error:", err.body || err);
+        res.status(500).json({ message: err.message || 'Error al obtener el estado de sincronización.' });
+    }
+});
+
 // GET /api/integrations/meli/auth
 // Inicia el flujo de OAuth con Mercado Libre
 router.get('/meli/auth', authMiddleware, async (req, res) => {
@@ -2820,7 +2860,11 @@ router.post('/accounts', authMiddleware, async (req, res) => {
             credentials: credentials,
             settings: {
                 autoImport: true,
-                syncInterval: 30
+                // Was 30 — the same stale legacy default found and fixed for Meli accounts
+                // earlier: nothing in the actual polling cycles runs faster than 5 minutes
+                // anyway, so a per-account interval above that only makes checks less frequent
+                // than the schedule already allows, never more.
+                syncInterval: 5
             },
             connectedAt: new Date().toISOString(),
             status: 'CONNECTED'

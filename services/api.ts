@@ -381,6 +381,7 @@ export const api = {
   fetchShopifyOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/shopify/orders`),
   fetchWooCommerceOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/woocommerce/orders`),
   fetchFalabellaOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/falabella/orders`),
+  fetchFalabellaSyncStatus: (clientId: string) => get<{ accounts: { id: string; nickname: string; lastSync: string | null; lastAttemptAt: string | null; autoImport: boolean; nextExpectedAt: string | null }[] }>(`/integrations/${clientId}/falabella/sync-status`),
   fetchJumpsellerOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/jumpseller/orders`),
   importScannedMeliOrder: (clientId: string, scannedId: string, flexCode?: string) => post<{message: string, pkg: Package}>(`/integrations/import/meli-scanned`, { clientId, scannedId, flexCode }),
   importFalabellaDirectScanned: (rawCode: string, driverId: string, labelPhotoBase64?: string) => post<{message: string, pkg: Package, alreadyImported?: boolean}>('/falabella-direct/import-scanned', { rawCode, driverId, labelPhotoBase64 }),

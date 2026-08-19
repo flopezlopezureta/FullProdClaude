@@ -15,14 +15,19 @@ interface ExternalImportModalProps {
     onImport: (packages: Omit<PackageCreationData, 'creatorId' | 'origin'>[]) => Promise<any>;
 }
 
+type SyncStatusFn = (clientId: string) => Promise<{ accounts: { lastSync: string | null; nextExpectedAt: string | null }[] }>;
+
 // FALABELLA_DIRECTO is intentionally excluded — unlike the other sources here, it has no
 // "fetch pending orders" flow; packages only enter the system via a physical-label QR scan.
-const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL' | 'FALABELLA_DIRECTO'>]: { title: string; icon: ReactNode; fetchFn: (clientId: string) => Promise<any[]>; orderIdField: 'meliOrderId' | 'wooOrderId' | 'shopifyOrderId' } } = {
+// syncStatusFn is optional — only sources with a background auto-import worker (currently
+// Mercado Libre and Falabella) have a last/next sync time to show in the header.
+const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL' | 'FALABELLA_DIRECTO'>]: { title: string; icon: ReactNode; fetchFn: (clientId: string) => Promise<any[]>; orderIdField: 'meliOrderId' | 'wooOrderId' | 'shopifyOrderId'; syncStatusFn?: SyncStatusFn } } = {
     'MERCADO_LIBRE': {
         title: 'Mercado Libre',
         icon: <IconMercadoLibre className="w-8 h-8 text-yellow-500" />,
         fetchFn: api.fetchMeliOrders,
         orderIdField: 'meliOrderId',
+        syncStatusFn: api.fetchMeliSyncStatus,
     },
     'SHOPIFY': {
         title: 'Shopify',
@@ -41,6 +46,7 @@ const sourceConfig: { [key in Exclude<PackageSource, 'MANUAL' | 'FALABELLA_DIREC
         icon: <IconFalabella className="w-8 h-8 text-green-700" />,
         fetchFn: api.fetchFalabellaOrders,
         orderIdField: 'meliOrderId',
+        syncStatusFn: api.fetchFalabellaSyncStatus,
     },
     'JUMPSELLER': {
         title: 'Jumpseller',
@@ -73,9 +79,9 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
             setIsLoading(false);
         }
 
-        if (source === 'MERCADO_LIBRE') {
+        if (config.syncStatusFn) {
             try {
-                const status = await api.fetchMeliSyncStatus(client.id);
+                const status = await config.syncStatusFn(client.id);
                 // Pick the account with the most recent lastSync, so the "last"
                 // and "next" figures shown always refer to the same account.
                 const withSync = status.accounts.filter(a => a.lastSync);
@@ -194,7 +200,7 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                        {source === 'MERCADO_LIBRE' && (
+                        {config.syncStatusFn && (
                             <span className="text-xs text-[var(--text-muted)] whitespace-nowrap text-right">
                                 Última importación: <span className="font-semibold">{formatLastSync(syncInfo.lastSync)}</span>
                                 <br />

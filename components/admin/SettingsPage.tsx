@@ -33,6 +33,7 @@ interface SettingsState {
     meliAutoImport: boolean;
     shopifyAutoImport: boolean;
     woocommerceAutoImport: boolean;
+    falabellaAutoImport: boolean;
     publicTrackingEnabled: boolean;
     isRutRequired: boolean;
     flexDiscrepancyReportEnabled: boolean;
@@ -63,6 +64,7 @@ const SettingsPage: React.FC = () => {
         meliAutoImport: false,
         shopifyAutoImport: false,
         woocommerceAutoImport: false,
+        falabellaAutoImport: false,
         publicTrackingEnabled: true,
         isRutRequired: true,
         flexDiscrepancyReportEnabled: true,
@@ -111,6 +113,7 @@ const SettingsPage: React.FC = () => {
                 meliAutoImport: auth.systemSettings.meliAutoImport ?? false,
                 shopifyAutoImport: auth.systemSettings.shopifyAutoImport ?? false,
                 woocommerceAutoImport: auth.systemSettings.woocommerceAutoImport ?? false,
+                falabellaAutoImport: auth.systemSettings.falabellaAutoImport ?? false,
                 publicTrackingEnabled: auth.systemSettings.publicTrackingEnabled ?? true,
                 isRutRequired: auth.systemSettings.isRutRequired ?? true,
                 flexDiscrepancyReportEnabled: auth.systemSettings.flexDiscrepancyReportEnabled ?? true,
@@ -189,6 +192,7 @@ const SettingsPage: React.FC = () => {
                 meliAutoImport: settings.meliAutoImport,
                 shopifyAutoImport: settings.shopifyAutoImport,
                 woocommerceAutoImport: settings.woocommerceAutoImport,
+                falabellaAutoImport: settings.falabellaAutoImport,
                 publicTrackingEnabled: settings.publicTrackingEnabled,
                 isRutRequired: settings.isRutRequired,
                 flexDiscrepancyReportEnabled: settings.flexDiscrepancyReportEnabled,
@@ -324,6 +328,7 @@ const SettingsPage: React.FC = () => {
             settings.meliAutoImport !== originalSettings.meliAutoImport ||
             settings.shopifyAutoImport !== originalSettings.shopifyAutoImport ||
             settings.woocommerceAutoImport !== originalSettings.woocommerceAutoImport ||
+            settings.falabellaAutoImport !== originalSettings.falabellaAutoImport ||
             settings.publicTrackingEnabled !== originalSettings.publicTrackingEnabled ||
             settings.isRutRequired !== originalSettings.isRutRequired ||
             settings.flexDiscrepancyReportEnabled !== originalSettings.flexDiscrepancyReportEnabled ||
@@ -607,6 +612,25 @@ const SettingsPage: React.FC = () => {
                                                     type="checkbox"
                                                     name="woocommerceAutoImport"
                                                     checked={settings.woocommerceAutoImport}
+                                                    onChange={handleSettingsChange}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-14 h-8 bg-gray-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-[var(--brand-secondary)] dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-[var(--brand-primary)]"></div>
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <div className="pt-4 border-t border-[var(--border-primary)] py-3">
+                                        <label className="flex items-center justify-between cursor-pointer">
+                                            <div>
+                                                <h3 className="text-base font-semibold text-[var(--text-secondary)]">Importación Automática Falabella</h3>
+                                                <p className="text-xs text-[var(--text-muted)] mt-1 max-w-md">Si está activado, el sistema importará automáticamente los pedidos pendientes/listos para despacho de Falabella Seller Center para todos los clientes configurados (Solo Santiago/RM).</p>
+                                            </div>
+                                            <div className="relative">
+                                                <input
+                                                    type="checkbox"
+                                                    name="falabellaAutoImport"
+                                                    checked={settings.falabellaAutoImport}
                                                     onChange={handleSettingsChange}
                                                     className="sr-only peer"
                                                 />

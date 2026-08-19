@@ -333,6 +333,14 @@ async function startServer() {
             console.log(`Background Service: WooCommerce Polling scheduled (${wooDelay/1000}s delay).`);
         }
 
+        const falabellaPollingService = tryRequireRoute('./services/falabellaPollingService.js');
+        if (falabellaPollingService && typeof falabellaPollingService.start === 'function') {
+            // Offset Falabella by 4.5 minutes
+            const falabellaDelay = (POLL_INTERVAL / 2) + (120 * 1000);
+            falabellaPollingService.start(POLL_INTERVAL, falabellaDelay);
+            console.log(`Background Service: Falabella Polling scheduled (${falabellaDelay/1000}s delay).`);
+        }
+
         // Drains integration_sync_queue (Falabella Seller Center, Envíame, Falabella Directo
         // retries that exhausted their inline attempts) — previously write-only, nothing ever
         // processed it after the first 3 failed attempts.
@@ -853,6 +861,12 @@ async function initializeDatabase() {
             console.log('MIGRATION APPLIED: Column "woocommerceAutoImport" was added to "system_settings".');
         } catch (err) {
             if (err.code !== '42701') { console.error('Error during settings migration (woocommerceAutoImport):', err); }
+        }
+        try {
+            await db.query('ALTER TABLE system_settings ADD COLUMN "falabellaAutoImport" BOOLEAN DEFAULT false');
+            console.log('MIGRATION APPLIED: Column "falabellaAutoImport" was added to "system_settings".');
+        } catch (err) {
+            if (err.code !== '42701') { console.error('Error during settings migration (falabellaAutoImport):', err); }
         }
         try {
             await db.query('ALTER TABLE system_settings ADD COLUMN "licenseLimit" INTEGER DEFAULT 70');
