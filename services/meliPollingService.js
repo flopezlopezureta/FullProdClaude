@@ -295,9 +295,10 @@ async function pollPackageStatuses() {
 
         // 1. Get all active Mercado Libre packages that are not finished
         const { rows: packages } = await db.query(`
-            SELECT id, "meliOrderId", "meliFlexCode", "driverId", status, "creatorId", "sourceAccountId" 
-            FROM packages 
-            WHERE source = 'MERCADO_LIBRE' 
+            SELECT id, "meliOrderId", "meliFlexCode", "driverId", status, "creatorId", "sourceAccountId",
+                   "recipientName", "recipientAddress", "recipientPhone"
+            FROM packages
+            WHERE source = 'MERCADO_LIBRE'
             AND status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO')
             AND ("meliOrderId" IS NOT NULL OR "meliFlexCode" IS NOT NULL)
         `);
@@ -329,7 +330,39 @@ async function pollPackageStatuses() {
                     const mlStatus = shipment.status;
                     const mlSubstatus = shipment.substatus;
                     const now = new Date();
-                    
+
+                    // Mercado Libre sometimes sends buyer PII (receiver_name, address_line,
+                    // receiver_phone) as a literal "XXXXXXX" placeholder around the time an
+                    // order is imported (reason unclear — plausibly an internal fraud/
+                    // verification window), then reveals the real value later. Nothing
+                    // previously re-checked those fields once a package was already
+                    // imported, so a masked placeholder stayed stuck forever — confirmed on
+                    // a real Kanino package whose name/address were still "XXXXXXX" days
+                    // later despite Mercado Libre now returning the real values. Fixed
+                    // opportunistically here since this cycle already fetches the shipment's
+                    // receiver_address on every pass anyway.
+                    const isMaskedValue = (v) => typeof v === 'string' && /^X+$/i.test(v.trim());
+                    const unmaskFixes = {};
+                    if (isMaskedValue(pkg.recipientName) && shipment.receiver_address?.receiver_name && !isMaskedValue(shipment.receiver_address.receiver_name)) {
+                        unmaskFixes.recipientName = shipment.receiver_address.receiver_name;
+                    }
+                    if (isMaskedValue(pkg.recipientAddress) && shipment.receiver_address?.address_line && !isMaskedValue(shipment.receiver_address.address_line)) {
+                        unmaskFixes.recipientAddress = shipment.receiver_address.address_line;
+                    }
+                    if (isMaskedValue(pkg.recipientPhone) && shipment.receiver_address?.receiver_phone && !isMaskedValue(shipment.receiver_address.receiver_phone)) {
+                        unmaskFixes.recipientPhone = shipment.receiver_address.receiver_phone;
+                    }
+                    if (Object.keys(unmaskFixes).length > 0) {
+                        const fixKeys = Object.keys(unmaskFixes);
+                        const setClauses = fixKeys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
+                        const values = fixKeys.map(k => unmaskFixes[k]);
+                        await db.query(
+                            `UPDATE packages SET ${setClauses}, "updatedAt" = $${values.length + 1} WHERE id = $${values.length + 2}`,
+                            [...values, now, pkg.id]
+                        );
+                        console.log(`[MeliPolling] Unmasked previously-hidden recipient data for ${pkg.id}: ${fixKeys.join(', ')}`);
+                    }
+
                     let newStatus = null;
                     let eventDetails = '';
                     let eventStatus = '';
