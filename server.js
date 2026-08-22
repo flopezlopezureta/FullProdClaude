@@ -53,7 +53,23 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors());
+// Only the app's own dashboards may call this API from a browser. Add a new domain here when
+// onboarding a client that needs one (a white-label domain, for example) — no other change
+// needed. Requests with no Origin header (server-to-server calls, webhooks, native apps like
+// driver-app) aren't browsers and are unaffected by CORS either way, so they're let through.
+const ALLOWED_ORIGINS = [
+  'https://fullenvios.selcom.cl',
+  'https://full2.fullenvios.cl',
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('No autorizado por CORS'));
+    }
+  }
+}));
 app.use(express.json({ limit: '50mb' })); // Allow larger payloads for photo uploads
 
 // [DEBUG] Log all API requests to help diagnose 404/HTML issues
