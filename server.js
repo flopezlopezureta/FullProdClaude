@@ -144,10 +144,12 @@ async function startServer() {
       res.json({ status: 'ok', message: 'Backend is running - V3 (Fix Egress Active)' });
     });
 
-    // Diagnostic endpoint to verify which code version is deployed
+    // Diagnostic endpoint to verify which code version is deployed — public and unauthenticated
+    // on purpose (used to confirm a deploy landed without needing to log in), but the internal
+    // repo name doesn't need to be handed to anyone who asks, so it's left out of the response.
     app.get('/api/version', (req, res) => {
       const pkg = require('./package.json');
-      res.json({ version: pkg.version, comment: pkg.versionComment, repo: 'Fullenvios2 / CLIENTE2' });
+      res.json({ version: pkg.version, comment: pkg.versionComment });
     });
 
     // [EMERGENCIA] Ruta directa para arreglar los egresos de hoy
