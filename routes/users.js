@@ -139,6 +139,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
         }
 
         const fields = Object.keys(updateData);
+        // Same identifier-injection risk as routes/packages.js PUT /:id — field names are
+        // interpolated as raw SQL column references, so validate them even though only ADMIN
+        // reaches this branch unfiltered.
+        const SAFE_FIELD_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+        const invalidField = fields.find(f => !SAFE_FIELD_NAME.test(f));
+        if (invalidField) {
+            return res.status(400).json({ message: `Nombre de campo inválido: ${invalidField}` });
+        }
+
         const values = Object.values(updateData);
         const setClause = fields.map((field, i) => `"${field}" = $${i + 1}`).join(', ');
 

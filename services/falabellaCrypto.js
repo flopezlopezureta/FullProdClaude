@@ -1,7 +1,14 @@
 const crypto = require('crypto');
 
+// No fallback here — server.js refuses to boot without JWT_SECRET set, so by the time this
+// module is used in the running app it's always present. A hardcoded fallback would mean the
+// encryption key for stored tokens (Falabella, and the photo-token signature below) is a
+// value sitting in source control.
+if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET no está configurado — no se puede derivar la clave de cifrado.');
+}
 const ENCRYPTION_KEY = crypto.createHash('sha256')
-    .update(process.env.JWT_SECRET || 'fullenvios_jwt_secret_2024')
+    .update(process.env.JWT_SECRET)
     .digest();
 const IV_LENGTH = 16;
 

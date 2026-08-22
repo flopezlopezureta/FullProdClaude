@@ -17,12 +17,16 @@ if (missingDbEnv.length > 0) {
 }
 
 if (!process.env.JWT_SECRET) {
-  console.warn('\n⚠️ [WARNING] JWT_SECRET environment variable is missing.');
-  console.warn('Using an emergency fallback secret. PLEASE set a unique JWT_SECRET in production settings!\n');
-  process.env.JWT_SECRET = 'emergency_fallback_secure_secret_key_2026_please_change_in_production';
+  // No fallback: a hardcoded default here (however "emergency"-labeled) is a secret the moment
+  // it's committed to source control — anyone who can read this file can forge a valid token
+  // for any user, including admin. Refuse to start instead, same as the DB env vars above.
+  console.error('\n❌ [CRITICAL STARTUP ERROR] JWT_SECRET environment variable is missing.');
+  console.error('Set a unique, random JWT_SECRET in your .env file or hosting provider (Coolify) — there is no safe default.\n');
+  process.exit(1);
 }
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const db = require('./db');
 const bcrypt = require('bcryptjs');
@@ -34,6 +38,15 @@ const app = express();
 app.set('trust proxy', 1);
 
 // --- Middlewares ---
+// contentSecurityPolicy and crossOriginEmbedderPolicy are off: this app serves a mixed set of
+// domains/clients (dashboard, driver-app, webhooks) and neither has been audited against a CSP —
+// turning it on blind risks silently breaking asset loading. The rest of helmet's defaults
+// (X-Frame-Options, X-Content-Type-Options, HSTS, etc.) are safe additions with no such risk.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+
 // Aggressively disable caching for all responses to solve stale asset issues.
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');

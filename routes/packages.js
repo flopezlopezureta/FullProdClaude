@@ -1139,9 +1139,20 @@ router.put('/:id', authMiddleware, async (req, res) => {
         }
 
         const fields = Object.keys(updateData);
+        // Field names here come straight from the request body and get interpolated as raw SQL
+        // identifiers below (identifiers can't go through $1-style parameter placeholders) — a
+        // crafted JSON key like `foo" = (...) --` would otherwise break out of the intended
+        // column reference and inject arbitrary SQL. Every legitimate field name is already a
+        // plain camelCase identifier, so rejecting anything else costs nothing real.
+        const SAFE_FIELD_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+        const invalidField = fields.find(f => !SAFE_FIELD_NAME.test(f));
+        if (invalidField) {
+            return res.status(400).json({ message: `Nombre de campo inválido: ${invalidField}` });
+        }
+
         const values = Object.values(updateData);
         const setClause = fields.map((field, i) => `"${field}" = $${i + 1}`).join(', ');
-        
+
         const result = await db.query(`UPDATE packages SET ${setClause} WHERE id = $${fields.length + 1}`, [...values, id]);
         if (result.rowCount === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
         
@@ -1168,20 +1179,18 @@ router.delete('/:id', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'La contraseña es requerida para eliminar paquetes.' });
         }
 
-        // 1. Check against master key
-        const masterKey = 'adminborrar';
-        let isAuthorized = (password === masterKey);
+        // A shared hardcoded master password used to live here as a bypass — anyone who read the
+        // source (this repo, a leaked scratch file, a former contractor) could delete any
+        // package regardless of role. Removed: only the requester's own password, or being
+        // ADMIN (already gated by real login), can authorize a delete.
+        let isAuthorized = false;
 
-        // 2. Check against user's own password if not master key
-        if (!isAuthorized) {
-            const { rows: userRows } = await db.query('SELECT password FROM users WHERE id = $1', [req.user.id]);
-            if (userRows.length > 0) {
-                const bcrypt = require('bcryptjs');
-                isAuthorized = await bcrypt.compare(password, userRows[0].password);
-            }
+        const { rows: userRows } = await db.query('SELECT password FROM users WHERE id = $1', [req.user.id]);
+        if (userRows.length > 0) {
+            const bcrypt = require('bcryptjs');
+            isAuthorized = await bcrypt.compare(password, userRows[0].password);
         }
 
-        // 3. Admin bypass (optional, but let's keep it strict as requested unless they are admin)
         if (req.user.role === 'ADMIN') {
             isAuthorized = true;
         }

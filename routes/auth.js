@@ -3,8 +3,20 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+
+// Nothing throttled login attempts before — an attacker could brute-force a password with no
+// limit at all. 15 tries per 15 minutes per IP is generous for a real user mistyping a password,
+// but shuts down automated guessing.
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos.' }
+});
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -65,7 +77,7 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         
