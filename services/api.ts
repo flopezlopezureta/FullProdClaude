@@ -299,6 +299,7 @@ export const api = {
   createUser: (data: UserCreationData) => post<User>('/users', data),
   updateUser: (userId: string, data: UserUpdateData) => put<User>(`/users/${encodeURIComponent(userId)}`, data),
   impersonateUser: (userId: string) => post<{token: string, user: User}>(`/users/${encodeURIComponent(userId)}/impersonate`, {}),
+  revealUserPassword: (userId: string, adminPassword: string) => post<{plainPassword: string | null}>(`/users/${encodeURIComponent(userId)}/reveal-password`, { adminPassword }),
   deleteUser: (userId: string, password?: string) => request<void>(`/users/${encodeURIComponent(userId)}`, { method: 'DELETE', body: JSON.stringify({ password }) }),
   deleteIntegration: (clientId: string, source: string, password?: string) => request<void>(`/integrations/${encodeURIComponent(clientId)}/${encodeURIComponent(source)}`, { method: 'DELETE', body: JSON.stringify({ password }) }),
   reintegrateUser: (userId: string) => post<User>(`/users/${encodeURIComponent(userId)}/reintegrate`, {}),

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { Role, UserStatus, PackageSource } from '../../constants';
 import type { User, DriverPermissions, OperatorPermissions } from '../../types';
 import { api, UserCreationData, UserUpdateData, PackageCreationData } from '../../services/api';
-import { IconUserCheck, IconPencil, IconTrash, IconUserPlus, IconHistory, IconUserOff, IconDollarSign, IconFileInvoice, IconMercadoLibre, IconWoocommerce, IconShopify, IconFalabella, IconJumpseller, IconQrcode, IconTruck, IconArrowUturnLeft, IconChecklist, IconPackage, IconSearch, IconCopy, IconCheck, IconUsers, IconDownload, IconMapPin, IconCamera } from '../Icon';
+import { IconUserCheck, IconPencil, IconTrash, IconUserPlus, IconHistory, IconUserOff, IconDollarSign, IconFileInvoice, IconMercadoLibre, IconWoocommerce, IconShopify, IconFalabella, IconJumpseller, IconQrcode, IconTruck, IconArrowUturnLeft, IconChecklist, IconPackage, IconSearch, IconCopy, IconCheck, IconUsers, IconDownload, IconMapPin, IconCamera, IconEye } from '../Icon';
 import * as XLSX from 'xlsx';
 import CreateUserModal from '../modals/CreateUserModal';
 import EditUserModal from '../modals/EditUserModal';
@@ -14,6 +14,7 @@ import { AuthContext } from '../../contexts/AuthContext';
 import DriverRatesModal from '../modals/DriverRatesModal';
 import ClientInvoiceHistoryModal from '../modals/ClientInvoiceHistoryModal';
 import ExternalImportModal from '../modals/ExternalImportModal';
+import RevealPasswordModal from '../modals/RevealPasswordModal';
 
 
 interface UserManagementProps {
@@ -52,6 +53,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ roleFilter }) => {
   const [viewingHistoryUser, setViewingHistoryUser] = useState<User | null>(null);
   const [editingDriverRates, setEditingDriverRates] = useState<User | null>(null);
   const [viewingInvoicesClient, setViewingInvoicesClient] = useState<User | null>(null);
+  const [revealingPasswordUser, setRevealingPasswordUser] = useState<User | null>(null);
   const [showDeleted, setShowDeleted] = useState(false);
   const [copiedUserId, setCopiedUserId] = useState<string | null>(null);
   const [importingClient, setImportingClient] = useState<User | null>(null);
@@ -749,6 +751,27 @@ const wb = XLSX.utils.book_new();
                 )}
                 {user.role === 'DRIVER' && (
                     <>
+                     {auth?.user?.email === 'admin' && (
+                        <button
+                            onClick={async () => {
+                                if (!window.confirm(`¿Entrar al portal de ${user.name} como este conductor?`)) return;
+                                try {
+                                    const response = await api.impersonateUser(user.id);
+                                    localStorage.setItem('token', response.token);
+                                    window.location.href = '/'; // Refresh to load as driver
+                                } catch (err: any) {
+                                    alert("No se pudo entrar al portal: " + err.message);
+                                }
+                            }}
+                            className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors border border-blue-200"
+                            title="Entrar al Portal del Conductor"
+                        >
+                            <IconTruck className="w-5 h-5" />
+                        </button>
+                     )}
+                     {auth?.user?.role === Role.Admin && (
+                        <button onClick={() => setRevealingPasswordUser(user)} className="p-2 text-[var(--text-muted)] hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors" title="Ver contraseña"><IconEye className="w-5 h-5" /></button>
+                     )}
                      <button onClick={() => setEditingDriverRates(user)} className="p-2 text-[var(--text-muted)] hover:text-green-600 hover:bg-green-100 rounded-md transition-colors" title="Definir tarifas de pago"><IconDollarSign className="w-5 h-5" /></button>
                      <button onClick={() => setViewingHistoryUser(user)} className="p-2 text-[var(--text-muted)] hover:text-green-600 hover:bg-green-100 rounded-md transition-colors" title="Ver historial"><IconHistory className="w-5 h-5" /></button>
                     </>
@@ -874,6 +897,13 @@ const wb = XLSX.utils.book_new();
         <ClientInvoiceHistoryModal
             client={viewingInvoicesClient}
             onClose={() => setViewingInvoicesClient(null)}
+        />
+      )}
+      {revealingPasswordUser && (
+        <RevealPasswordModal
+            userId={revealingPasswordUser.id}
+            userName={revealingPasswordUser.name}
+            onClose={() => setRevealingPasswordUser(null)}
         />
       )}
       {importingClient && importingSource && (

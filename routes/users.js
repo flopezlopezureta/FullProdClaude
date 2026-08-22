@@ -208,6 +208,37 @@ router.post('/:id/impersonate', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/users/:id/reveal-password
+// Muestra la contraseña en texto plano guardada de otro usuario (por ejemplo, para que un
+// conductor pueda iniciar sesión directamente en su teléfono durante una prueba), sin exponerla
+// en el listado general. Exige que quien la pide reingrese SU PROPIA clave de administrador en
+// ese momento, y queda registrado en el log de auditoría — igual de sensible que "impersonate".
+router.post('/:id/reveal-password', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const { adminPassword } = req.body;
+        if (!adminPassword) {
+            return res.status(400).json({ message: 'Debes ingresar tu contraseña de administrador.' });
+        }
+
+        const { rows: requesterRows } = await db.query('SELECT password, name FROM users WHERE id = $1', [req.user.id]);
+        const requester = requesterRows[0];
+        if (!requester || !(await bcrypt.compare(adminPassword, requester.password))) {
+            return res.status(401).json({ message: 'Contraseña de administrador incorrecta.' });
+        }
+
+        const { rows: targetRows } = await db.query('SELECT id, name, email, "plainPassword" FROM users WHERE id = $1', [req.params.id]);
+        const target = targetRows[0];
+        if (!target) return res.status(404).json({ message: 'Usuario no encontrado.' });
+
+        await logAction(req.user.id, req.user.name, 'REVEAL_PASSWORD', { targetUserId: target.id, targetEmail: target.email });
+
+        res.json({ plainPassword: target.plainPassword || null });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error al verificar la contraseña.' });
+    }
+});
+
 // DELETE /api/users/:id - Delete a user (Admin only, with password verification)
 router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
     const { id } = req.params;
