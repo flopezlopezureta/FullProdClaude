@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const https = require('https');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
 const bcrypt = require('bcryptjs');
@@ -2174,7 +2175,7 @@ router.get('/shopify/callback', async (req, res) => {
         // Shopify requiere una peticiÃ³n POST a la tienda del cliente
         const postData = {
             client_id: shopify_client_id,
-            client_secret: shopify_client_secret,
+            client_secret: decrypt(shopify_client_secret),
             code: code
         };
 
@@ -2317,24 +2318,172 @@ router.get('/shopify/callback', async (req, res) => {
 // --- SHOPIFY GDPR WEBHOOKS (MANDATORIOS PARA APROBACIÃ“N) ---
 // Estos endpoints son requeridos por Shopify para cumplir con las leyes de protecciÃ³n de datos.
 
-// 1. Solicitud de datos de un cliente
+// Verifica que la llamada realmente venga de Shopify, comparando la firma HMAC del header
+// contra una firma calculada con el client secret de la app (nunca confiar en estos webhooks
+// sin esto: cualquiera podrÃ­a llamarlos y pedir el borrado de datos de otro comercio).
+const verifyShopifyWebhookHmac = async (req) => {
+    const hmacHeader = req.headers['x-shopify-hmac-sha256'];
+    if (!hmacHeader || !req.rawBody) return false;
+
+    const { rows } = await db.query('SELECT shopify_client_secret FROM integration_settings WHERE id = 1');
+    const secret = rows[0] && decrypt(rows[0].shopify_client_secret);
+    if (!secret) return false;
+
+    const digest = crypto.createHmac('sha256', secret).update(req.rawBody).digest('base64');
+    try {
+        return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
+    } catch {
+        return false; // largos distintos -> firma invÃ¡lida
+    }
+};
+
+// Encuentra al cliente dueÃ±o de una tienda Shopify, ya sea que la tenga guardada en la
+// estructura antigua (integrations.shopify) o en la de multi-cuenta (integrations.accounts).
+const findClientByShopDomain = async (shopDomain) => {
+    const bareDomain = (shopDomain || '').replace('.myshopify.com', '');
+    const { rows } = await db.query(
+        `SELECT id, name, "clientIdentifier", integrations FROM users
+         WHERE integrations->'shopify'->>'shopUrl' ILIKE $1
+            OR integrations->'shopify'->>'shopUrl' ILIKE $2
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(COALESCE(integrations->'accounts', '[]'::jsonb)) acc
+                WHERE acc->>'type' = 'SHOPIFY'
+                  AND (acc->'credentials'->>'shopUrl' ILIKE $1 OR acc->'credentials'->>'shopUrl' ILIKE $2)
+            )`,
+        [shopDomain, bareDomain]
+    );
+    return rows[0] || null;
+};
+
+// 1. Solicitud de datos de un cliente (el comprador pidiÃ³ a la tienda saber quÃ© datos
+// tenemos de Ã©l). Shopify no exige devolver los datos en la respuesta HTTP: exige que la
+// tienda reciba esos datos por otra vÃ­a dentro de 30 dÃ­as. AquÃ­ dejamos el hallazgo
+// registrado con detalle para que el equipo lo pueda entregar a tiempo.
 router.post('/shopify/gdpr/customer-data', async (req, res) => {
-    console.log('[ShopifyGDPR] Customer data request received');
-    // AquÃ­ deberÃ­as buscar datos del cliente y enviarlos si fuera necesario. 
-    // Por ahora respondemos 200 OK como exige Shopify.
-    res.status(200).send('OK');
+    const valid = await verifyShopifyWebhookHmac(req);
+    if (!valid) {
+        console.error('[ShopifyGDPR] customer-data: firma HMAC invÃ¡lida, solicitud rechazada.');
+        return res.status(401).send('Invalid HMAC');
+    }
+
+    try {
+        const { shop_domain, customer, orders_requested } = req.body;
+        const client = await findClientByShopDomain(shop_domain);
+        if (!client) {
+            console.warn(`[ShopifyGDPR] customer-data: no se encontrÃ³ cliente para la tienda ${shop_domain}`);
+            return res.status(200).send('OK');
+        }
+
+        const orderIds = (orders_requested || []).map(String);
+        const { rows: matches } = await db.query(
+            `SELECT id, "recipientName", "recipientPhone", "recipientEmail", "recipientAddress", "shopifyOrderId", "createdAt"
+             FROM packages
+             WHERE "creatorId" = $1
+               AND (
+                    "shopifyOrderId" = ANY($2::text[])
+                 OR "recipientEmail" ILIKE $3
+                 OR "recipientPhone" = $4
+               )`,
+            [client.id, orderIds, customer?.email || '', customer?.phone || '']
+        );
+
+        console.log(`[ShopifyGDPR][ACCION REQUERIDA] Solicitud de datos del comprador ${customer?.email || customer?.id} en tienda de "${client.name}" (${shop_domain}). Se encontraron ${matches.length} paquete(s) asociados. Entregar esta informaciÃ³n al comercio dentro del plazo exigido por Shopify.`, matches.map(m => m.id));
+
+        res.status(200).send('OK');
+    } catch (err) {
+        console.error('[ShopifyGDPR] Error en customer-data:', err);
+        res.status(500).send('Error interno');
+    }
 });
 
-// 2. Solicitud de borrado de datos de un cliente
+// 2. Solicitud de borrado de datos de un comprador especÃ­fico.
 router.post('/shopify/gdpr/customer-redact', async (req, res) => {
-    console.log('[ShopifyGDPR] Customer redact request received');
-    res.status(200).send('OK');
+    const valid = await verifyShopifyWebhookHmac(req);
+    if (!valid) {
+        console.error('[ShopifyGDPR] customer-redact: firma HMAC invÃ¡lida, solicitud rechazada.');
+        return res.status(401).send('Invalid HMAC');
+    }
+
+    try {
+        const { shop_domain, customer, orders_to_redact } = req.body;
+        const client = await findClientByShopDomain(shop_domain);
+        if (!client) {
+            console.warn(`[ShopifyGDPR] customer-redact: no se encontrÃ³ cliente para la tienda ${shop_domain}`);
+            return res.status(200).send('OK');
+        }
+
+        const orderIds = (orders_to_redact || []).map(String);
+        const { rows: redacted } = await db.query(
+            `UPDATE packages
+             SET "recipientName" = 'Comprador eliminado (GDPR)',
+                 "recipientPhone" = NULL,
+                 "recipientEmail" = NULL,
+                 "recipientAddress" = 'Eliminado por solicitud GDPR',
+                 "updatedAt" = NOW()
+             WHERE "creatorId" = $1
+               AND (
+                    "shopifyOrderId" = ANY($2::text[])
+                 OR "recipientEmail" ILIKE $3
+                 OR "recipientPhone" = $4
+               )
+             RETURNING id`,
+            [client.id, orderIds, customer?.email || '', customer?.phone || '']
+        );
+
+        console.log(`[ShopifyGDPR] Borrado de comprador ${customer?.email || customer?.id} en tienda de "${client.name}" (${shop_domain}): ${redacted.length} paquete(s) anonimizados.`, redacted.map(r => r.id));
+
+        res.status(200).send('OK');
+    } catch (err) {
+        console.error('[ShopifyGDPR] Error en customer-redact:', err);
+        res.status(500).send('Error interno');
+    }
 });
 
-// 3. Solicitud de borrado de datos de una tienda (cuando desinstalan la app)
+// 3. Borrado de datos de una tienda completa (se dispara ~48h despuÃ©s de que el comercio
+// desinstala la app). Se elimina la credencial guardada y se anonimizan solo los paquetes
+// que vinieron de Shopify para ese cliente â€” no se toca su cuenta ni sus otros canales
+// (Meli, Falabella, etc.), ya que la app no fue desinstalada de esos.
 router.post('/shopify/gdpr/shop-redact', async (req, res) => {
-    console.log('[ShopifyGDPR] Shop redact request received');
-    res.status(200).send('OK');
+    const valid = await verifyShopifyWebhookHmac(req);
+    if (!valid) {
+        console.error('[ShopifyGDPR] shop-redact: firma HMAC invÃ¡lida, solicitud rechazada.');
+        return res.status(401).send('Invalid HMAC');
+    }
+
+    try {
+        const { shop_domain } = req.body;
+        const client = await findClientByShopDomain(shop_domain);
+        if (!client) {
+            console.warn(`[ShopifyGDPR] shop-redact: no se encontrÃ³ cliente para la tienda ${shop_domain}`);
+            return res.status(200).send('OK');
+        }
+
+        const { rows: redacted } = await db.query(
+            `UPDATE packages
+             SET "recipientName" = 'Comprador eliminado (GDPR)',
+                 "recipientPhone" = NULL,
+                 "recipientEmail" = NULL,
+                 "recipientAddress" = 'Eliminado por solicitud GDPR',
+                 "updatedAt" = NOW()
+             WHERE "creatorId" = $1 AND "shopifyOrderId" IS NOT NULL
+             RETURNING id`,
+            [client.id]
+        );
+
+        let integrations = client.integrations || {};
+        if (integrations.shopify) delete integrations.shopify;
+        if (Array.isArray(integrations.accounts)) {
+            integrations.accounts = integrations.accounts.filter(acc => acc.type !== 'SHOPIFY');
+        }
+        await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), client.id]);
+
+        console.log(`[ShopifyGDPR] Tienda ${shop_domain} desinstalada. Cliente "${client.name}": credencial eliminada, ${redacted.length} paquete(s) anonimizados.`, redacted.map(r => r.id));
+
+        res.status(200).send('OK');
+    } catch (err) {
+        console.error('[ShopifyGDPR] Error en shop-redact:', err);
+        res.status(500).send('Error interno');
+    }
 });
 
 // POST /api/integrations/sync-shipment/:id

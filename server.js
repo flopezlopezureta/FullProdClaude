@@ -70,7 +70,12 @@ app.use(cors({
     }
   }
 }));
-app.use(express.json({ limit: '50mb' })); // Allow larger payloads for photo uploads
+// Capture the raw request bytes alongside the parsed body — needed to verify Shopify's
+// HMAC signature on webhook calls, which is computed over the exact raw payload.
+app.use(express.json({
+  limit: '50mb',
+  verify: (req, res, buf) => { req.rawBody = buf; }
+})); // Allow larger payloads for photo uploads
 
 // [DEBUG] Log all API requests to help diagnose 404/HTML issues
 app.use('/api', (req, res, next) => {
