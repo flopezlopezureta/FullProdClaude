@@ -1102,6 +1102,29 @@ async function initializeDatabase() {
         `);
         console.log('Table "network_traffic_daily" is ready.');
 
+        // --- REQUEST LOG (RECENT, PER-REQUEST) ---
+        // network_traffic_daily above only ever kept aggregate totals per IP per day — no path,
+        // so when investigating a specific incident (2026-08-22, an unauthorized /auth/register
+        // call) there was no way to find which IP actually hit that one endpoint, only "which IPs
+        // were active sometime that day". This keeps the individual request (path included) for a
+        // short, bounded window (7 days, enforced by purgeOldRequestLogs in networkMetrics.js) —
+        // enough to investigate something noticed days later, without growing unbounded.
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS request_log_recent (
+                id BIGSERIAL PRIMARY KEY,
+                "timestamp" TIMESTAMPTZ NOT NULL,
+                ip TEXT,
+                method TEXT,
+                path TEXT,
+                "statusCode" INTEGER,
+                "durationMs" INTEGER,
+                "userId" TEXT
+            );
+        `);
+        await db.query(`CREATE INDEX IF NOT EXISTS idx_request_log_recent_timestamp ON request_log_recent ("timestamp");`);
+        await db.query(`CREATE INDEX IF NOT EXISTS idx_request_log_recent_path ON request_log_recent (path);`);
+        console.log('Table "request_log_recent" is ready.');
+
         // --- MIGRATIONS: Add Shopify fields ---
         try {
             await db.query('ALTER TABLE integration_settings ADD COLUMN shopify_client_id TEXT');

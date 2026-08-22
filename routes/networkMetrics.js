@@ -219,4 +219,41 @@ router.get('/report', authMiddleware, requireSuperUser, async (req, res) => {
     });
 });
 
+// GET /api/network-metrics/search?path=/auth/register&from=2026-08-21T00:00:00Z&to=2026-08-22T00:00:00Z
+// Per-request lookup (path included) against request_log_recent — see server.js's comment on
+// that table for why it exists: network_traffic_daily alone couldn't answer "which IP hit this
+// specific endpoint at this specific time" during the 2026-08-22 incident. 7-day window only
+// (purgeOldRequestLogs in services/networkMetrics.js), by design — not a permanent audit log.
+router.get('/search', authMiddleware, requireSuperUser, async (req, res) => {
+    const { path, from, to } = req.query;
+    if (!path && !from && !to) {
+        return res.status(400).json({ message: 'Especifica al menos "path", "from" o "to".' });
+    }
+    try {
+        const conditions = [`"timestamp" >= (NOW() - INTERVAL '7 days')`];
+        const values = [];
+        if (path) {
+            values.push(`%${path}%`);
+            conditions.push(`path ILIKE $${values.length}`);
+        }
+        if (from) {
+            values.push(from);
+            conditions.push(`"timestamp" >= $${values.length}`);
+        }
+        if (to) {
+            values.push(to);
+            conditions.push(`"timestamp" <= $${values.length}`);
+        }
+        const { rows } = await db.query(
+            `SELECT "timestamp", ip, method, path, "statusCode", "durationMs", "userId"
+             FROM request_log_recent WHERE ${conditions.join(' AND ')}
+             ORDER BY "timestamp" ASC LIMIT 500`,
+            values
+        );
+        res.json({ results: rows, count: rows.length });
+    } catch (e) {
+        res.status(500).json({ message: 'Error al buscar en el registro de peticiones.', error: e.message });
+    }
+});
+
 module.exports = router;

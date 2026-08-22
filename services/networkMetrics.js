@@ -74,11 +74,46 @@ async function purgeOldDays() {
     }
 }
 
+// Bulk-inserts the same records flushToDaily just aggregated, but as individual rows (path
+// included) — see the request_log_recent comment in server.js for why. Shares flushToDaily's
+// "only records newer than lastFlushedTs" filter deliberately, so both writes stay in sync and
+// nothing gets double-logged on the next tick.
+async function flushRequestLog(toFlush) {
+    if (toFlush.length === 0) return;
+    try {
+        const values = [];
+        const placeholders = toFlush.map((r, i) => {
+            const base = i * 7;
+            values.push(new Date(r.ts), r.ip || null, r.method || null, r.path || null, r.statusCode ?? null, r.durationMs ?? null, r.userId || null);
+            return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+        }).join(', ');
+        await db.query(
+            `INSERT INTO request_log_recent ("timestamp", ip, method, path, "statusCode", "durationMs", "userId") VALUES ${placeholders}`,
+            values
+        );
+    } catch (e) {
+        console.error('[NetworkMetrics] Failed to flush request_log_recent:', e.message);
+    }
+}
+
+async function purgeOldRequestLogs() {
+    try {
+        await db.query(`DELETE FROM request_log_recent WHERE "timestamp" < (NOW() - INTERVAL '7 days')`);
+    } catch (e) {
+        console.error('[NetworkMetrics] Failed to purge old request_log_recent rows:', e.message);
+    }
+}
+
 function start(intervalMs = 10 * 60 * 1000) {
     setInterval(() => {
+        // Both reads happen before flushToDaily moves lastFlushedTs forward, so they see the
+        // exact same batch of new records.
+        const toFlush = records.filter(r => r.ts > lastFlushedTs);
         flushToDaily().catch(e => console.error('[NetworkMetrics] Error in flushToDaily:', e.message));
+        flushRequestLog(toFlush).catch(e => console.error('[NetworkMetrics] Error in flushRequestLog:', e.message));
         purgeOldDays().catch(e => console.error('[NetworkMetrics] Error in purgeOldDays:', e.message));
+        purgeOldRequestLogs().catch(e => console.error('[NetworkMetrics] Error in purgeOldRequestLogs:', e.message));
     }, intervalMs);
 }
 
-module.exports = { recordRequest, getRecords, flushToDaily, purgeOldDays, start, MAX_RECORDS };
+module.exports = { recordRequest, getRecords, flushToDaily, purgeOldDays, purgeOldRequestLogs, start, MAX_RECORDS };
