@@ -1,7 +1,116 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, ComposedChart } from 'recharts';
-import { IconRefresh, IconLoader, IconAlertTriangle, IconWifi, IconCalendar } from '../Icon';
+import { IconRefresh, IconLoader, IconAlertTriangle, IconWifi, IconCalendar, IconSearch } from '../Icon';
 import { api } from '../../services/api';
+
+interface SearchResult {
+    timestamp: string;
+    ip: string;
+    method: string;
+    path: string;
+    statusCode: number;
+    durationMs: number;
+    userId: string | null;
+}
+
+const fmtSearchTime = (iso: string) => new Date(iso).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+// Búsqueda por ruta exacta, con detalle de IP y hora — para investigar un incidente puntual
+// (ej. "¿quién llamó a /auth/register a tal hora?"), a diferencia de la tabla por IP más abajo,
+// que solo agrega totales sin decir qué ruta específica se llamó. Guarda solo 7 días.
+const RequestSearchPanel: React.FC = () => {
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState<SearchResult[] | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const runSearch = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!query.trim()) return;
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await api.searchNetworkMetrics(query.trim());
+            setResults(data.results);
+        } catch (e: any) {
+            setError(e.message || 'No se pudo buscar.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-xl p-4 mb-6">
+            <h3 className="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2 mb-1">
+                <IconSearch className="w-4 h-4" /> Buscar peticiones por ruta
+            </h3>
+            <p className="text-xs text-[var(--text-muted)] mb-3">
+                Ej: <code className="bg-[var(--background-tertiary)] px-1 rounded">/auth/register</code> o <code className="bg-[var(--background-tertiary)] px-1 rounded">/packages/</code>. Solo guarda los últimos 7 días.
+            </p>
+            <form onSubmit={runSearch} className="flex gap-2 mb-3">
+                <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="/api/..."
+                    className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-primary)] bg-[var(--background-primary)] text-sm font-mono"
+                />
+                <button
+                    type="submit"
+                    disabled={loading || !query.trim()}
+                    className="px-4 py-2 rounded-lg bg-[var(--brand-primary)] text-white text-sm font-semibold disabled:opacity-50 flex items-center gap-2"
+                >
+                    {loading ? <IconLoader className="w-4 h-4 animate-spin" /> : <IconSearch className="w-4 h-4" />}
+                    Buscar
+                </button>
+            </form>
+
+            {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-lg text-red-700 text-xs mb-3">
+                    <IconAlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
+                </div>
+            )}
+
+            {results && results.length === 0 && !loading && (
+                <p className="text-xs text-[var(--text-muted)] italic">Sin resultados para esa ruta en los últimos 7 días.</p>
+            )}
+
+            {results && results.length > 0 && (
+                <div className="overflow-x-auto border border-[var(--border-primary)] rounded-lg">
+                    <table className="w-full text-xs">
+                        <thead>
+                            <tr className="text-left text-[var(--text-muted)] border-b border-[var(--border-primary)]">
+                                <th className="p-2">Hora</th>
+                                <th className="p-2">IP</th>
+                                <th className="p-2">Método</th>
+                                <th className="p-2">Ruta</th>
+                                <th className="p-2 text-right">Estado</th>
+                                <th className="p-2 text-right">Usuario</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {results.map((r, i) => (
+                                <tr key={i} className="border-b border-[var(--border-primary)] last:border-0">
+                                    <td className="p-2 font-mono">{fmtSearchTime(r.timestamp)}</td>
+                                    <td className="p-2 font-mono">{r.ip}</td>
+                                    <td className="p-2 font-mono">{r.method}</td>
+                                    <td className="p-2 font-mono">{r.path}</td>
+                                    <td className="p-2 text-right">
+                                        <span className={r.statusCode >= 400 ? 'text-red-600 font-semibold' : 'text-green-600'}>{r.statusCode}</span>
+                                    </td>
+                                    <td className="p-2 text-right text-[var(--text-muted)]">{r.userId || '—'}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {results.length >= 500 && (
+                        <p className="text-xs text-[var(--text-muted)] p-2 italic">Se muestran los primeros 500 resultados — afina la búsqueda si esperas más.</p>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
 
 interface IpEntry {
     ip: string;
@@ -75,6 +184,8 @@ const NetworkTrafficPage: React.FC = () => {
 
     return (
         <div className="max-w-5xl mx-auto">
+            <RequestSearchPanel />
+
             <div className="flex items-center justify-between mb-4">
                 <p className="text-sm text-[var(--text-muted)] max-w-2xl">
                     Registro de todas las peticiones al servidor, agrupadas por dirección IP de origen — sirve para demostrar si una intermitencia viene de una red específica (por ejemplo, la wifi de un cliente saturada en horas pico) en vez del sistema.

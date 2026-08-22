@@ -494,6 +494,10 @@ export const api = {
     totalRecords: number;
     date: string;
   }>(`/network-metrics/history?date=${encodeURIComponent(date)}`),
+  searchNetworkMetrics: (path: string) => get<{
+    results: { timestamp: string; ip: string; method: string; path: string; statusCode: number; durationMs: number; userId: string | null }[];
+    count: number;
+  }>(`/network-metrics/search?path=${encodeURIComponent(path)}`),
   getEmergencyLookups: () => get<{
     id: number;
     searchedCode: string;
