@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
@@ -19,72 +18,13 @@ const loginLimiter = rateLimit({
 });
 
 // POST /api/auth/register
+// Public self-registration is closed — new accounts (client, driver, or otherwise) are created
+// by an admin through the user-management panel now. This endpoint used to accept `role`
+// straight from the request body with no restriction (anyone could self-register as ADMIN by
+// just sending that value); rather than leave a narrowed-but-still-public account-creation path
+// sitting on the internet, it's disabled outright.
 router.post('/register', async (req, res) => {
-    const { name, email, password, role, phone, rut, address, pickupAddress, storesInfo } = req.body;
-
-    if (!name || !email || !password || !role || !phone) {
-        return res.status(400).json({ message: 'Todos los campos son obligatorios.' });
-    }
-
-    // This endpoint is public (no auth required) and used to take `role` straight from the
-    // request body — anyone could self-register as ADMIN or any other privileged role by just
-    // sending that value. The actual signup form only ever offers Cliente/Conductor, so anything
-    // else here is either a stale client or someone bypassing the UI on purpose. Every other role
-    // (ADMIN, OPERADOR_SISTEMAS, FACTURACION, RETIROS, AUXILIAR) can only be created by an
-    // existing admin through the internal user-management panel, not this endpoint.
-    const SELF_REGISTERABLE_ROLES = ['CLIENT', 'DRIVER'];
-    if (!SELF_REGISTERABLE_ROLES.includes(role)) {
-        return res.status(400).json({ message: 'Rol inválido para registro público.' });
-    }
-
-    try {
-        const { rows: existingUsers } = await db.query('SELECT id, status FROM users WHERE email = $1', [email]);
-        if (existingUsers.length > 0) {
-            const existingUser = existingUsers[0];
-            if (existingUser.status !== 'ELIMINADO') {
-                return res.status(400).json({ message: 'El nombre de usuario ya está registrado.' });
-            }
-            // If deleted, we will effectively overwrite/re-create them in the next steps
-            // or we could just delete the old record now to avoid unique constraint issues if we use a new ID
-            await db.query('DELETE FROM users WHERE id = $1', [existingUser.id]);
-            // Also clear their old packages to ensure "start from zero"
-            await db.query('DELETE FROM packages WHERE "creatorId" = $1', [existingUser.id]);
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        
-        const newUser = {
-            id: `user-${uuidv4()}`,
-            name,
-            email,
-            password: hashedPassword,
-            plainPassword: password, // Store plain password
-            role,
-            phone,
-            status: 'PENDIENTE', // All new registrations are pending approval
-            rut: role === 'CLIENT' ? rut : null,
-            address: role === 'CLIENT' ? address : null,
-            "pickupAddress": role === 'CLIENT' ? pickupAddress : null,
-            "storesInfo": role === 'CLIENT' ? storesInfo : null,
-            "clientIdentifier": role === 'CLIENT' ? `${name.substring(0, 4).toUpperCase()}-${uuidv4().split('-')[1]}` : null,
-        };
-        
-        const columns = Object.keys(newUser).map(k => `"${k}"`).join(', ');
-        const values = Object.values(newUser);
-        const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
-
-        await db.query(`INSERT INTO users (${columns}) VALUES (${placeholders})`, values);
-        
-        // Do not return the hashed password
-        delete newUser.password;
-
-        res.status(201).json(newUser);
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Error del servidor al registrar el usuario.' });
-    }
+    return res.status(403).json({ message: 'El registro público está deshabilitado. Contacta a un administrador para crear tu cuenta.' });
 });
 
 // POST /api/auth/login

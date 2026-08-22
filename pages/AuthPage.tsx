@@ -63,7 +63,10 @@ const AuthPage: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialMode = params.get('mode') as FormMode;
-    if (initialMode && ['login', 'register', 'forgot'].includes(initialMode)) {
+    // 'register' deliberately excluded — self-registration is closed (accounts are created by
+    // an admin now), and this URL param used to be a direct way to reach the form even without
+    // the link on the page.
+    if (initialMode && ['login', 'forgot'].includes(initialMode)) {
       setMode(initialMode);
     }
     const initialEmail = params.get('email');
@@ -311,12 +314,19 @@ const AuthPage: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             </div>
           </form>
 
-           <p className="text-center text-[var(--text-muted)] text-sm mt-6">
-            {mode === 'login' ? '¿No tienes una cuenta?' : mode === 'register' ? '¿Ya tienes una cuenta?' : '¿Recordaste tu contraseña?'}
-            <button onClick={() => switchMode(mode === 'login' ? 'register' : 'login')} className="font-bold text-[var(--brand-primary)] hover:text-[var(--brand-secondary)] ml-2">
-               {mode === 'login' ? 'Regístrate' : 'Inicia Sesión'}
-            </button>
-          </p>
+          {mode === 'forgot' && (
+            <p className="text-center text-[var(--text-muted)] text-sm mt-6">
+              ¿Recordaste tu contraseña?
+              <button onClick={() => switchMode('login')} className="font-bold text-[var(--brand-primary)] hover:text-[var(--brand-secondary)] ml-2">
+                 Inicia Sesión
+              </button>
+            </p>
+          )}
+          {mode === 'login' && (
+            <p className="text-center text-[var(--text-muted)] text-sm mt-6">
+              ¿Eres cliente o conductor nuevo? Contacta a un administrador para que cree tu cuenta.
+            </p>
+          )}
           <p className="text-center text-xs text-[var(--text-muted)] opacity-50 mt-6">
             by SELCOM | v{(import.meta as any).env.VITE_APP_VERSION}
           </p>
