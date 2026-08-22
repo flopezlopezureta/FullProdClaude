@@ -2246,7 +2246,13 @@ router.post('/:id/pickup', authMiddleware, async (req, res) => {
 });
 
 // POST /api/packages/bulk-pickup-client
-router.post('/bulk-pickup-client', authMiddleware, async (req, res) => {
+// Missing this check meant ANY authenticated user — including a CLIENT-role account, which has
+// no legitimate reason to touch another client's packages at all — could pass any clientId and
+// have that other client's pending packages marked RETIRADO, with themselves recorded as the
+// "driver". Confirmed exploited 2026-08-21 21:41 UTC: Comercializadora Acuario (role CLIENT) was
+// recorded as having picked up 53 packages belonging to an unrelated client, 3Dilution — see
+// dispatchAllowed above for the same restriction already used by real dispatch actions.
+router.post('/bulk-pickup-client', authMiddleware, dispatchAllowed, async (req, res) => {
     const { clientId } = req.body;
     const driverId = req.user.id;
     
