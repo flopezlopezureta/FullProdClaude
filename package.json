@@ -1,9 +1,9 @@
 {
   "name": "full-envios-app",
-  "version": "2.8.7",
-  "versionComment": "Versión 2.8.7: Falabella Directo (RUT/GPS obligatorio, secuencia de estados, sub-códigos), corrección de comunas e importación automática de Meli, corrección de geocodificación (timeout 3s + centroide de comuna en vez de coordenada falsa), corrección de Service Worker que se desregistraba solo.",
+  "version": "3.0.0",
+  "versionComment": "Versión 3.0.0: Endurecimiento de seguridad — cerrado el registro público, eliminada la contraseña maestra de login (y la función que la revivía en cada despliegue), rotado el secreto de sesión filtrado, cerrada una inyección SQL en edición de paquetes/usuarios, agregado límite de intentos de login y cabeceras de seguridad, restringido CORS a los dominios propios.",
   "private": true,
-  "description": "Falabella Directo: required real RUT/GPS before closing a delivery, fixed IN_TRANSIT/OUT_FOR_DELIVERY sequencing, corrected DELIVERY_ATTEMPTED sub-code mapping. Fixed Meli auto-import silently skipping every commune due to a case-sensitivity bug. Fixed geocoding hanging with no timeout, and falling back to a bogus 0,0 coordinate instead of the destination commune's real centroid. Removed leftover code that unregistered the app's Service Worker on every load, defeating offline app-shell caching.",
+  "description": "Security hardening release: closed public self-registration, removed the universal login master-password backdoor (and the boot-time function that silently re-planted it on every deploy), rotated the leaked JWT signing secret, closed a SQL injection in package/user editing, added login rate-limiting and security headers, restricted CORS to the app's own domains.",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
