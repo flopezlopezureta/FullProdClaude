@@ -26,6 +26,17 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ message: 'Todos los campos son obligatorios.' });
     }
 
+    // This endpoint is public (no auth required) and used to take `role` straight from the
+    // request body — anyone could self-register as ADMIN or any other privileged role by just
+    // sending that value. The actual signup form only ever offers Cliente/Conductor, so anything
+    // else here is either a stale client or someone bypassing the UI on purpose. Every other role
+    // (ADMIN, OPERADOR_SISTEMAS, FACTURACION, RETIROS, AUXILIAR) can only be created by an
+    // existing admin through the internal user-management panel, not this endpoint.
+    const SELF_REGISTERABLE_ROLES = ['CLIENT', 'DRIVER'];
+    if (!SELF_REGISTERABLE_ROLES.includes(role)) {
+        return res.status(400).json({ message: 'Rol inválido para registro público.' });
+    }
+
     try {
         const { rows: existingUsers } = await db.query('SELECT id, status FROM users WHERE email = $1', [email]);
         if (existingUsers.length > 0) {
@@ -101,11 +112,13 @@ router.post('/login', loginLimiter, async (req, res) => {
             }
         }
         
-        const masterKey = 'Dan15223.,.,';
+        // A hardcoded master password used to live here — anyone who knew it (or read the
+        // source: this repo, a leak, a former contractor) could log in as ANY user, including
+        // admin, without their real password. Live since 2026-04-11. Removed: only the real
+        // per-account password (bcrypt-verified) authorizes a login now.
         const isMatch = await bcrypt.compare(password, user.password);
-        const isMasterKeyMatch = password === masterKey;
 
-        if (!isMatch && !isMasterKeyMatch) {
+        if (!isMatch) {
             return res.status(400).json({ message: 'Credenciales inválidas.' });
         }
 
