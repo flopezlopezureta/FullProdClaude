@@ -15,6 +15,17 @@ interface SearchResult {
 
 const fmtSearchTime = (iso: string) => new Date(iso).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+// Rutas más consultadas al investigar un incidente — evita tener que recordarlas/escribirlas
+// cada vez. Elegir una la busca de inmediato, sin un clic extra en "Buscar".
+const QUICK_PATHS = [
+    { path: '/auth/login', label: 'Inicios de sesión' },
+    { path: '/auth/register', label: 'Intentos de registro' },
+    { path: '/impersonate', label: 'Entrar al Portal del Cliente' },
+    { path: '/bulk-pickup-client', label: 'Retiro masivo' },
+    { path: '/users', label: 'Cambios de usuarios' },
+    { path: '/packages', label: 'Actividad de paquetes' },
+];
+
 // Búsqueda por ruta exacta, con detalle de IP y hora — para investigar un incidente puntual
 // (ej. "¿quién llamó a /auth/register a tal hora?"), a diferencia de la tabla por IP más abajo,
 // que solo agrega totales sin decir qué ruta específica se llamó. Guarda solo 7 días.
@@ -24,19 +35,28 @@ const RequestSearchPanel: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const runSearch = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!query.trim()) return;
+    const search = async (path: string) => {
+        if (!path.trim()) return;
         setLoading(true);
         setError(null);
         try {
-            const data = await api.searchNetworkMetrics(query.trim());
+            const data = await api.searchNetworkMetrics(path.trim());
             setResults(data.results);
         } catch (e: any) {
             setError(e.message || 'No se pudo buscar.');
         } finally {
             setLoading(false);
         }
+    };
+
+    const runSearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        search(query);
+    };
+
+    const pickQuickPath = (path: string) => {
+        setQuery(path);
+        search(path);
     };
 
     return (
@@ -55,6 +75,18 @@ const RequestSearchPanel: React.FC = () => {
                     placeholder="/api/..."
                     className="flex-1 px-3 py-2 rounded-lg border border-[var(--border-primary)] bg-[var(--background-primary)] text-sm font-mono"
                 />
+                <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) pickQuickPath(e.target.value); }}
+                    disabled={loading}
+                    className="px-2 py-2 rounded-lg border border-[var(--border-primary)] bg-[var(--background-primary)] text-sm text-[var(--text-secondary)] disabled:opacity-50"
+                    title="Rutas frecuentes"
+                >
+                    <option value="">Rutas frecuentes…</option>
+                    {QUICK_PATHS.map(q => (
+                        <option key={q.path} value={q.path}>{q.label} ({q.path})</option>
+                    ))}
+                </select>
                 <button
                     type="submit"
                     disabled={loading || !query.trim()}
