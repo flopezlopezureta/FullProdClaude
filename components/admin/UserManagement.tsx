@@ -727,21 +727,19 @@ const wb = XLSX.utils.book_new();
                     {hasIntegration(user, PackageSource.Jumpseller) && 
                         <button onClick={() => handleOpenImportModal(user, PackageSource.Jumpseller)} className="p-2 text-[var(--text-muted)] hover:text-sky-600 hover:bg-sky-100 rounded-md transition-colors" title="Importar de Jumpseller"><IconJumpseller className="w-5 h-5" /></button>}
                     {auth?.user?.email === 'admin' && (
-                        <button 
+                        <button
                             onClick={async () => {
-                                const superKey = window.prompt(`Ingresa la Clave de Superusuario para entrar al portal de ${user.name}:`);
-                                if (superKey) {
-                                    try {
-                                        const response = await api.login({ email: user.email, password: superKey });
-                                        localStorage.setItem('token', response.token);
-                                        window.location.href = '/'; // Refresh to load as client
-                                    } catch (err: any) {
-                                        alert("Clave de Superusuario incorrecta o error de conexión: " + err.message);
-                                    }
+                                if (!window.confirm(`¿Entrar al portal de ${user.name} como este cliente?`)) return;
+                                try {
+                                    const response = await api.impersonateUser(user.id);
+                                    localStorage.setItem('token', response.token);
+                                    window.location.href = '/'; // Refresh to load as client
+                                } catch (err: any) {
+                                    alert("No se pudo entrar al portal: " + err.message);
                                 }
                             }}
                             className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors border border-blue-200"
-                            title="Entrar al Portal del Cliente (Requiere Clave de Superusuario)"
+                            title="Entrar al Portal del Cliente"
                         >
                             <IconTruck className="w-5 h-5" />
                         </button>

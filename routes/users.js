@@ -5,6 +5,7 @@ const authMiddleware = require('../middleware/auth');
 const timeService = require('../services/timeService');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { logAction } = require('../services/logger');
 
 // Middleware to check for Admin or Retiros role
@@ -174,6 +175,38 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 });
 
+
+// POST /api/users/:id/impersonate - Log in as another user, for the super admin only
+// Replaces a frontend feature ("Entrar al Portal del Cliente") that used to work by prompting
+// for a shared master password and calling the normal /login route with it — that only worked
+// because of the master-password backdoor removed tonight (routes/auth.js). The requester's own
+// already-verified admin session is the real authorization here; no password is needed at all,
+// but only for the literal "admin" account (not every ADMIN-role user) — same restriction the
+// frontend button already had, now actually enforced server-side instead of just hidden in the UI.
+router.post('/:id/impersonate', authMiddleware, async (req, res) => {
+    try {
+        const { rows: requesterRows } = await db.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+        if (requesterRows[0]?.email !== 'admin') {
+            return res.status(403).json({ message: 'Solo el super admin puede entrar al portal de otro usuario.' });
+        }
+
+        const { rows: targetRows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+        const target = targetRows[0];
+        if (!target) return res.status(404).json({ message: 'Usuario no encontrado.' });
+
+        const token = jwt.sign({ user: { id: target.id, role: target.role } }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+        delete target.password;
+        if (target.role !== 'ADMIN' && target.role !== 'RETIROS') delete target.plainPassword;
+
+        await logAction(req.user.id, req.user.name, 'IMPERSONATE_USER', { targetUserId: target.id, targetEmail: target.email });
+
+        res.json({ token, user: target });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error al generar el acceso al portal.' });
+    }
+});
 
 // DELETE /api/users/:id - Delete a user (Admin only, with password verification)
 router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
