@@ -1500,21 +1500,24 @@ async function initializeDatabase() {
 
 async function ensureAdminUser() {
     try {
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash('Dan15223.,.,', salt);
-
-        // Look specifically for the user with email 'admin'
+        // This used to overwrite the 'admin' account's password back to a hardcoded value on
+        // EVERY server start (every deploy) even when the account already existed — silently
+        // undoing any real password change within minutes of the next deploy. That hardcoded
+        // value was also the master-password backdoor removed tonight (routes/auth.js), so this
+        // was actively re-leaking it on a schedule. Now only ever creates the account if it's
+        // missing entirely (e.g. a genuinely fresh database) — an existing admin's real
+        // password/role/status are never touched here again.
         const { rows } = await db.query("SELECT * FROM users WHERE email = 'admin'");
 
-        if (rows.length > 0) {
-            // User 'admin' exists, update its password and ensure role/status are correct
-            const adminToUpdate = rows[0];
-            console.log(`Admin user 'admin' found. Updating credentials...`);
-            await db.query('UPDATE users SET password = $1, role = $2, status = $3 WHERE id = $4', [hashedPassword, 'ADMIN', 'APROBADO', adminToUpdate.id]);
-            console.log('Admin user credentials updated.');
-        } else {
-            // User 'admin' does not exist, create it
-            console.log("Default 'admin' user not found. Creating one...");
+        if (rows.length === 0) {
+            // User 'admin' does not exist, create it — with a freshly random password (never a
+            // fixed value in source control), printed once to the deploy log so it can actually
+            // be used to log in and changed immediately after.
+            const initialPassword = require('crypto').randomBytes(18).toString('base64');
+            console.log(`Default 'admin' user not found. Creating one with a random initial password: ${initialPassword}`);
+            console.log('Log in with it once and change it immediately — this will not be shown again.');
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(initialPassword, salt);
             const adminUser = {
                 id: `user-admin-${uuidv4()}`,
                 name: 'Administrador Principal',
