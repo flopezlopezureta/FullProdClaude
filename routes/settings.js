@@ -475,9 +475,9 @@ router.get('/integrations', authMiddleware, adminOnly, async (req, res) => {
             meliAppId: rows[0].meli_app_id,
             meliClientSecret: rows[0].meli_client_secret,
             shopifyClientId: rows[0].shopify_client_id,
-            shopifyClientSecret: rows[0].shopify_client_secret,
+            shopifyClientSecret: rows[0].shopify_client_secret ? '************************' : '',
             shopifyShopUrl: rows[0].shopify_shop_url,
-            shopifyAccessToken: rows[0].shopify_access_token,
+            shopifyAccessToken: rows[0].shopify_access_token ? '************************' : '',
             githubToken: rows[0].github_token,
             githubRepo: rows[0].github_repo,
             githubOwner: rows[0].github_owner,
@@ -537,7 +537,7 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
         }
         if (shopifyClientSecret !== undefined) {
             updates.push(`shopify_client_secret = $${idx++}`);
-            values.push(shopifyClientSecret);
+            values.push(encrypt(shopifyClientSecret));
         }
         if (shopifyShopUrl !== undefined) {
             updates.push(`shopify_shop_url = $${idx++}`);
@@ -545,7 +545,7 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
         }
         if (shopifyAccessToken !== undefined) {
             updates.push(`shopify_access_token = $${idx++}`);
-            values.push(shopifyAccessToken);
+            values.push(encrypt(shopifyAccessToken));
         }
         if (githubToken !== undefined) {
             updates.push(`github_token = $${idx++}`);
@@ -631,9 +631,9 @@ router.put('/integrations', authMiddleware, adminOnly, async (req, res) => {
                 meliAppId: saved.meli_app_id,
                 meliClientSecret: saved.meli_client_secret,
                 shopifyClientId: saved.shopify_client_id,
-                shopifyClientSecret: saved.shopify_client_secret,
+                shopifyClientSecret: saved.shopify_client_secret ? '************************' : '',
                 shopifyShopUrl: saved.shopify_shop_url,
-                shopifyAccessToken: saved.shopify_access_token,
+                shopifyAccessToken: saved.shopify_access_token ? '************************' : '',
                 githubToken: saved.github_token,
                 githubRepo: saved.github_repo,
                 githubOwner: saved.github_owner,

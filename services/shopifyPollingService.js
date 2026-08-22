@@ -3,6 +3,7 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
+const { decrypt } = require('./falabellaCrypto');
 
 // --- SHOPIFY API HELPERS ---
 const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData = null) => {
@@ -178,6 +179,9 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                     const settings = account.settings || {};
 
                     if (!shopify.shopUrl || !shopify.accessToken) continue;
+                    // Same safe decrypt() as routes/integrations.js — a no-op on tokens saved
+                    // before encryption was added, so nothing breaks for existing connections.
+                    shopify.accessToken = decrypt(shopify.accessToken);
                     if (settings.autoImport !== true) continue;
 
                     const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 2; 

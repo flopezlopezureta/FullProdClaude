@@ -551,7 +551,7 @@ const makeWooCommerceRequest = (wooUrl, consumerKey, consumerSecret, path, metho
 };
 
 // --- FALABELLA API HELPERS ---
-const { decrypt, buildFalabellaSignature } = require('../services/falabellaCrypto');
+const { encrypt, decrypt, buildFalabellaSignature } = require('../services/falabellaCrypto');
 
 const makeFalabellaRequest = (apiKey, sellerId, action, method = 'GET', extraParams = null) => {
     return new Promise((resolve, reject) => {
@@ -1190,7 +1190,10 @@ const getValidShopifyIntegration = async (clientId, accountId = null) => {
         throw new Error('El cliente no tiene Shopify configurado.');
     }
 
-    return shopifyIntegration;
+    // decrypt() safely returns its input unchanged if it isn't actually encrypted (see
+    // falabellaCrypto.js) — so tokens saved before this change (still plaintext) keep working
+    // exactly as before, while anything saved from now on comes back correctly decrypted.
+    return { ...shopifyIntegration, accessToken: decrypt(shopifyIntegration.accessToken) };
 };
 
 const getValidWooCommerceIntegration = async (clientId, accountId = null) => {
@@ -2202,7 +2205,7 @@ router.get('/shopify/callback', async (req, res) => {
             nickname: `Shopify (${shop.split('.')[0]})`,
             credentials: {
                 shopUrl: shop,
-                accessToken: tokenData.access_token
+                accessToken: encrypt(tokenData.access_token)
             },
             settings: {
                 autoImport: true,
@@ -2853,11 +2856,17 @@ router.post('/accounts', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'Esta cuenta ya está vinculada a tu perfil.' });
         }
 
+        // Only Shopify's shape is touched here — this endpoint is shared with Jumpseller/
+        // Falabella/WooCommerce, which have different credential fields entirely.
+        const storedCredentials = (type === 'SHOPIFY' && credentials.accessToken)
+            ? { ...credentials, accessToken: encrypt(credentials.accessToken) }
+            : credentials;
+
         const newAccount = {
             id: `${type.toLowerCase()}-${uuidv4()}`,
             type: type,
             nickname: nickname || `${type} Account`,
-            credentials: credentials,
+            credentials: storedCredentials,
             settings: {
                 autoImport: true,
                 // Was 30 — the same stale legacy default found and fixed for Meli accounts
