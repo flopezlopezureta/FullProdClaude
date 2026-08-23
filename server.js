@@ -396,6 +396,12 @@ async function startServer() {
         require('./services/networkMetrics').start(10 * 60 * 1000);
         console.log('Background Service: Network Traffic daily rollup scheduled (10min interval).');
 
+        // Anonymizes the buyer's personal data (name/phone/email/address) on delivered/returned
+        // packages older than the retention window — keeps the package record itself for billing
+        // and reporting. Runs once a day; a 6-month window doesn't need tighter polling.
+        require('./services/dataRetentionService').start(24 * 60 * 60 * 1000);
+        console.log('Background Service: Data Retention anonymization scheduled (24h interval).');
+
       } catch (initErr) {
         console.error('Failed to initialize database during startup:', initErr);
       }
