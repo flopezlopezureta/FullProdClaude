@@ -872,22 +872,22 @@ const DriverDashboard: React.FC = () => {
                 <IconTruck className="w-5 h-5 mr-2" />
                 <span>Pendientes ({pendingPackages.length})</span>
               </button>
-              {stalePackages.length > 0 && (
-                <button
-                  onClick={() => setActiveTab('stale')}
-                  className={`${tabStyles} ${activeTab === 'stale' ? activeTabStyles : inactiveTabStyles}`}
-                >
-                  <IconAlertTriangle className="w-5 h-5 mr-2" />
-                  <span>Atrasados ({stalePackages.length})</span>
-                </button>
-              )}
               <button
                 onClick={() => setActiveTab('history')}
-                className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} rounded-tr-lg`}
+                className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} ${stalePackages.length === 0 ? 'rounded-tr-lg' : ''}`}
               >
                 <IconArchive className="w-5 h-5 mr-2" />
                 <span>Cerrados ({dailyHistoryPackages.length})</span>
               </button>
+              {stalePackages.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('stale')}
+                  className={`${tabStyles} ${activeTab === 'stale' ? activeTabStyles : inactiveTabStyles} rounded-tr-lg`}
+                >
+                  <IconAlertTriangle className="w-5 h-5 mr-2" />
+                  <span>Anteriores ({stalePackages.length})</span>
+                </button>
+              )}
             </nav>
           </div>
           <PackageList 
