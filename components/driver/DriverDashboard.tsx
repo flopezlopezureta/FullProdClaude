@@ -11,7 +11,7 @@ import PackageDetailModal from '../PackageDetailModal';
 import DeliveryConfirmationModal from './DeliveryConfirmationModal';
 import UndeliveredModal from './UndeliveredModal';
 import { AuthContext } from '../../contexts/AuthContext';
-import { IconArchive, IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin } from '../Icon';
+import { IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin } from '../Icon';
 
 // A network-level failure (offline, DNS, timeout) surfaces as a plain fetch TypeError, not an
 // ApiError with a real HTTP status from the server — that distinction is what separates "queue
@@ -869,14 +869,12 @@ const DriverDashboard: React.FC = () => {
                 onClick={() => setActiveTab('pending')}
                 className={`${tabStyles} ${activeTab === 'pending' ? activeTabStyles : inactiveTabStyles} rounded-tl-lg`}
               >
-                <IconTruck className="w-5 h-5 mr-2" />
                 <span>Pendientes ({pendingPackages.length})</span>
               </button>
               <button
                 onClick={() => setActiveTab('history')}
                 className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} ${stalePackages.length === 0 ? 'rounded-tr-lg' : ''}`}
               >
-                <IconArchive className="w-5 h-5 mr-2" />
                 <span>Cerrados ({dailyHistoryPackages.length})</span>
               </button>
               {stalePackages.length > 0 && (
@@ -884,7 +882,6 @@ const DriverDashboard: React.FC = () => {
                   onClick={() => setActiveTab('stale')}
                   className={`${tabStyles} ${activeTab === 'stale' ? activeTabStyles : inactiveTabStyles} rounded-tr-lg`}
                 >
-                  <IconAlertTriangle className="w-5 h-5 mr-2" />
                   <span>Anteriores ({stalePackages.length})</span>
                 </button>
               )}
