@@ -494,7 +494,8 @@ async function initializeDatabase() {
                 'longitude REAL',
                 'lastLocationUpdate TIMESTAMPTZ',
                 'integrations JSONB',
-                'createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP'
+                'createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP',
+                'forceAppUpdate BOOLEAN DEFAULT false'
             ];
             for (const spec of userCols) {
                 const col = spec.split(' ')[0];

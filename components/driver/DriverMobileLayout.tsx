@@ -16,6 +16,7 @@ import { DriverPermissions, Notification } from '../../types';
 import { api } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
 import { processOfflineQueue } from '../../services/offlineQueueProcessor';
+import { storageUtils } from '../../utils/storageUtils';
 
 type DriverView = 'my-packages' | 'scan-dispatch' | 'scan-dispatch-auxiliar' | 'scan-pickups' | 'colectas' | 'returns' | 'delivery-history' | 'meli-flex-test' | 'zona';
 
@@ -34,6 +35,53 @@ const menuItems: { id: DriverView; label: string; subtitle?: string; icon: React
 const DriverMobileLayout: React.FC = () => {
     const { user, logout, isPushSubscribed, isPushLoading, subscribeToPush, unsubscribeFromPush, systemSettings } = useContext(AuthContext)!;
     const [activeView, setActiveView] = useState<DriverView | 'menu'>('menu');
+    const [appUpdateInfo, setAppUpdateInfo] = useState<{ versionName?: string; mandatory?: boolean; apkUrl?: string; notes?: string } | null>(null);
+
+    // Aviso de actualización: solo se le muestra al conductor si un admin lo marcó explícitamente
+    // (users.forceAppUpdate) — ver GET /api/app-updates/check. window.AndroidApp.getVersionCode
+    // solo existe dentro del wrapper nativo, así que en un navegador normal esto no hace nada.
+    useEffect(() => {
+        if (!user) return;
+        // @ts-ignore
+        if (!window.AndroidApp || typeof window.AndroidApp.getVersionCode !== 'function') return;
+
+        const checkUpdate = async () => {
+            try {
+                // @ts-ignore
+                const installedVersionCode = window.AndroidApp.getVersionCode();
+                const result = await api.checkAppUpdate(installedVersionCode);
+                if (result.shouldUpdate) {
+                    setAppUpdateInfo({ versionName: result.versionName, mandatory: result.mandatory, apkUrl: result.apkUrl, notes: result.notes });
+                }
+            } catch (e) {
+                console.error('No se pudo verificar la actualización de la app', e);
+            }
+        };
+        checkUpdate();
+    }, [user]);
+
+    const handleInstallUpdate = () => {
+        if (!appUpdateInfo?.apkUrl) return;
+        // @ts-ignore
+        window.AndroidApp.openUrl(appUpdateInfo.apkUrl);
+    };
+
+    // Android's WebView can get killed and recreated when the driver switches to another
+    // app (phone, gallery, calculator...) and comes back — the whole React tree remounts
+    // from scratch, and without this, activeView always resets to 'menu' regardless of
+    // what screen the driver was actually on. Restoring it (and DeliveryConfirmationModal's
+    // own draft-restore logic, which already exists) together get the driver back to
+    // exactly where they left off instead of losing their place.
+    useEffect(() => {
+        if (!user) return;
+        const saved = storageUtils.getItem<DriverView | 'menu' | ''>(`driver_active_view_${user.id}`, '');
+        if (saved) setActiveView(saved);
+    }, [user?.id]);
+
+    useEffect(() => {
+        if (!user) return;
+        storageUtils.safeSetItem(`driver_active_view_${user.id}`, activeView);
+    }, [activeView, user?.id]);
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [showNotifications, setShowNotifications] = useState(false);
     
@@ -190,6 +238,34 @@ const DriverMobileLayout: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen bg-[var(--background-primary)]">
+            {appUpdateInfo && (
+                <div className="fixed inset-0 bg-black bg-opacity-70 z-[100] flex items-center justify-center p-4">
+                    <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
+                        <IconArrowUturnLeft className="w-12 h-12 mx-auto mb-3 text-[var(--brand-primary)] rotate-180" />
+                        <h3 className="text-lg font-bold text-[var(--text-primary)] mb-1">Nueva versión disponible</h3>
+                        {appUpdateInfo.versionName && (
+                            <p className="text-sm text-[var(--text-muted)] mb-2">Versión {appUpdateInfo.versionName}</p>
+                        )}
+                        {appUpdateInfo.notes && (
+                            <p className="text-sm text-[var(--text-secondary)] mb-4">{appUpdateInfo.notes}</p>
+                        )}
+                        <button
+                            onClick={handleInstallUpdate}
+                            className="w-full px-4 py-3 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-lg hover:bg-[var(--brand-secondary)] transition-colors"
+                        >
+                            Descargar e instalar
+                        </button>
+                        {!appUpdateInfo.mandatory && (
+                            <button
+                                onClick={() => setAppUpdateInfo(null)}
+                                className="w-full mt-2 px-4 py-2 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                            >
+                                Más tarde
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
             <header className="bg-[var(--background-secondary)] shadow-sm flex items-center justify-between h-16 px-4 flex-shrink-0 z-10 border-b border-[var(--border-primary)] relative">
                 {activeView === 'menu' ? (
                      <>
@@ -293,21 +369,31 @@ const DriverMobileLayout: React.FC = () => {
             }`}>
                 {activeView === 'menu' ? (
                     <div className="p-4">
-                        <div className="mb-6 rounded-3xl bg-gradient-to-r from-blue-700 to-indigo-600 p-6 text-white shadow-lg relative overflow-hidden">
-                            <div className="relative z-10">
-                                <p className="text-xs font-medium opacity-80 mb-1">EMPRESA</p>
-                                <h2 className="text-2xl font-bold tracking-tight">{systemSettings.companyName}</h2>
-                            </div>
-                            {/* AN = running inside the native Android wrapper (window.AndroidApp exists,
-                                injected by MainActivity.kt's WebAppInterface); AW = plain web/browser.
-                                Lets you tell at a glance which one you're looking at, and confirms which
-                                version actually loaded — same version number either way since the wrapper
-                                just displays this same web app, but the prefix disambiguates the channel. */}
-                            <span className="absolute top-4 right-4 z-20 text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
-                                {typeof window !== 'undefined' && (window as any).AndroidApp ? 'AN' : 'AW'}{(import.meta as any).env.VITE_APP_VERSION}
-                            </span>
-                            <IconCube className="absolute -right-4 -bottom-4 w-32 h-32 text-white opacity-10 rotate-12" />
-                        </div>
+                        {(() => {
+                            // Distinguishes Staging (full2.fullenvios.cl) from Production at a glance —
+                            // the version number badge alone isn't enough since both environments can
+                            // (and often do) show the exact same version. Amber instead of a small label
+                            // because a test APK pointed at the wrong environment by mistake is easy to
+                            // miss with only a corner tag; the whole banner changing color is not.
+                            const isStaging = typeof window !== 'undefined' && window.location.hostname.includes('full2.fullenvios.cl');
+                            return (
+                                <div className={`mb-6 rounded-3xl bg-gradient-to-r ${isStaging ? 'from-amber-600 to-orange-600' : 'from-blue-700 to-indigo-600'} p-6 text-white shadow-lg relative overflow-hidden`}>
+                                    <div className="relative z-10">
+                                        <p className="text-xs font-medium opacity-80 mb-1">{isStaging ? 'STAGING · EMPRESA' : 'EMPRESA'}</p>
+                                        <h2 className="text-2xl font-bold tracking-tight">{systemSettings.companyName}</h2>
+                                    </div>
+                                    {/* AN = running inside the native Android wrapper (window.AndroidApp exists,
+                                        injected by MainActivity.kt's WebAppInterface); AW = plain web/browser.
+                                        Lets you tell at a glance which one you're looking at, and confirms which
+                                        version actually loaded — same version number either way since the wrapper
+                                        just displays this same web app, but the prefix disambiguates the channel. */}
+                                    <span className="absolute top-4 right-4 z-20 text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
+                                        {typeof window !== 'undefined' && (window as any).AndroidApp ? 'AN' : 'AW'}{(import.meta as any).env.VITE_APP_VERSION}
+                                    </span>
+                                    <IconCube className="absolute -right-4 -bottom-4 w-32 h-32 text-white opacity-10 rotate-12" />
+                                </div>
+                            );
+                        })()}
 
                         <div className="grid grid-cols-2 gap-4">
                             {availableMenuItems.map(item => (

@@ -58,7 +58,8 @@ const DriverDashboard: React.FC = () => {
   const [reportingProblemPackage, setReportingProblemPackage] = useState<Package | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'history' | 'stale'>('pending');
+  const [stalePackages, setStalePackages] = useState<Package[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isEndOfDayModalOpen, setIsEndOfDayModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
@@ -253,6 +254,23 @@ const DriverDashboard: React.FC = () => {
           }
       }
   };
+
+  // Pendientes "huérfanos" de días anteriores (ver comentario del endpoint en packages.js) —
+  // red de seguridad, separada del polling principal para no tocar esa lógica ya delicada.
+  useEffect(() => {
+    if (!auth?.user) return;
+    const fetchStale = async () => {
+      try {
+        const stale = await api.getStaleDriverPackages();
+        setStalePackages(Array.isArray(stale) ? stale : []);
+      } catch (error) {
+        console.error("Failed to fetch stale driver packages", error);
+      }
+    };
+    fetchStale();
+    const staleIntervalId = setInterval(fetchStale, 60000);
+    return () => clearInterval(staleIntervalId);
+  }, [auth?.user]);
 
   useEffect(() => {
     // Solo iniciamos el intervalo si NO estamos en proceso de entrega o reporte
@@ -740,7 +758,7 @@ const DriverDashboard: React.FC = () => {
   };
 
 
-  const packagesToShow = activeTab === 'pending' ? pendingPackages : dailyHistoryPackages;
+  const packagesToShow = activeTab === 'pending' ? pendingPackages : activeTab === 'stale' ? stalePackages : dailyHistoryPackages;
 
   const tabStyles = "flex items-center justify-center w-full px-4 py-2 font-medium text-sm transition-colors duration-200 focus:outline-none";
   const activeTabStyles = "text-[var(--brand-primary)] border-b-2 border-[var(--brand-primary)] bg-[var(--brand-muted)]";
@@ -854,6 +872,15 @@ const DriverDashboard: React.FC = () => {
                 <IconTruck className="w-5 h-5 mr-2" />
                 <span>Pendientes ({pendingPackages.length})</span>
               </button>
+              {stalePackages.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('stale')}
+                  className={`${tabStyles} ${activeTab === 'stale' ? activeTabStyles : inactiveTabStyles}`}
+                >
+                  <IconAlertTriangle className="w-5 h-5 mr-2" />
+                  <span>Atrasados ({stalePackages.length})</span>
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('history')}
                 className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} rounded-tr-lg`}

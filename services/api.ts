@@ -203,6 +203,7 @@ export interface UserUpdateData extends Partial<UserCreationData> {
     integrations?: any;
     driverPermissions?: DriverPermissions;
     operatorPermissions?: OperatorPermissions;
+    forceAppUpdate?: boolean;
 }
 
 export interface DeliveryConfirmationData {
@@ -317,6 +318,7 @@ export const api = {
       return get<{ packages: Package[], total: number }>(`/packages?${searchParams.toString()}`);
   },
   getPackage: (pkgId: string) => get<Package>(`/packages/${encodeURIComponent(pkgId)}`),
+  getStaleDriverPackages: () => get<Package[]>('/packages/driver/stale'),
   createPackage: (data: PackageCreationData) => post<Package>('/packages', data),
   createMultiplePackages: (packages: PackageCreationData[]) => post<{ 
       success: boolean, 
@@ -495,6 +497,7 @@ export const api = {
     totalRecords: number;
     date: string;
   }>(`/network-metrics/history?date=${encodeURIComponent(date)}`),
+  checkAppUpdate: (versionCode: number) => get<{ shouldUpdate: boolean; versionCode?: number; versionName?: string; mandatory?: boolean; apkUrl?: string; notes?: string }>(`/app-updates/check?versionCode=${versionCode}`),
   searchNetworkMetrics: (path: string) => get<{
     results: { timestamp: string; ip: string; method: string; path: string; statusCode: number; durationMs: number; userId: string | null }[];
     count: number;

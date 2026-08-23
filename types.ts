@@ -264,6 +264,7 @@ export interface User {
   vehicles?: Vehicle[];
   driverPermissions?: DriverPermissions;
   operatorPermissions?: OperatorPermissions;
+  forceAppUpdate?: boolean;
 
   // Integrations
   integrations?: {

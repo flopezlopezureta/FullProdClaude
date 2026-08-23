@@ -403,6 +403,43 @@ router.get('/export/csv', authMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/packages/driver/stale
+// El dashboard normal del conductor solo muestra los paquetes de la jornada de HOY (ver el
+// filtro "[SEGURIDAD]" en buildPackageQuery, línea ~108) — a propósito, para evitar descuadres.
+// El efecto secundario: si un paquete queda pendiente de un día anterior (p.ej. la app se cayó
+// antes de poder cerrarlo) y nadie lo reasigna ni lo entrega, se vuelve invisible para el
+// conductor apenas cambia el día, aunque siga asignado a él. Este endpoint es la red de
+// seguridad: trae esos paquetes "huérfanos" para que el propio conductor los pueda cerrar.
+router.get('/driver/stale', authMiddleware, async (req, res) => {
+    try {
+        if (req.user.role !== 'DRIVER') {
+            return res.status(403).json({ message: 'Solo conductores pueden ver esta lista.' });
+        }
+
+        const activeStatuses = ['PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO', 'RETRASADO', 'PENDIENTE_DEVOLUCION'];
+        const todayStr = await timeService.getLogicalDate();
+        const { start: todayStart, nextDayStart: todayEnd } = await timeService.getLogicalRange(todayStr, todayStr);
+
+        const { rows } = await db.query(
+            `SELECT * FROM packages
+             WHERE "driverId" = $1
+               AND status = ANY($2::text[])
+               AND COALESCE("assignedAt", "createdAt") >= NOW() - INTERVAL '3 days'
+               AND NOT (
+                    ("estimatedDelivery" >= $3 AND "estimatedDelivery" < $4)
+                    OR ("assignedAt" >= $3 AND "assignedAt" < $4)
+               )
+             ORDER BY COALESCE("assignedAt", "createdAt") ASC`,
+            [req.user.id, activeStatuses, todayStart, todayEnd]
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error('Error in GET /api/packages/driver/stale:', err);
+        res.status(500).json({ message: 'Error al obtener pendientes antiguos.' });
+    }
+});
+
 // GET /api/packages - with server-side pagination and filtering
 router.get('/', authMiddleware, async (req, res) => {
     try {

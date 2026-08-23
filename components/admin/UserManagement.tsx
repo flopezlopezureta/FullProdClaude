@@ -303,6 +303,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ roleFilter }) => {
   };
 
 
+  const handleToggleForceUpdate = async (user: User) => {
+    try {
+        await api.updateUser(user.id, { forceAppUpdate: !user.forceAppUpdate });
+        fetchUsers();
+    } catch (error) {
+        console.error("Failed to update forceAppUpdate flag", error);
+        alert("Error al actualizar el estado de actualización forzada.");
+    }
+  };
+
   const handleCopyRegistrationLink = (user: User) => {
     const registrationUrl = `${window.location.origin}/?mode=register&email=${encodeURIComponent(user.email)}`;
     navigator.clipboard.writeText(registrationUrl);
@@ -638,6 +648,17 @@ const wb = XLSX.utils.book_new();
                                             <span>{item.label}</span>
                                         </button>
                                     ))}
+                                </div>
+                                <div className="mt-3 pt-3 border-t border-[var(--border-primary)]">
+                                    <span className="text-xs font-semibold text-[var(--text-muted)] mb-2 block">Actualización de la App:</span>
+                                    <button
+                                        onClick={() => handleToggleForceUpdate(user)}
+                                        title="Si está activo, la app le mostrará un aviso para actualizar a la última versión publicada"
+                                        className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${user.forceAppUpdate ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}
+                                    >
+                                        <IconDownload className="w-4 h-4"/>
+                                        <span>{user.forceAppUpdate ? 'Actualización activada' : 'Forzar actualización'}</span>
+                                    </button>
                                 </div>
                             </div>
                         )
