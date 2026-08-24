@@ -52,9 +52,9 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com', 'https://cdn.sheetjs.com', 'https://aistudiocdn.com'],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com'],
-      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com', 'https://cdn.sheetjs.com', 'https://aistudiocdn.com', 'https://static.cloudflareinsights.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com', 'https://fonts.cdnfonts.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://fonts.cdnfonts.com', 'data:'],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       connectSrc: ["'self'", 'https://router.project-osrm.org', 'https://nominatim.openstreetmap.org'],
       objectSrc: ["'none'"],
