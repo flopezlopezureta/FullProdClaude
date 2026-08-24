@@ -2,7 +2,7 @@
 import React, { useContext, useState, useEffect } from 'react';
 import { AuthContext } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
-import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconWifi, IconSearch } from '../Icon';
+import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconFileUpload, IconWifi, IconSearch } from '../Icon';
 import { Role, DEFAULT_OPERATOR_PERMISSIONS } from '../../constants';
 
 interface SidebarProps {
@@ -184,6 +184,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       label: 'Herramientas',
       icon: <IconWifi className="h-6 w-6" />,
       subItems: [
+            { id: 'app-updates', label: 'Actualizaciones de la App', icon: <IconFileUpload className="h-5 w-5" /> },
             { id: 'cloudflare-diagnostics', label: 'Diagnóstico Cloudflare', icon: <IconWifi className="h-5 w-5" /> },
             { id: 'network-traffic', label: 'Tráfico de Red', icon: <IconBarChart className="h-5 w-5" /> },
             { id: 'emergency-lookups', label: 'Búsquedas de Emergencia Meli', icon: <IconSearch className="h-5 w-5" /> }

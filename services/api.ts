@@ -484,6 +484,13 @@ export const api = {
     chronometry: any[];
   }>(`/users/fleet-control-center${date ? `?date=${date}` : ''}`),
   notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
+
+  // App Updates (WebView wrapper / driver-app APK publishing) — multipart upload, bypasses the
+  // generic JSON `post()` helper since this sends a binary file, not a JSON body.
+  getAppUpdatesStatus: () => get<{
+    version: { versionCode: number; versionName: string; mandatory: boolean; apkUrl: string; notes: string } | null;
+    apk: { exists: boolean; sizeBytes?: number; modifiedAt?: string };
+  }>('/app-updates/admin-status'),
   getNetworkMetricsReport: () => get<{
     byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null; users?: string[] }[];
     byHour: { hour: number; requestCount: number; avgMs: number; errorRate: number }[];
@@ -513,4 +520,25 @@ export const api = {
     durationMs: number | null;
     createdAt: string;
   }[]>('/emergency-lookups'),
+  publishAppUpdate: async (file: File, data: { versionCode: number; versionName: string; mandatory: boolean; notes: string; force?: boolean }) => {
+    const formData = new FormData();
+    formData.append('apk', file);
+    formData.append('versionCode', String(data.versionCode));
+    formData.append('versionName', data.versionName);
+    formData.append('mandatory', String(data.mandatory));
+    formData.append('notes', data.notes);
+    if (data.force) formData.append('force', 'true');
+
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/app-updates/upload`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError(result.message || `Error ${response.status}`, response.status, result);
+    }
+    return result as { message: string; version: any; apkSizeBytes: number };
+  },
 };
