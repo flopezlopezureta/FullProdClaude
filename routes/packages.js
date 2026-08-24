@@ -43,7 +43,8 @@ router.get('/sys/normalize-all', authMiddleware, async (req, res) => {
 
 
 // [EMERGENCIA] Ruta para arreglar los egresos de hoy retroactivamente
-router.get('/fix-egress-today', async (req, res) => {
+router.get('/fix-egress-today', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'No autorizado.' });
     try {
         const today = await timeService.getLogicalDate();
         const query = `
@@ -2810,7 +2811,8 @@ router.get('/analytics/late-deliveries', authMiddleware, async (req, res) => {
 });
 
 // [DEBUG] Temporary endpoint to check why packages from previous dates appear in alerts
-router.get('/sys/debug-reassigned', async (req, res) => {
+router.get('/sys/debug-reassigned', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'No autorizado.' });
     try {
         const { rows } = await db.query(`
             SELECT id, "recipientName", status, "driverId", "assignedAt", "createdAt", "updatedAt", "isReassigned", "alertChecked"
@@ -2834,7 +2836,8 @@ router.get('/sys/debug-reassigned', async (req, res) => {
     }
 });
 
-router.get('/sys/db-size', async (req, res) => {
+router.get('/sys/db-size', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'No autorizado.' });
     try {
         const sizeRes = await db.query("SELECT pg_size_pretty(pg_database_size('fullenvios')) as size");
         const countRes = await db.query("SELECT COUNT(*) as count FROM packages");

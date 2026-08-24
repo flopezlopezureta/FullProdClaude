@@ -8,7 +8,7 @@ const { emitDriverEvent } = require('../services/driverEvents');
 // Creating a placeholder to ensure server stability.
 
 // Example debug route to check DB connection
-router.get('/db-check', async (req, res) => {
+router.get('/db-check', authMiddleware, requireSuperUserDebug, async (req, res) => {
     try {
         const { rows: dbInfo } = await db.query("SELECT current_database(), current_user, inet_server_addr()");
         const { rows: packageCount } = await db.query("SELECT count(*) FROM packages");
@@ -36,7 +36,7 @@ router.get('/db-check', async (req, res) => {
 });
 
 
-router.get('/meli-check/:id', async (req, res) => {
+router.get('/meli-check/:id', authMiddleware, requireSuperUserDebug, async (req, res) => {
     const shipmentId = req.params.id;
     const https = require('https');
     const meliPollingService = require('../services/meliPollingService');

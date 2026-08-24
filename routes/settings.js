@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const jwt = require('jsonwebtoken');
 const https = require('https');
 const bcrypt = require('bcryptjs');
 const { logAction } = require('../services/logger');
@@ -185,7 +186,25 @@ router.get('/system', async (req, res) => {
         if (settings.length === 0) {
             return res.json({ ...fallbackSettings, appEnv: process.env.APP_ENV || 'production' });
         }
-        res.json({ ...fallbackSettings, ...settings[0], appEnv: process.env.APP_ENV || 'production' });
+        // This endpoint is public/unauthenticated on purpose (the app shell needs it before
+        // login) — but adminCallmebotApiKey is a real, active WhatsApp-sending credential, and
+        // anyone on the internet could request this route and read it. Only include the real
+        // value for an already-authenticated admin (SettingsPage.tsx needs it to prefill the
+        // edit form and to power "Probar" without a second round trip); everyone else gets it
+        // stripped. Soft-checks the token — an absent/invalid one just means "not an admin",
+        // never a hard 401, since this route must keep working with no session at all.
+        let requesterIsAdmin = false;
+        try {
+            const authHeader = req.header('Authorization');
+            if (authHeader?.startsWith('Bearer ')) {
+                const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+                requesterIsAdmin = decoded?.user?.role === 'ADMIN';
+            }
+        } catch (e) { /* not signed in / invalid token — treat as not-admin, not an error */ }
+
+        const responseBody = { ...fallbackSettings, ...settings[0], appEnv: process.env.APP_ENV || 'production' };
+        if (!requesterIsAdmin) responseBody.adminCallmebotApiKey = undefined;
+        res.json(responseBody);
     } catch (err) {
         console.error("ERROR in /api/settings/system:", err);
         // Fail gracefully if DB not ready

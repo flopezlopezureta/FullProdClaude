@@ -172,9 +172,8 @@ router.delete('/accounts/:accountId', authMiddleware, async (req, res) => {
 });
 
 // TEMP DEBUG: List all clients and IDs
-router.get('/list-clients-debug', async (req, res) => {
-    const { secret } = req.query;
-    if (secret !== 'fullenvios_debug') return res.status(403).send('Forbidden');
+router.get('/list-clients-debug', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).send('Forbidden');
     try {
         const { rows } = await db.query("SELECT id, name FROM users WHERE integrations->'meli' IS NOT NULL LIMIT 20");
         res.json(rows);
@@ -185,7 +184,6 @@ router.get('/list-clients-debug', async (req, res) => {
 
 router.get('/debug-poll/:clientId', async (req, res) => {
     const { clientId } = req.params;
-    const { secret } = req.query;
 
     const executeDebug = async (user) => {
         const debugLogs = [];
@@ -284,16 +282,12 @@ router.get('/debug-poll/:clientId', async (req, res) => {
         }
     };
 
-    if (secret === 'fullenvios_debug') {
-        return executeDebug();
-    } else {
-        return authMiddleware(req, res, () => {
-            if (req.user.role !== 'ADMIN' && req.user.id !== clientId) {
-                return res.status(403).json({ message: 'No autorizado' });
-            }
-            return executeDebug(req.user);
-        });
-    }
+    return authMiddleware(req, res, () => {
+        if (req.user.role !== 'ADMIN' && req.user.id !== clientId) {
+            return res.status(403).json({ message: 'No autorizado' });
+        }
+        return executeDebug(req.user);
+    });
 });
 
 // GET /api/integrations/meli-tracking/:packageId - Get real ML tracking_id for label QR
@@ -692,9 +686,11 @@ const getValidMeliIntegration = async (clientId, accountId = null) => {
 };
 
 // [TEMPORAL] Ruta administrativa para limpiar pedidos fuera de zona (AuditorÃ­a profunda)
-router.get('/admin/cleanup-deep', async (req, res) => {
-    const { secret, target } = req.query;
-    if (secret !== 'cleanup_2026') return res.status(403).send('Forbidden');
+// Borra datos reales (paquetes + su historial) â€” exige sesiÃ³n de administrador real. AntÃ©s
+// solo pedÃ­a una palabra fija en la URL (visible en el cÃ³digo fuente), lo que equivalÃ­a a no
+// pedir nada.
+router.get('/admin/cleanup-deep', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).send('Forbidden');
 
     try {
         const queryFind = `
