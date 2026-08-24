@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const { checkVpnOrProxy } = require('../services/ipIntelligence');
+const { logAction } = require('../services/logger');
 
 // Nothing throttled login attempts before — an attacker could brute-force a password with no
 // limit at all. 15 tries per 15 minutes per IP is generous for a real user mistyping a password,
@@ -60,6 +62,17 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         if (!isMatch) {
             return res.status(400).json({ message: 'Credenciales inválidas.' });
+        }
+
+        // Checked only after the password is confirmed correct — no point spending a lookup (or
+        // giving an attacker any signal) on a guess that was wrong anyway. Fails open: if the
+        // lookup service errors out, checkVpnOrProxy resolves isVpn:false and login proceeds
+        // normally, so a broken third-party API can never lock everyone out.
+        const clientIp = req.headers['cf-connecting-ip'] || req.ip;
+        const { isVpn } = await checkVpnOrProxy(clientIp);
+        if (isVpn) {
+            await logAction(user.id, user.name, 'LOGIN_BLOCKED_VPN', { ip: clientIp, email: user.email });
+            return res.status(403).json({ message: 'No se puede iniciar sesión desde una conexión VPN o proxy. Desactívala e intenta de nuevo.' });
         }
 
         if (user.status === 'PENDIENTE') {
