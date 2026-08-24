@@ -38,13 +38,29 @@ const app = express();
 app.set('trust proxy', 1);
 
 // --- Middlewares ---
-// contentSecurityPolicy and crossOriginEmbedderPolicy are off: this app serves a mixed set of
-// domains/clients (dashboard, driver-app, webhooks) and neither has been audited against a CSP —
-// turning it on blind risks silently breaking asset loading. The rest of helmet's defaults
-// (X-Frame-Options, X-Content-Type-Options, HSTS, etc.) are safe additions with no such risk.
+// crossOriginEmbedderPolicy stays off — this app embeds third-party map tiles/resources that
+// don't send CORP/COEP headers, and turning it on would silently block them.
+//
+// contentSecurityPolicy is enabled with an explicit allowlist built from every external
+// domain the frontend actually loads (index.html's <script>/<link> tags, Leaflet map tiles,
+// the OSRM routing/Nominatim geocoding calls made directly from the browser, Google Fonts).
+// 'unsafe-inline' is kept for scripts and styles: the ESM importmap in index.html and React's
+// inline style={{}} usage throughout the app both rely on it, and there's no per-request nonce
+// plumbing in this server to replace it with something stricter yet.
 app.use(helmet({
-  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com', 'https://cdn.sheetjs.com', 'https://aistudiocdn.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: ["'self'", 'https://router.project-osrm.org', 'https://nominatim.openstreetmap.org'],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'self'"],
+    },
+  },
 }));
 
 // Aggressively disable caching for all responses to solve stale asset issues.
