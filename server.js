@@ -59,6 +59,10 @@ app.use(helmet({
       connectSrc: ["'self'", 'https://router.project-osrm.org', 'https://nominatim.openstreetmap.org'],
       objectSrc: ["'none'"],
       frameAncestors: ["'self'"],
+      // Without this, worker-src falls back to script-src, which has no 'blob:' — and
+      // browser-image-compression (useWebWorker: true, used for every delivery photo) spins up
+      // its worker from a blob: URL. That silently broke photo upload for every driver.
+      workerSrc: ["'self'", 'blob:'],
     },
   },
 }));
