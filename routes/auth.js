@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const { checkVpnOrProxy } = require('../services/ipIntelligence');
@@ -11,11 +12,22 @@ const { logAction } = require('../services/logger');
 // Nothing throttled login attempts before — an attacker could brute-force a password with no
 // limit at all. 15 tries per 15 minutes per IP is generous for a real user mistyping a password,
 // but shuts down automated guessing.
+//
+// Behind the chained proxies (Cloudflare Tunnel, then coolify-proxy), plain req.ip with
+// `trust proxy: 1` only unwinds one hop and resolves to coolify-proxy's own internal Docker IP —
+// the SAME value for every single request, from every real visitor. Left as the default
+// keyGenerator, that means this whole limiter shares one bucket across the entire fleet: rolling
+// a new APK out to all drivers at once was enough for their combined login attempts to exhaust
+// the 15-per-15-min bucket in minutes, locking out drivers who never made more than one or two
+// attempts themselves. Cloudflare's CF-Connecting-IP header carries the real original visitor IP
+// regardless of hop count (same fix already used in server.js's traffic-report middleware and in
+// the VPN check above) — keying on that gives each real device its own independent bucket.
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 15,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(req.headers['cf-connecting-ip'] || req.ip),
     message: { message: 'Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos.' }
 });
 
