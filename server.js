@@ -41,30 +41,16 @@ app.set('trust proxy', 1);
 // crossOriginEmbedderPolicy stays off — this app embeds third-party map tiles/resources that
 // don't send CORP/COEP headers, and turning it on would silently block them.
 //
-// contentSecurityPolicy is enabled with an explicit allowlist built from every external
-// domain the frontend actually loads (index.html's <script>/<link> tags, Leaflet map tiles,
-// the OSRM routing/Nominatim geocoding calls made directly from the browser, Google Fonts).
-// 'unsafe-inline' is kept for scripts and styles: the ESM importmap in index.html and React's
-// inline style={{}} usage throughout the app both rely on it, and there's no per-request nonce
-// plumbing in this server to replace it with something stricter yet.
+// contentSecurityPolicy disabled again 2026-08-25: enabling it earlier tonight broke driver
+// photo uploads in production (browser-image-compression's Web Worker, blocked despite an
+// added worker-src allowance — real cause never fully confirmed under live-incident pressure,
+// with most of the driver fleet unable to close deliveries). Rolled back to the known-good
+// disabled state rather than keep iterating live. Re-enabling needs to happen with proper
+// device testing (real driver phones, real-size photos) outside of an active incident, not
+// guessed at again under pressure.
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com', 'https://cdn.sheetjs.com', 'https://aistudiocdn.com', 'https://static.cloudflareinsights.com'],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com', 'https://fonts.cdnfonts.com'],
-      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://fonts.cdnfonts.com', 'data:'],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-      connectSrc: ["'self'", 'https://router.project-osrm.org', 'https://nominatim.openstreetmap.org'],
-      objectSrc: ["'none'"],
-      frameAncestors: ["'self'"],
-      // Without this, worker-src falls back to script-src, which has no 'blob:' — and
-      // browser-image-compression (useWebWorker: true, used for every delivery photo) spins up
-      // its worker from a blob: URL. That silently broke photo upload for every driver.
-      workerSrc: ["'self'", 'blob:'],
-    },
-  },
+  contentSecurityPolicy: false,
 }));
 
 // Aggressively disable caching for all responses to solve stale asset issues.
