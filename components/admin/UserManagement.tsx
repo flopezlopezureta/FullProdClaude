@@ -313,6 +313,29 @@ const UserManagement: React.FC<UserManagementProps> = ({ roleFilter }) => {
     }
   };
 
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  const handleForceUpdateForAll = async (enabled: boolean) => {
+    const confirmMsg = enabled
+        ? '¿Activar el aviso de actualización para TODOS los conductores y auxiliares?\n\nLa próxima vez que abran la app se les pedirá instalar la última versión publicada.'
+        : '¿Desactivar el aviso de actualización para TODOS los conductores y auxiliares?';
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsBulkUpdating(true);
+    try {
+        const result = await api.forceAppUpdateForAll(enabled);
+        await fetchUsers();
+        alert(enabled
+            ? `Actualización activada para ${result.updated} usuarios.`
+            : `Actualización desactivada para ${result.updated} usuarios.`);
+    } catch (error: any) {
+        console.error('Failed to set fleet-wide update flag', error);
+        alert('Error al actualizar la flota: ' + (error.message || 'Error desconocido'));
+    } finally {
+        setIsBulkUpdating(false);
+    }
+  };
+
   const handleCopyRegistrationLink = (user: User) => {
     const registrationUrl = `${window.location.origin}/?mode=register&email=${encodeURIComponent(user.email)}`;
     navigator.clipboard.writeText(registrationUrl);
@@ -491,6 +514,42 @@ const wb = XLSX.utils.book_new();
           )}
         </div>
       </div>
+
+      {/* Actualización masiva de la app — evita tener que entrar al perfil de cada conductor
+          uno por uno cuando hay que repartir una versión nueva con urgencia. */}
+      {(roleFilter === Role.Driver || roleFilter === Role.Auxiliar) && auth?.user?.role === Role.Admin && (
+        <div className="mb-4 p-4 bg-[var(--background-secondary)] shadow-md rounded-lg border-l-4 border-blue-500">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+                <IconDownload className="w-5 h-5 text-blue-500" />
+                Actualización de la App para toda la flota
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-1">
+                Activa o desactiva el aviso de actualización para todos los conductores y auxiliares
+                a la vez. Publica primero el APK nuevo en Herramientas → Actualizaciones de la App.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleForceUpdateForAll(true)}
+                disabled={isBulkUpdating}
+                className="inline-flex items-center px-4 py-2 text-sm font-bold rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                {isBulkUpdating ? 'Aplicando...' : 'Activar para TODOS'}
+              </button>
+              <button
+                onClick={() => handleForceUpdateForAll(false)}
+                disabled={isBulkUpdating}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md border border-[var(--border-secondary)] text-[var(--text-secondary)] hover:bg-[var(--background-hover)] disabled:opacity-50 whitespace-nowrap"
+              >
+                Desactivar para todos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-[var(--background-secondary)] shadow-md rounded-lg">
         <div className="divide-y divide-[var(--border-primary)]">
           {isLoading ? (

@@ -5,6 +5,7 @@ const path = require('path');
 const multer = require('multer');
 const authMiddleware = require('../middleware/auth');
 const db = require('../db');
+const { logAction } = require('../services/logger');
 
 // Files live outside the git repo, on a persistent volume, so uploading a new APK
 // (replace latest.apk + edit version.json) survives every code redeploy without
@@ -96,6 +97,44 @@ router.get('/check', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('[AppUpdates] Error checking update eligibility:', err);
         res.status(500).json({ message: 'Error al verificar actualización.' });
+    }
+});
+
+// POST /api/app-updates/force-all
+// Admin only — activa (o desactiva) el aviso de actualización para TODA la flota de una vez.
+// Antes esto sólo se podía hacer conductor por conductor desde Gestión de Usuarios, lo que con
+// una flota completa tomaba demasiado tiempo justo cuando una actualización es urgente.
+// Cubre las variantes de rol que existen en la base ('CHOFER'/'CONDUCTOR' además de 'DRIVER'),
+// porque el rol se normaliza al leer el token pero se guarda tal cual se creó el usuario.
+router.post('/force-all', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado. Se requiere rol de administrador.' });
+    }
+
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ message: 'El parámetro "enabled" debe ser true o false.' });
+    }
+
+    try {
+        const { rowCount } = await db.query(
+            `UPDATE users SET "forceAppUpdate" = $1
+             WHERE UPPER(role) IN ('DRIVER', 'CHOFER', 'CONDUCTOR', 'AUXILIAR')`,
+            [enabled]
+        );
+        // El token sólo lleva { id, role } — el nombre hay que buscarlo para que el registro de
+        // auditoría no quede en blanco (misma razón que requireSuperUser arriba).
+        const { rows: actorRows } = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+        await logAction(
+            req.user.id,
+            actorRows[0]?.name || req.user.id,
+            enabled ? 'FORCE_APP_UPDATE_ALL_ON' : 'FORCE_APP_UPDATE_ALL_OFF',
+            { affectedUsers: rowCount }
+        );
+        res.json({ updated: rowCount, enabled });
+    } catch (err) {
+        console.error('[AppUpdates] Error setting fleet-wide update flag:', err);
+        res.status(500).json({ message: 'Error al actualizar la flota completa.' });
     }
 });
 

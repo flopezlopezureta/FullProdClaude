@@ -491,6 +491,10 @@ export const api = {
     version: { versionCode: number; versionName: string; mandatory: boolean; apkUrl: string; notes: string } | null;
     apk: { exists: boolean; sizeBytes?: number; modifiedAt?: string };
   }>('/app-updates/admin-status'),
+  // Activa/desactiva el aviso de actualización para toda la flota de una sola vez, en vez de
+  // tener que entrar al perfil de cada conductor.
+  forceAppUpdateForAll: (enabled: boolean) =>
+    post<{ updated: number; enabled: boolean }>('/app-updates/force-all', { enabled }),
   getNetworkMetricsReport: () => get<{
     byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null; users?: string[] }[];
     byHour: { hour: number; requestCount: number; avgMs: number; errorRate: number }[];
