@@ -60,10 +60,43 @@ const DriverMobileLayout: React.FC = () => {
         checkUpdate();
     }, [user]);
 
+    // null = todavía no empezó; 0-100 = descargando dentro de la app.
+    const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+    const [updateError, setUpdateError] = useState<string | null>(null);
+
+    // El wrapper nativo reporta el avance de la descarga llamando a estas funciones globales.
+    useEffect(() => {
+        // @ts-ignore
+        window.onApkDownloadProgress = (pct: number) => {
+            setUpdateError(null);
+            setUpdateProgress(Math.max(0, Math.min(100, Math.round(pct))));
+        };
+        // @ts-ignore
+        window.onApkDownloadError = (msg: string) => {
+            setUpdateProgress(null);
+            setUpdateError(msg || 'No se pudo descargar la actualización.');
+        };
+        return () => {
+            // @ts-ignore
+            delete window.onApkDownloadProgress;
+            // @ts-ignore
+            delete window.onApkDownloadError;
+        };
+    }, []);
+
     const handleInstallUpdate = () => {
         if (!appUpdateInfo?.apkUrl) return;
+        setUpdateError(null);
         // @ts-ignore
-        window.AndroidApp.openUrl(appUpdateInfo.apkUrl);
+        const android = window.AndroidApp;
+        // Camino nuevo: la app descarga e instala sola, sin salir al navegador. Los conductores
+        // que aún tengan un APK anterior no tienen este método, así que caen al camino de antes.
+        if (android && typeof android.downloadAndInstallApk === 'function') {
+            setUpdateProgress(0);
+            android.downloadAndInstallApk(appUpdateInfo.apkUrl);
+        } else {
+            android.openUrl(appUpdateInfo.apkUrl);
+        }
     };
 
     // Android's WebView can get killed and recreated when the driver switches to another
@@ -249,19 +282,44 @@ const DriverMobileLayout: React.FC = () => {
                         {appUpdateInfo.notes && (
                             <p className="text-sm text-[var(--text-secondary)] mb-4">{appUpdateInfo.notes}</p>
                         )}
-                        <button
-                            onClick={handleInstallUpdate}
-                            className="w-full px-4 py-3 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-lg hover:bg-[var(--brand-secondary)] transition-colors"
-                        >
-                            Descargar e instalar
-                        </button>
-                        {!appUpdateInfo.mandatory && (
-                            <button
-                                onClick={() => setAppUpdateInfo(null)}
-                                className="w-full mt-2 px-4 py-2 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-                            >
-                                Más tarde
-                            </button>
+                        {updateError && (
+                            <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 mb-3">{updateError}</p>
+                        )}
+
+                        {updateProgress === null ? (
+                            <>
+                                <button
+                                    onClick={handleInstallUpdate}
+                                    className="w-full px-4 py-3 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-lg hover:bg-[var(--brand-secondary)] transition-colors"
+                                >
+                                    Descargar e instalar
+                                </button>
+                                {!appUpdateInfo.mandatory && (
+                                    <button
+                                        onClick={() => setAppUpdateInfo(null)}
+                                        className="w-full mt-2 px-4 py-2 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                                    >
+                                        Más tarde
+                                    </button>
+                                )}
+                            </>
+                        ) : (
+                            <div className="space-y-2">
+                                <div className="w-full h-3 bg-[var(--background-muted)] rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-[var(--brand-primary)] transition-all duration-200"
+                                        style={{ width: `${updateProgress}%` }}
+                                    />
+                                </div>
+                                <p className="text-sm font-bold text-[var(--text-primary)]">
+                                    {updateProgress < 100
+                                        ? `Descargando... ${updateProgress}%`
+                                        : 'Instalando — confirma en la pantalla del sistema'}
+                                </p>
+                                <p className="text-xs text-[var(--text-muted)]">
+                                    No cierres la aplicación. Al terminar se reiniciará sola.
+                                </p>
+                            </div>
                         )}
                     </div>
                 </div>
