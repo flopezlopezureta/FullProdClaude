@@ -49,11 +49,7 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
     const compressionOptions = {
         maxSizeMB: 1,
         maxWidthOrHeight: 1200,
-        // Web Workers created from a blob: URL aren't reliably supported by every Android
-        // System WebView version drivers run — on the ones that don't, compression fails
-        // silently for every photo. Running on the main thread costs a brief pause instead
-        // of a background thread, but works everywhere.
-        useWebWorker: false,
+        useWebWorker: true,
         initialQuality: 0.8
     };
 
