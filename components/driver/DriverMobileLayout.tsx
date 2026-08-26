@@ -89,14 +89,12 @@ const DriverMobileLayout: React.FC = () => {
         setUpdateError(null);
         // @ts-ignore
         const android = window.AndroidApp;
-        // Camino nuevo: la app descarga e instala sola, sin salir al navegador. Los conductores
-        // que aún tengan un APK anterior no tienen este método, así que caen al camino de antes.
-        if (android && typeof android.downloadAndInstallApk === 'function') {
-            setUpdateProgress(0);
-            android.downloadAndInstallApk(appUpdateInfo.apkUrl);
-        } else {
-            android.openUrl(appUpdateInfo.apkUrl);
-        }
+        // El camino nuevo (descargar e instalar dentro de la app, sin Chrome) todavía no
+        // completa bien la confirmación de instalación en pruebas reales — 2026-08-26, en
+        // apkGalleryFixRegression queda la nota completa. Desactivado a propósito hasta
+        // resolverlo con calma; usa siempre el camino de Chrome mientras tanto, que es el que
+        // ya se sabe que funciona de punta a punta.
+        android.openUrl(appUpdateInfo.apkUrl);
     };
 
     // Android's WebView can get killed and recreated when the driver switches to another
