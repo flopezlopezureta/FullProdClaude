@@ -6,6 +6,7 @@ const multer = require('multer');
 const authMiddleware = require('../middleware/auth');
 const db = require('../db');
 const { logAction } = require('../services/logger');
+const { getVersionCodeFromApk } = require('../services/apkManifestReader');
 
 // Files live outside the git repo, on a persistent volume, so uploading a new APK
 // (replace latest.apk + edit version.json) survives every code redeploy without
@@ -172,12 +173,6 @@ router.post('/upload', authMiddleware, requireSuperUser, upload.single('apk'), a
             return res.status(400).json({ message: 'Falta el archivo APK.' });
         }
 
-        const versionCode = parseInt(req.body.versionCode, 10);
-        if (!Number.isInteger(versionCode) || versionCode < 1) {
-            cleanup();
-            return res.status(400).json({ message: 'El número de versión (versionCode) debe ser un entero positivo.' });
-        }
-
         // APKs are ZIP files under the hood — a real one always starts with the ZIP magic bytes.
         // Catches "accidentally selected the wrong file" before it ever reaches a driver's phone.
         const header = Buffer.alloc(4);
@@ -188,6 +183,22 @@ router.post('/upload', authMiddleware, requireSuperUser, upload.single('apk'), a
         if (!isZip || req.file.size < 1024 * 1024) {
             cleanup();
             return res.status(400).json({ message: 'El archivo no parece ser un APK válido (muy pequeño o no es un paquete Android/ZIP).' });
+        }
+
+        // El versionCode se lee del propio APK, nunca del número que se escribió en el
+        // formulario — un número mal digitado (o el archivo equivocado con la etiqueta
+        // correcta) llevaba a un bucle infinito de "hay actualización" en el teléfono, porque
+        // el servidor comparaba contra un número que el archivo real nunca iba a alcanzar.
+        let versionCode;
+        try {
+            versionCode = getVersionCodeFromApk(tempPath);
+        } catch (readErr) {
+            cleanup();
+            return res.status(400).json({ message: `No se pudo leer la versión real del APK: ${readErr.message}` });
+        }
+        if (!Number.isInteger(versionCode) || versionCode < 1) {
+            cleanup();
+            return res.status(400).json({ message: 'El APK no tiene un versionCode válido en su AndroidManifest.xml.' });
         }
 
         const versionPath = path.join(UPDATES_DIR, 'version.json');

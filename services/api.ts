@@ -524,10 +524,11 @@ export const api = {
     durationMs: number | null;
     createdAt: string;
   }[]>('/emergency-lookups'),
-  publishAppUpdate: async (file: File, data: { versionCode: number; versionName: string; mandatory: boolean; notes: string; force?: boolean }) => {
+  // versionCode ya no se envía: el servidor lo lee directo del AndroidManifest.xml dentro del
+  // propio APK. Escribirlo a mano fue la causa de dos bucles de actualización infinita reales.
+  publishAppUpdate: async (file: File, data: { versionName: string; mandatory: boolean; notes: string; force?: boolean }) => {
     const formData = new FormData();
     formData.append('apk', file);
-    formData.append('versionCode', String(data.versionCode));
     formData.append('versionName', data.versionName);
     formData.append('mandatory', String(data.mandatory));
     formData.append('notes', data.notes);

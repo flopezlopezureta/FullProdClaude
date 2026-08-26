@@ -17,23 +17,19 @@ const AppUpdatesPage: React.FC = () => {
     const [isLoadingStatus, setIsLoadingStatus] = useState(true);
 
     const [file, setFile] = useState<File | null>(null);
-    const [versionCode, setVersionCode] = useState('');
     const [versionName, setVersionName] = useState('');
     const [notes, setNotes] = useState('');
     const [mandatory, setMandatory] = useState(true);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-    const [conflict, setConflict] = useState<{ currentVersionCode: number } | null>(null);
+    const [conflict, setConflict] = useState<{ currentVersionCode: number; message: string } | null>(null);
 
     const loadStatus = useCallback(async () => {
         setIsLoadingStatus(true);
         try {
             const data = await api.getAppUpdatesStatus();
             setStatus(data);
-            // Pre-fill the next versionCode so it's never accidentally left at the old one.
-            const nextCode = (data.version?.versionCode || 0) + 1;
-            setVersionCode(String(nextCode));
         } catch (e: any) {
             setResult({ type: 'error', message: e.message || 'No se pudo cargar el estado actual.' });
         } finally {
@@ -52,19 +48,13 @@ const AppUpdatesPage: React.FC = () => {
 
     const doPublish = async (force = false) => {
         if (!file) return;
-        const code = parseInt(versionCode, 10);
-        if (!Number.isInteger(code) || code < 1) {
-            setResult({ type: 'error', message: 'El número de versión debe ser un entero positivo.' });
-            return;
-        }
 
         setIsSubmitting(true);
         setResult(null);
         setConflict(null);
         try {
             const res = await api.publishAppUpdate(file, {
-                versionCode: code,
-                versionName: versionName.trim() || String(code),
+                versionName: versionName.trim(),
                 mandatory,
                 notes: notes.trim(),
                 force,
@@ -74,7 +64,7 @@ const AppUpdatesPage: React.FC = () => {
             await loadStatus();
         } catch (e: any) {
             if (e.status === 409 && e.body?.currentVersionCode !== undefined) {
-                setConflict({ currentVersionCode: e.body.currentVersionCode });
+                setConflict({ currentVersionCode: e.body.currentVersionCode, message: e.message || '' });
             } else {
                 setResult({ type: 'error', message: e.message || 'Error al publicar la actualización.' });
             }
@@ -130,31 +120,27 @@ const AppUpdatesPage: React.FC = () => {
                         className="w-full text-sm text-[var(--text-secondary)] file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-[var(--brand-primary)] file:text-white file:font-semibold hover:file:opacity-90"
                         required
                     />
-                    {file && <p className="text-xs text-[var(--text-muted)] mt-1">{file.name} — {formatBytes(file.size)}</p>}
+                    {file && (
+                        <p className="text-xs text-[var(--text-muted)] mt-1 flex items-center gap-1">
+                            {file.name} — {formatBytes(file.size)}
+                        </p>
+                    )}
+                    <p className="text-xs text-[var(--text-muted)] mt-1">
+                        El número de versión (versionCode) ya no se escribe a mano — el servidor lo lee directo
+                        del archivo APK al publicarlo, para que nunca quede desalineado con lo que realmente
+                        instalan los teléfonos.
+                    </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">versionCode</label>
-                        <input
-                            type="number"
-                            value={versionCode}
-                            onChange={(e) => setVersionCode(e.target.value)}
-                            min={1}
-                            className="w-full px-3 py-2 border border-[var(--border-secondary)] rounded-md bg-[var(--background-secondary)] text-[var(--text-primary)]"
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Nombre de versión</label>
-                        <input
-                            type="text"
-                            value={versionName}
-                            onChange={(e) => setVersionName(e.target.value)}
-                            placeholder="ej: 1.3"
-                            className="w-full px-3 py-2 border border-[var(--border-secondary)] rounded-md bg-[var(--background-secondary)] text-[var(--text-primary)]"
-                        />
-                    </div>
+                <div>
+                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Nombre de versión (opcional, solo para mostrar)</label>
+                    <input
+                        type="text"
+                        value={versionName}
+                        onChange={(e) => setVersionName(e.target.value)}
+                        placeholder="ej: 1.3"
+                        className="w-full px-3 py-2 border border-[var(--border-secondary)] rounded-md bg-[var(--background-secondary)] text-[var(--text-primary)]"
+                    />
                 </div>
 
                 <div>
@@ -175,7 +161,7 @@ const AppUpdatesPage: React.FC = () => {
 
                 {conflict && (
                     <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-md p-3 text-sm">
-                        <p className="font-semibold mb-2">El versionCode {versionCode} no es mayor al publicado actualmente ({conflict.currentVersionCode}). Los teléfonos no detectarán esta actualización.</p>
+                        <p className="font-semibold mb-2">{conflict.message || `El versionCode del archivo no es mayor al publicado actualmente (${conflict.currentVersionCode}). Los teléfonos no detectarán esta actualización.`}</p>
                         <button type="button" onClick={() => doPublish(true)} className="px-3 py-1.5 bg-amber-600 text-white rounded-md text-xs font-bold hover:bg-amber-700">
                             Publicar de todas formas
                         </button>
