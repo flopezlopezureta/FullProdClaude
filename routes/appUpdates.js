@@ -80,6 +80,15 @@ router.get('/check', authMiddleware, async (req, res) => {
     }
 
     try {
+        // Guardado en cada consulta, tenga o no forceAppUpdate activo — es la única vez que el
+        // teléfono le dice al servidor qué versión tiene realmente instalada. Sin esto, después
+        // de repartir una actualización no había forma de saber quién la tomó y quién no salvo
+        // preguntándole a cada conductor uno por uno.
+        db.query(
+            'UPDATE users SET "lastKnownAppVersionCode" = $1, "lastAppVersionCheckAt" = NOW() WHERE id = $2',
+            [clientVersionCode, req.user.id]
+        ).catch(err => console.error('[AppUpdates] No se pudo registrar la versión del cliente:', err));
+
         const { rows } = await db.query('SELECT "forceAppUpdate" FROM users WHERE id = $1', [req.user.id]);
         if (!rows[0]?.forceAppUpdate) {
             return res.json({ shouldUpdate: false });
@@ -98,6 +107,36 @@ router.get('/check', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('[AppUpdates] Error checking update eligibility:', err);
         res.status(500).json({ message: 'Error al verificar actualización.' });
+    }
+});
+
+// GET /api/app-updates/fleet-status
+// Super-admin only — qué versión reporta cada conductor/auxiliar y cuándo fue la última vez que
+// la app abrió y le avisó al servidor. No es un dato en tiempo real (solo se actualiza cuando la
+// app hace su chequeo normal al abrirse), pero es lo único que existe para saber quién realmente
+// tomó una actualización sin tener que preguntarle uno por uno — justo lo que faltó la noche del
+// incidente de la actualización obligatoria masiva.
+router.get('/fleet-status', authMiddleware, requireSuperUser, async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT id, name, email, role, "lastKnownAppVersionCode", "lastAppVersionCheckAt", "forceAppUpdate"
+             FROM users
+             WHERE UPPER(role) IN ('DRIVER', 'CHOFER', 'CONDUCTOR', 'AUXILIAR')
+             ORDER BY "lastAppVersionCheckAt" DESC NULLS LAST`
+        );
+
+        let latestVersionCode = null;
+        const versionPath = path.join(UPDATES_DIR, 'version.json');
+        if (fs.existsSync(versionPath)) {
+            try {
+                latestVersionCode = JSON.parse(fs.readFileSync(versionPath, 'utf8')).versionCode || null;
+            } catch (e) { /* deja latestVersionCode en null si el archivo está corrupto */ }
+        }
+
+        res.json({ latestVersionCode, drivers: rows });
+    } catch (err) {
+        console.error('[AppUpdates] Error al obtener el estado de la flota:', err);
+        res.status(500).json({ message: 'Error al obtener el estado de la flota.' });
     }
 });
 

@@ -7,9 +7,24 @@ interface LiveStatus {
     apk: { exists: boolean; sizeBytes?: number; modifiedAt?: string };
 }
 
+interface FleetDriver {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    lastKnownAppVersionCode: number | null;
+    lastAppVersionCheckAt: string | null;
+    forceAppUpdate: boolean;
+}
+
 const formatBytes = (bytes?: number) => {
     if (!bytes) return '—';
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const formatCheckDate = (iso: string | null) => {
+    if (!iso) return 'Nunca';
+    return new Date(iso).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' });
 };
 
 const AppUpdatesPage: React.FC = () => {
@@ -39,6 +54,31 @@ const AppUpdatesPage: React.FC = () => {
 
     useEffect(() => { loadStatus(); }, [loadStatus]);
 
+    const [fleet, setFleet] = useState<{ latestVersionCode: number | null; drivers: FleetDriver[] } | null>(null);
+    const [isLoadingFleet, setIsLoadingFleet] = useState(true);
+    const [fleetFilter, setFleetFilter] = useState<'all' | 'outdated' | 'updated'>('all');
+
+    const loadFleet = useCallback(async () => {
+        setIsLoadingFleet(true);
+        try {
+            const data = await api.getAppUpdatesFleetStatus();
+            setFleet(data);
+        } catch (e) {
+            // No es crítico para el resto de la página — se deja la tabla vacía en vez de
+            // tapar el formulario de publicación con un error.
+        } finally {
+            setIsLoadingFleet(false);
+        }
+    }, []);
+
+    useEffect(() => { loadFleet(); }, [loadFleet]);
+
+    const visibleDrivers = (fleet?.drivers || []).filter(d => {
+        if (fleetFilter === 'all') return true;
+        const isUpToDate = fleet?.latestVersionCode != null && d.lastKnownAppVersionCode === fleet.latestVersionCode;
+        return fleetFilter === 'updated' ? isUpToDate : !isUpToDate;
+    });
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0] || null;
         setFile(f);
@@ -62,6 +102,7 @@ const AppUpdatesPage: React.FC = () => {
             setResult({ type: 'success', message: res.message });
             setFile(null);
             await loadStatus();
+            await loadFleet();
         } catch (e: any) {
             if (e.status === 409 && e.body?.currentVersionCode !== undefined) {
                 setConflict({ currentVersionCode: e.body.currentVersionCode, message: e.message || '' });
@@ -184,6 +225,80 @@ const AppUpdatesPage: React.FC = () => {
                     {isSubmitting ? 'Publicando...' : 'Publicar Actualización'}
                 </button>
             </form>
+
+            <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-lg p-5 mt-6">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h2 className="text-sm font-bold text-[var(--text-primary)] uppercase tracking-wide">Quién ya actualizó</h2>
+                    <div className="flex items-center gap-2">
+                        <select
+                            value={fleetFilter}
+                            onChange={(e) => setFleetFilter(e.target.value as any)}
+                            className="text-xs px-2 py-1.5 border border-[var(--border-secondary)] rounded-md bg-[var(--background-secondary)] text-[var(--text-primary)]"
+                        >
+                            <option value="all">Todos</option>
+                            <option value="updated">Al día</option>
+                            <option value="outdated">Atrasados</option>
+                        </select>
+                        <button onClick={loadFleet} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]" aria-label="Actualizar" disabled={isLoadingFleet}>
+                            <IconRefresh className={`w-4 h-4 ${isLoadingFleet ? 'animate-spin' : ''}`} />
+                        </button>
+                    </div>
+                </div>
+
+                <p className="text-xs text-[var(--text-muted)] mb-4">
+                    Se actualiza solo cuando cada conductor abre la app — no es en tiempo real. "Nunca" significa
+                    que esa cuenta no ha abierto la app desde que se agregó este seguimiento.
+                </p>
+
+                {isLoadingFleet ? (
+                    <p className="text-sm text-[var(--text-muted)]">Cargando...</p>
+                ) : visibleDrivers.length === 0 ? (
+                    <p className="text-sm text-[var(--text-muted)]">No hay conductores en este filtro.</p>
+                ) : (
+                    <div className="overflow-x-auto -mx-5">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="text-left text-[var(--text-muted)] text-xs uppercase tracking-wide border-b border-[var(--border-primary)]">
+                                    <th className="px-5 py-2 font-semibold">Conductor</th>
+                                    <th className="px-5 py-2 font-semibold">Versión instalada</th>
+                                    <th className="px-5 py-2 font-semibold">Última vez visto</th>
+                                    <th className="px-5 py-2 font-semibold">Aviso forzado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visibleDrivers.map(d => {
+                                    const isUpToDate = fleet?.latestVersionCode != null && d.lastKnownAppVersionCode === fleet.latestVersionCode;
+                                    return (
+                                        <tr key={d.id} className="border-b border-[var(--border-primary)] last:border-0">
+                                            <td className="px-5 py-2">
+                                                <div className="font-medium text-[var(--text-primary)]">{d.name}</div>
+                                                <div className="text-xs text-[var(--text-muted)]">{d.email}</div>
+                                            </td>
+                                            <td className="px-5 py-2">
+                                                {d.lastKnownAppVersionCode == null ? (
+                                                    <span className="text-[var(--text-muted)]">—</span>
+                                                ) : (
+                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${isUpToDate ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                                                        {d.lastKnownAppVersionCode}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="px-5 py-2 text-[var(--text-secondary)]">{formatCheckDate(d.lastAppVersionCheckAt)}</td>
+                                            <td className="px-5 py-2">
+                                                {d.forceAppUpdate ? (
+                                                    <span className="text-blue-600 dark:text-blue-400 font-semibold text-xs">Activo</span>
+                                                ) : (
+                                                    <span className="text-[var(--text-muted)] text-xs">—</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

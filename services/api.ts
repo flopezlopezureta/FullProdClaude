@@ -495,6 +495,12 @@ export const api = {
   // tener que entrar al perfil de cada conductor.
   forceAppUpdateForAll: (enabled: boolean) =>
     post<{ updated: number; enabled: boolean }>('/app-updates/force-all', { enabled }),
+  // Qué versión reporta cada conductor y cuándo — para saber quién realmente actualizó sin
+  // preguntarle uno por uno.
+  getAppUpdatesFleetStatus: () => get<{
+    latestVersionCode: number | null;
+    drivers: { id: string; name: string; email: string; role: string; lastKnownAppVersionCode: number | null; lastAppVersionCheckAt: string | null; forceAppUpdate: boolean }[];
+  }>('/app-updates/fleet-status'),
   getNetworkMetricsReport: () => get<{
     byIp: { ip: string; requestCount: number; avgMs: number; maxMs: number; errorRate: number; errorCount: number; firstSeen: number; lastSeen: number; isp?: string | null; org?: string | null; city?: string | null; users?: string[] }[];
     byHour: { hour: number; requestCount: number; avgMs: number; errorRate: number }[];

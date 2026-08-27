@@ -501,7 +501,9 @@ async function initializeDatabase() {
                 'lastLocationUpdate TIMESTAMPTZ',
                 'integrations JSONB',
                 'createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP',
-                'forceAppUpdate BOOLEAN DEFAULT false'
+                'forceAppUpdate BOOLEAN DEFAULT false',
+                'lastKnownAppVersionCode INTEGER',
+                'lastAppVersionCheckAt TIMESTAMPTZ'
             ];
             for (const spec of userCols) {
                 const col = spec.split(' ')[0];
