@@ -476,9 +476,18 @@ const DriverMobileLayout: React.FC = () => {
                                         Lets you tell at a glance which one you're looking at, and confirms which
                                         version actually loaded — same version number either way since the wrapper
                                         just displays this same web app, but the prefix disambiguates the channel. */}
-                                    <span className="absolute top-4 right-4 z-20 text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
-                                        {typeof window !== 'undefined' && (window as any).AndroidApp ? 'AN' : 'AW'}{(import.meta as any).env.VITE_APP_VERSION}
-                                    </span>
+                                    <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-1">
+                                        <span className="text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
+                                            {typeof window !== 'undefined' && (window as any).AndroidApp ? 'AN' : 'AW'}{(import.meta as any).env.VITE_APP_VERSION}
+                                        </span>
+                                        {/* Versión real del APK instalado (distinta de la versión de la parte web de arriba) —
+                                            pedida para poder confirmarla de un vistazo sin ir a Ajustes de Android. */}
+                                        {typeof window !== 'undefined' && (window as any).AndroidApp?.getVersionCode && (
+                                            <span className="text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded-full">
+                                                APK v{(window as any).AndroidApp.getVersionCode()}
+                                            </span>
+                                        )}
+                                    </div>
                                     <IconCube className="absolute -right-4 -bottom-4 w-32 h-32 text-white opacity-10 rotate-12" />
                                 </div>
                             );
