@@ -102,16 +102,15 @@ router.get('/check', authMiddleware, async (req, res) => {
 });
 
 // POST /api/app-updates/force-all
-// Admin only — activa (o desactiva) el aviso de actualización para TODA la flota de una vez.
-// Antes esto sólo se podía hacer conductor por conductor desde Gestión de Usuarios, lo que con
-// una flota completa tomaba demasiado tiempo justo cuando una actualización es urgente.
+// Super-admin only — activa (o desactiva) el aviso de actualización para TODA la flota de una
+// vez. Antes esto sólo se podía hacer conductor por conductor desde Gestión de Usuarios, lo que
+// con una flota completa tomaba demasiado tiempo justo cuando una actualización es urgente.
+// Restringido al súper admin (no cualquier ADMIN) después de un incidente real: un admin
+// regular lo activó apuntando a una versión que todavía no se había probado de punta a punta, y
+// dejó a toda la flota de conductores atascada en un aviso de actualización que nunca avanzaba.
 // Cubre las variantes de rol que existen en la base ('CHOFER'/'CONDUCTOR' además de 'DRIVER'),
 // porque el rol se normaliza al leer el token pero se guarda tal cual se creó el usuario.
-router.post('/force-all', authMiddleware, async (req, res) => {
-    if (req.user.role !== 'ADMIN') {
-        return res.status(403).json({ message: 'Acceso denegado. Se requiere rol de administrador.' });
-    }
-
+router.post('/force-all', authMiddleware, requireSuperUser, async (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled !== 'boolean') {
         return res.status(400).json({ message: 'El parámetro "enabled" debe ser true o false.' });

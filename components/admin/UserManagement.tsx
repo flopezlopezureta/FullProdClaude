@@ -516,8 +516,11 @@ const wb = XLSX.utils.book_new();
       </div>
 
       {/* Actualización masiva de la app — evita tener que entrar al perfil de cada conductor
-          uno por uno cuando hay que repartir una versión nueva con urgencia. */}
-      {(roleFilter === Role.Driver || roleFilter === Role.Auxiliar) && auth?.user?.role === Role.Admin && (
+          uno por uno cuando hay que repartir una versión nueva con urgencia. Solo el
+          súper admin: un admin regular activándola sin verificar primero que la versión
+          publicada funcione de punta a punta puede dejar a toda la flota bloqueada de golpe
+          (pasó de verdad — toda la flota atascada en un aviso de actualización que no avanzaba). */}
+      {(roleFilter === Role.Driver || roleFilter === Role.Auxiliar) && (auth?.user?.email === 'admin' || auth?.user?.email === 'admin@admin.cl') && (
         <div className="mb-4 p-4 bg-[var(--background-secondary)] shadow-md rounded-lg border-l-4 border-blue-500">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
