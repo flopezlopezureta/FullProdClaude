@@ -90,6 +90,24 @@ const DriverMobileLayout: React.FC = () => {
         };
     }, []);
 
+    // Si la descarga se queda en 0% sin moverse (el puente nativo se atascó o falló en
+    // silencio, sin llegar siquiera a llamar al primer registro de depuración), después de 15
+    // segundos se avisa solo en vez de dejar al conductor mirando una barra que nunca avanza sin
+    // ninguna pista de qué hacer.
+    useEffect(() => {
+        if (updateProgress !== 0) return;
+        const timer = setTimeout(() => {
+            setUpdateProgress((current) => {
+                if (current === 0) {
+                    setUpdateError('La descarga no está avanzando. Prueba instalar por el navegador.');
+                    return null;
+                }
+                return current;
+            });
+        }, 15000);
+        return () => clearTimeout(timer);
+    }, [updateProgress]);
+
     const handleInstallUpdate = () => {
         if (!appUpdateInfo?.apkUrl) return;
         setUpdateError(null);
@@ -102,7 +120,16 @@ const DriverMobileLayout: React.FC = () => {
         if (android && typeof android.downloadAndInstallApk === 'function') {
             setUpdateProgress(0);
             const token = localStorage.getItem('token') || '';
-            android.downloadAndInstallApk(appUpdateInfo.apkUrl, token);
+            try {
+                android.downloadAndInstallApk(appUpdateInfo.apkUrl, token);
+            } catch (e: any) {
+                // Si el puente nativo falla al invocarse (no la descarga en sí, sino la llamada
+                // misma), antes esto se quedaba pegado en "Descargando 0%" para siempre, sin
+                // ningún mensaje — ni un registro de depuración, porque ni siquiera llegó a
+                // empezar. Ahora al menos se ve un error y queda visible el botón de Chrome.
+                setUpdateProgress(null);
+                setUpdateError('No se pudo iniciar la instalación (' + (e?.message || 'error desconocido') + ').');
+            }
         } else {
             android.openUrl(appUpdateInfo.apkUrl);
         }
