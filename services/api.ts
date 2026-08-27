@@ -495,6 +495,10 @@ export const api = {
   // tener que entrar al perfil de cada conductor.
   forceAppUpdateForAll: (enabled: boolean) =>
     post<{ updated: number; enabled: boolean }>('/app-updates/force-all', { enabled }),
+  // El wrapper nativo reporta cada paso del intento de instalación corta — para poder ver a
+  // control remoto en qué paso se detiene, sin tener el teléfono conectado a una computadora.
+  logAppUpdateInstallDebug: (step: string, detail?: string) =>
+    post<{ ok: boolean }>('/app-updates/debug-log', { step, detail }),
   // Qué versión reporta cada conductor y cuándo — para saber quién realmente actualizó sin
   // preguntarle uno por uno.
   getAppUpdatesFleetStatus: () => get<{

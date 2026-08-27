@@ -76,11 +76,17 @@ const DriverMobileLayout: React.FC = () => {
             setUpdateProgress(null);
             setUpdateError(msg || 'No se pudo descargar la actualización.');
         };
+        // @ts-ignore
+        window.onApkInstallDebugStep = (step: string, detail?: string) => {
+            api.logAppUpdateInstallDebug(step, detail).catch(() => {});
+        };
         return () => {
             // @ts-ignore
             delete window.onApkDownloadProgress;
             // @ts-ignore
             delete window.onApkDownloadError;
+            // @ts-ignore
+            delete window.onApkInstallDebugStep;
         };
     }, []);
 
@@ -89,12 +95,25 @@ const DriverMobileLayout: React.FC = () => {
         setUpdateError(null);
         // @ts-ignore
         const android = window.AndroidApp;
-        // El camino nuevo (descargar e instalar dentro de la app, sin Chrome) todavía no
-        // completa bien la confirmación de instalación en pruebas reales — 2026-08-26, en
-        // apkGalleryFixRegression queda la nota completa. Desactivado a propósito hasta
-        // resolverlo con calma; usa siempre el camino de Chrome mientras tanto, que es el que
-        // ya se sabe que funciona de punta a punta.
-        android.openUrl(appUpdateInfo.apkUrl);
+        // Reactivado con registro de depuración (2026-08-26) — solo lo ve quien un admin marcó
+        // manualmente con el interruptor individual, así que no afecta al resto de la flota
+        // mientras se sigue probando. Si algo falla, hay un botón para caer al camino de Chrome
+        // manualmente (ver el bloque de updateError más abajo).
+        if (android && typeof android.downloadAndInstallApk === 'function') {
+            setUpdateProgress(0);
+            const token = localStorage.getItem('token') || '';
+            android.downloadAndInstallApk(appUpdateInfo.apkUrl, token);
+        } else {
+            android.openUrl(appUpdateInfo.apkUrl);
+        }
+    };
+
+    const handleInstallUpdateViaChrome = () => {
+        if (!appUpdateInfo?.apkUrl) return;
+        setUpdateError(null);
+        setUpdateProgress(null);
+        // @ts-ignore
+        window.AndroidApp.openUrl(appUpdateInfo.apkUrl);
     };
 
     // Android's WebView can get killed and recreated when the driver switches to another
@@ -292,6 +311,12 @@ const DriverMobileLayout: React.FC = () => {
                                 >
                                     Descargar e instalar
                                 </button>
+                                <button
+                                    onClick={handleInstallUpdateViaChrome}
+                                    className="w-full mt-2 px-4 py-2 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors underline"
+                                >
+                                    ¿No funciona? Instalar por el navegador
+                                </button>
                                 {!appUpdateInfo.mandatory && (
                                     <button
                                         onClick={() => setAppUpdateInfo(null)}
@@ -317,6 +342,14 @@ const DriverMobileLayout: React.FC = () => {
                                 <p className="text-xs text-[var(--text-muted)]">
                                     No cierres la aplicación. Al terminar se reiniciará sola.
                                 </p>
+                                {updateProgress === 100 && (
+                                    <button
+                                        onClick={handleInstallUpdateViaChrome}
+                                        className="w-full mt-2 px-4 py-2 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors underline"
+                                    >
+                                        ¿No aparece nada? Instalar por el navegador
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>

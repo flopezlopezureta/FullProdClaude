@@ -110,6 +110,26 @@ router.get('/check', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/app-updates/debug-log
+// Cualquier usuario autenticado — el propio wrapper nativo llama esto en cada paso del intento
+// de instalación corta (sesión creada, callback del sistema recibido, si vino con pantalla de
+// confirmación o no, etc.). El síntoma en terreno es "no pasa nada, sin ningún error visible" —
+// sin esto no hay forma remota de saber en qué paso exacto se detiene sin tener el teléfono
+// conectado a una computadora con adb logcat.
+router.post('/debug-log', authMiddleware, async (req, res) => {
+    const { step, detail } = req.body;
+    if (!step) return res.status(400).json({ message: 'Falta "step".' });
+    try {
+        const { rows } = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+        await logAction(req.user.id, rows[0]?.name || req.user.id, 'APP_UPDATE_INSTALL_DEBUG', { step, detail });
+        res.json({ ok: true });
+    } catch (err) {
+        // Nunca debe interrumpir el flujo de instalación por un fallo de registro.
+        console.error('[AppUpdates] Error registrando paso de depuración:', err);
+        res.json({ ok: false });
+    }
+});
+
 // GET /api/app-updates/fleet-status
 // Super-admin only — qué versión reporta cada conductor/auxiliar y cuándo fue la última vez que
 // la app abrió y le avisó al servidor. No es un dato en tiempo real (solo se actualiza cuando la
