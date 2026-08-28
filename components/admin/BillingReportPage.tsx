@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef, useContext } from 'react';
 import { api } from '../../services/api';
 import { Role, PackageStatus, ShippingType } from '../../constants';
 import type { User, Package, DeliveryZone } from '../../types';
-import { IconPrinter, IconCube, IconCalendar, IconChecklist, IconPackage, IconDollarSign, IconFileSpreadsheet } from '../Icon';
+import { IconPrinter, IconCube, IconCalendar, IconChecklist, IconPackage, IconDollarSign, IconFileSpreadsheet, IconAlertTriangle } from '../Icon';
 import { AuthContext } from '../../contexts/AuthContext';
 
 // Declare Chart.js in the global scope to avoid TypeScript errors
@@ -142,10 +142,11 @@ const BillingReportPage: React.FC = () => {
         packagesInPeriod,
         billablePackages,
         alreadyBilledPackages,
-        deliveredInPeriodCount
+        deliveredInPeriodCount,
+        deliveredNotClosedPackages
     } = useMemo(() => {
         if (!selectedClientId) {
-            return { packagesInPeriod: [], billablePackages: [], alreadyBilledPackages: [], deliveredInPeriodCount: 0 };
+            return { packagesInPeriod: [], billablePackages: [], alreadyBilledPackages: [], deliveredInPeriodCount: 0, deliveredNotClosedPackages: [] };
         }
         
         const pkgsInPeriod = packages.filter(pkg => {
@@ -172,13 +173,28 @@ const BillingReportPage: React.FC = () => {
         const billable = delivered.filter(p => !p.billed);
         const alreadyBilled = delivered.filter(p => p.billed);
 
+        // Paquetes en tránsito, con conductor real asignado y con orden de Mercado Libre — el
+        // conductor nunca los cerró en el sistema, así que hoy no cuentan para la factura, aunque
+        // Mercado Libre pueda tenerlos como entregados. No es una confirmación en vivo contra ML
+        // (sería lento consultarla al cargar el informe) — es la misma condición de candidato que
+        // usa la herramienta de reconciliación (POST /api/packages/billing/reconcile-meli-delivered),
+        // que sí verifica cada uno contra Mercado Libre antes de cerrarlo.
+        const bodegaUserId = users.find(u => u.name?.toLowerCase().includes('bodega'))?.id;
+        const notClosed = pkgsInPeriod.filter(p =>
+            p.status === PackageStatus.InTransit &&
+            !!p.driverId &&
+            p.driverId !== bodegaUserId &&
+            (!!p.meliOrderId || !!p.meliFlexCode)
+        );
+
         return {
             packagesInPeriod: pkgsInPeriod,
             billablePackages: billable,
             alreadyBilledPackages: alreadyBilled,
-            deliveredInPeriodCount: delivered.length
+            deliveredInPeriodCount: delivered.length,
+            deliveredNotClosedPackages: notClosed
         };
-    }, [packages, selectedClientId, startDate, endDate]);
+    }, [packages, users, selectedClientId, startDate, endDate]);
 
 
     const pickupActionsCount = useMemo(() => {
@@ -407,16 +423,23 @@ const BillingReportPage: React.FC = () => {
 
             {selectedClientId && !isLoading && (
                 <div className="space-y-6">
-                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <KpiCard 
-                            icon={<IconPackage className="w-6 h-6 text-blue-800"/>} 
-                            title="Envíos Entregados en Período" 
-                            value={deliveredInPeriodCount} 
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                        <KpiCard
+                            icon={<IconPackage className="w-6 h-6 text-blue-800"/>}
+                            title="Envíos Entregados en Período"
+                            value={deliveredInPeriodCount}
                             subtext={`${billablePackages.length} a facturar / ${alreadyBilledPackages.length} ya facturados`}
-                            colorClass="bg-blue-100" 
+                            colorClass="bg-blue-100"
                         />
                         <KpiCard icon={<IconChecklist className="w-6 h-6 text-green-800"/>} title="Tasa de Éxito" value={performanceStats.successRate} subtext="Sobre envíos finalizados" colorClass="bg-green-100" />
                         <KpiCard icon={<IconCube className="w-6 h-6 text-purple-800"/>} title="Total Retiros" value={pickupActionsCount} subtext="Días con retiros" colorClass="bg-purple-100" />
+                        <KpiCard
+                            icon={<IconAlertTriangle className="w-6 h-6 text-amber-800"/>}
+                            title="Entregados y No Cerrados"
+                            value={deliveredNotClosedPackages.length}
+                            subtext="Mercado Libre los tiene en tránsito sin cierre — se sumarán a la facturación una vez verificados"
+                            colorClass="bg-amber-100"
+                        />
                         <KpiCard icon={<IconDollarSign className="w-6 h-6 text-emerald-800"/>} title="Total a Facturar" value={grandTotal.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })} colorClass="bg-emerald-100" />
                     </div>
 
