@@ -2198,6 +2198,141 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/packages/billing/reconcile-meli-delivered
+// Admin only. Un paquete solo cuenta para facturación (ver BillingReportPage.tsx) cuando su
+// estado interno llega a ENTREGADO — eso normalmente pasa cuando el conductor cierra la entrega
+// en la app. Si el conductor nunca lo cierra, el paquete queda pegado en EN_TRANSITO para
+// siempre y jamás se factura, aunque Mercado Libre sí lo tenga como entregado hace tiempo.
+//
+// Esta ruta no cambia CÓMO se factura (BillingReportPage.tsx sigue mirando solo
+// status = ENTREGADO) — corrige los DATOS: para cada paquete candidato, consulta el estado real
+// en Mercado Libre y, solo si esa consulta confirma 'delivered', lo cierra igual que lo haría el
+// conductor (mismo tracking_event ENTREGADO + captura de hora oficial de ML que usa /:id/deliver)
+// para que entre a facturación de forma natural. Nunca marca nada como entregado por sospecha o
+// antigüedad — solo por confirmación directa de la fuente.
+//
+// Se limita a EN_TRANSITO (ya recogido, en curso de entrega) — no a ASIGNADO (ni siquiera llegó
+// a salir a reparto, señal mucho más débil de "probablemente entregado") ni a PROBLEMA (tiene un
+// incidente reportado que un cierre automático taparía sin resolver).
+router.post('/billing/reconcile-meli-delivered', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado. Solo administradores.' });
+    }
+
+    const startDate = req.body.startDate || '2026-08-01';
+    const endDate = req.body.endDate || '2026-09-01';
+    const MAX_BATCH = 2000; // salvaguarda ante un rango de fechas demasiado amplio por error
+
+    let candidates;
+    try {
+        const { rows } = await db.query(
+            `WITH bodega_user AS (
+                SELECT id FROM users WHERE name = 'Bodega' OR name ILIKE '%bodega%' LIMIT 1
+             )
+             SELECT p.id, p."meliOrderId", p."meliFlexCode", p."creatorId", p."sourceAccountId", p."recipientAddress"
+             FROM packages p
+             WHERE p."driverId" IS NOT NULL
+               AND p."driverId" != COALESCE((SELECT id FROM bodega_user), '')
+               AND p.status = 'EN_TRANSITO'
+               AND (p."meliOrderId" IS NOT NULL OR p."meliFlexCode" IS NOT NULL)
+               AND p."createdAt" >= $1 AND p."createdAt" < $2
+             ORDER BY p."createdAt" ASC
+             LIMIT $3`,
+            [startDate, endDate, MAX_BATCH]
+        );
+        candidates = rows;
+    } catch (err) {
+        console.error('[BillingReconcile] Error buscando candidatos:', err);
+        return res.status(500).json({ message: 'Error al buscar paquetes candidatos.' });
+    }
+
+    // Responde de inmediato — con cientos de paquetes, consultar la API de Mercado Libre uno por
+    // uno (con una pequeña pausa entre cada uno para no golpear su límite de tasa) puede tomar
+    // varios minutos, más de lo que aguanta una sola petición HTTP. El resultado final queda en
+    // el registro de auditoría (system_logs, acción BILLING_RECONCILE_MELI_SUMMARY).
+    res.json({
+        started: true,
+        candidateCount: candidates.length,
+        message: candidates.length === 0
+            ? 'No hay paquetes candidatos en ese rango de fechas.'
+            : `Verificando ${candidates.length} paquetes contra Mercado Libre en segundo plano. Revisa el registro de auditoría para el resumen final.`,
+    });
+
+    if (candidates.length === 0) return;
+
+    const startedBy = { id: req.user.id, name: null };
+    try {
+        const { rows: actorRows } = await db.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+        startedBy.name = actorRows[0]?.name || req.user.id;
+    } catch (e) { startedBy.name = req.user.id; }
+
+    (async () => {
+        let confirmedDelivered = 0;
+        let stillNotDelivered = 0;
+        let errors = 0;
+        const closedPackageIds = [];
+
+        for (const pkg of candidates) {
+            try {
+                const shipmentId = pkg.meliFlexCode || pkg.meliOrderId;
+                const accessToken = await meliPollingService.getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
+                if (!accessToken) { errors++; continue; }
+
+                const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
+                if (shipment.status !== 'delivered') {
+                    stillNotDelivered++;
+                    continue;
+                }
+
+                // Misma lógica de prioridad para la hora real que usa POST /:id/deliver, para
+                // mantener consistencia en cómo se registra la hora de cierre oficial de ML.
+                let meliTimeStr = null;
+                let source = '';
+                if (shipment.date_delivered) { meliTimeStr = shipment.date_delivered; source = 'shipment.date_delivered'; }
+                if (!meliTimeStr && Array.isArray(shipment.status_history)) {
+                    const deliveredEvent = shipment.status_history
+                        .filter(h => h.status === 'delivered')
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+                    if (deliveredEvent) { meliTimeStr = deliveredEvent.date; source = 'status_history.delivered'; }
+                }
+                if (!meliTimeStr && shipment.delivered_date) { meliTimeStr = shipment.delivered_date; source = 'shipment.delivered_date'; }
+                const meliDeliveredAt = meliTimeStr ? new Date(meliTimeStr) : new Date();
+
+                await db.query(
+                    `UPDATE packages SET status = 'ENTREGADO', "deliveryReceiverName" = $1, "updatedAt" = $2 WHERE id = $3`,
+                    ['Cierre automático (verificado en Mercado Libre)', new Date(), pkg.id]
+                );
+                await addTrackingEvent(
+                    pkg.id, 'ENTREGADO', pkg.recipientAddress,
+                    'Cierre automático: Mercado Libre confirma la entrega; el conductor no había cerrado el paquete en el sistema.'
+                );
+                if (meliTimeStr) {
+                    await addTrackingEvent(
+                        pkg.id, 'CIERRE_OFICIAL_ML', 'Mercado Libre API',
+                        `Hora real capturada de ${source}: ${meliTimeStr}`
+                    );
+                }
+                confirmedDelivered++;
+                closedPackageIds.push(pkg.id);
+            } catch (e) {
+                console.error(`[BillingReconcile] Error verificando paquete ${pkg.id}:`, e.message || e);
+                errors++;
+            }
+            // Pausa breve entre paquetes — este lote no es urgente, y ser educado con el límite
+            // de tasa de la API de Mercado Libre importa más que terminar rápido.
+            await new Promise(r => setTimeout(r, 400));
+        }
+
+        await logAction(startedBy.id, startedBy.name, 'BILLING_RECONCILE_MELI_SUMMARY', {
+            startDate, endDate,
+            candidateCount: candidates.length,
+            confirmedDelivered, stillNotDelivered, errors,
+            closedPackageIds,
+        });
+        console.log(`[BillingReconcile] Terminado: ${confirmedDelivered} cerrados, ${stillNotDelivered} aún no entregados, ${errors} errores.`);
+    })().catch(err => console.error('[BillingReconcile] Error fatal en el procesamiento en segundo plano:', err));
+});
+
 // POST /api/packages/:id/problem
 router.post('/:id/problem', authMiddleware, async (req, res) => {
     const { id } = req.params;
