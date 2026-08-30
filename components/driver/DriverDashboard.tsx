@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { getLogicalDateString, formatLocalDisplayDate, getLocalDateString } from '../../utils/dateUtils';
-import DriverClosureModal from '../modals/DriverClosureModal';
 import { storageUtils } from '../../utils/storageUtils';
 import { PackageStatus, MessagingPlan } from '../../constants';
 import type { Package, User } from '../../types';
@@ -20,6 +19,7 @@ const isNetworkFailure = (error: any) => !navigator.onLine || !(error instanceof
 import EndOfDayReportModal from '../modals/EndOfDayReportModal';
 import DriverMapView from './DriverMapView';
 import { useDriverSSE } from '../../hooks/useDriverSSE';
+import { tryAutoCloseRoute } from '../../services/autoClosure';
 
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -341,8 +341,13 @@ const DriverDashboard: React.FC = () => {
 
     if (allProcessedNow && !allProcessedBefore) {
       setIsEndOfDayModalOpen(true);
+      // Registra el cierre de jornada en daily_closures para que el Centro de Control
+      // (Auditoría de Cierres) vea a este conductor como cerrado — antes solo lo hacía
+      // driver-app (la app nativa que la flota no usa), así que esta pantalla mostraba
+      // 0 cierres siempre aunque los conductores sí entregaran todo.
+      tryAutoCloseRoute();
     }
-    
+
     prevPackagesRef.current = myPackages;
   }, [myPackages]);
   

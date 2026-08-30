@@ -485,6 +485,10 @@ export const api = {
   }>(`/users/fleet-control-center${date ? `?date=${date}` : ''}`),
   notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
 
+  // Cierre de Jornada del Conductor (Auditoría de Cierres del Centro de Control)
+  getClosureSummary: () => get<{ total: number; delivered: number; problems: number; pending: number }>('/closures/summary'),
+  submitClosure: (data: { total: number; delivered: number; problems: number; pending: number; notes?: string }) => post<{ message: string }>('/closures', data),
+
   // App Updates (WebView wrapper / driver-app APK publishing) — multipart upload, bypasses the
   // generic JSON `post()` helper since this sends a binary file, not a JSON body.
   getAppUpdatesStatus: () => get<{
