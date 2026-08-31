@@ -651,6 +651,37 @@ router.get('/query/:searchId', authMiddleware, async (req, res) => {
 
 
 // Helper to add a tracking event
+// Rejects anything that isn't a real image before it ever reaches the database — until now,
+// photosBase64 from /deliver, /problem and /return was trusted as-is from req.body with no
+// content check at all, just a UI convention that the browser sends a photo. That mattered
+// because deliveryPhotosBase64 gets served back out with a hardcoded `Content-Type: image/jpeg`
+// by GET /public/falabella-photo/:id/:index (no session/auth, fetched directly by Falabella's own
+// servers) — arbitrary bytes stored here would be forwarded to that external partner mislabeled
+// as an image. Checked via real magic bytes, not the client-supplied data: URI prefix (which is
+// just a string an attacker controls) — no new dependency, these three signatures cover every
+// format any camera/gallery/compression step in this app actually produces.
+function isValidImagePhoto(dataUri) {
+    if (typeof dataUri !== 'string') return false;
+    const commaIdx = dataUri.indexOf(',');
+    if (commaIdx === -1 || commaIdx > 100) return false; // real data: URI prefixes are short
+    let buf;
+    try {
+        buf = Buffer.from(dataUri.slice(commaIdx + 1), 'base64');
+    } catch (e) {
+        return false;
+    }
+    if (buf.length < 12) return false;
+    const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+    const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+    const isWebp = buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP';
+    return isJpeg || isPng || isWebp;
+}
+
+function validatePhotosAreRealImages(photosBase64) {
+    if (!Array.isArray(photosBase64)) return false;
+    return photosBase64.every(isValidImagePhoto);
+}
+
 async function addTrackingEvent(packageId, status, location, details) {
     await db.query(
         'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
@@ -2014,6 +2045,9 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         if (!Array.isArray(photosBase64) || photosBase64.length < requiredPhotos) {
             return res.status(400).json({ message: `Se requiere${requiredPhotos === 1 ? '' : 'n'} al menos ${requiredPhotos} foto${requiredPhotos === 1 ? '' : 's'} de evidencia para confirmar la entrega.` });
         }
+        if (!validatePhotosAreRealImages(photosBase64)) {
+            return res.status(400).json({ message: 'Una o más fotos de evidencia no son un archivo de imagen válido.' });
+        }
 
         // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — kept as an
         // extra floor on top of the general check above, since Falabella's own requirement can be
@@ -2355,6 +2389,10 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { reason, photosBase64 } = req.body;
     try {
+        if (!validatePhotosAreRealImages(photosBase64)) {
+            return res.status(400).json({ message: 'Una o más fotos de evidencia no son un archivo de imagen válido.' });
+        }
+
         // Falabella Directo requires real GPS coordinates with every status push — checked before
         // the update, same block-not-fake-it policy as the RUT/photo requirements on /:id/deliver.
         const { rows: sourceCheckRows } = await db.query('SELECT source, "driverId" FROM packages WHERE id = $1', [id]);
@@ -2543,6 +2581,10 @@ router.post('/:id/return', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { receiverName, receiverId, photosBase64 } = req.body;
     try {
+        if (!validatePhotosAreRealImages(photosBase64)) {
+            return res.status(400).json({ message: 'Una o más fotos de evidencia no son un archivo de imagen válido.' });
+        }
+
         // Falabella Directo requires real GPS coordinates with every status push — checked before
         // the update, same block-not-fake-it policy as the RUT/photo requirements on /:id/deliver.
         const { rows: sourceCheckRows } = await db.query('SELECT source, "driverId" FROM packages WHERE id = $1', [id]);
@@ -2697,10 +2739,21 @@ router.get('/public/falabella-photo/:id/:index', async (req, res) => {
         }
 
         const dataUrl = photoList[idx];
+        // Content-Type used to be hardcoded to image/jpeg regardless of what's actually stored —
+        // harmless for real photos, but meant anything non-image saved here (from before the
+        // intake validation above existed) would still go out to Falabella's servers mislabeled
+        // as a real image. Detected from the real bytes instead; refuses to serve non-image
+        // content rather than guess.
+        if (!isValidImagePhoto(dataUrl)) {
+            return res.status(404).send('Foto no encontrada.');
+        }
         const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
         const buffer = Buffer.from(base64Data, 'base64');
+        const contentType = buffer[0] === 0x89 ? 'image/png'
+            : buffer.toString('ascii', 0, 4) === 'RIFF' ? 'image/webp'
+            : 'image/jpeg';
 
-        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Cache-Control', 'private, max-age=31536000');
         res.send(buffer);
     } catch (err) {
