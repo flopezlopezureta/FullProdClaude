@@ -1999,8 +1999,25 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { receiverName, receiverId, photosBase64 } = req.body;
     try {
-        // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — no other
-        // source enforces a minimum today, so this check is scoped to that source only.
+        // Nombre de quien recibe y cantidad mínima de fotos son obligatorios para CUALQUIER
+        // entrega, sin importar el origen del paquete — antes solo se validaba en el formulario
+        // del navegador (DeliveryConfirmationModal.tsx), así que una llamada directa a esta ruta
+        // podía cerrar una entrega sin foto y sin nombre. requiredPhotos es config del cliente
+        // (Ajustes Generales), independiente del interruptor de RUT obligatorio (isRutRequired) —
+        // el RUT sigue siendo opcional a propósito cuando ese interruptor está apagado, y no se
+        // fuerza aquí.
+        if (!receiverName || !receiverName.trim()) {
+            return res.status(400).json({ message: 'El nombre de quien recibe es obligatorio para confirmar la entrega.' });
+        }
+        const { rows: photoSettingsRows } = await db.query('SELECT "requiredPhotos" FROM system_settings WHERE id = 1');
+        const requiredPhotos = photoSettingsRows.length > 0 ? (photoSettingsRows[0].requiredPhotos ?? 1) : 1;
+        if (!Array.isArray(photosBase64) || photosBase64.length < requiredPhotos) {
+            return res.status(400).json({ message: `Se requiere${requiredPhotos === 1 ? '' : 'n'} al menos ${requiredPhotos} foto${requiredPhotos === 1 ? '' : 's'} de evidencia para confirmar la entrega.` });
+        }
+
+        // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — kept as an
+        // extra floor on top of the general check above, since Falabella's own requirement can be
+        // higher than the client's configured requiredPhotos.
         const { rows: sourceCheckRows } = await db.query('SELECT source, "falabellaDirectLpn", "driverId" FROM packages WHERE id = $1', [id]);
         if (sourceCheckRows.length > 0 && sourceCheckRows[0].source === 'FALABELLA_DIRECTO') {
             if (!Array.isArray(photosBase64) || photosBase64.length < 2) {
