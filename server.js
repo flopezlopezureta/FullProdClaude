@@ -41,17 +41,62 @@ app.set('trust proxy', 1);
 // crossOriginEmbedderPolicy stays off — this app embeds third-party map tiles/resources that
 // don't send CORP/COEP headers, and turning it on would silently block them.
 //
-// contentSecurityPolicy disabled again 2026-08-25: enabling it earlier tonight broke driver
-// photo uploads in production (browser-image-compression's Web Worker, blocked despite an
-// added worker-src allowance — real cause never fully confirmed under live-incident pressure,
-// with most of the driver fleet unable to close deliveries). Rolled back to the known-good
-// disabled state rather than keep iterating live. Re-enabling needs to happen with proper
-// device testing (real driver phones, real-size photos) outside of an active incident, not
-// guessed at again under pressure.
+// contentSecurityPolicy: re-enabled 2026-08-30, in Report-Only mode (see reportOnly below), after
+// being disabled entirely since 2026-08-25 (see git history on this block — a live incident broke
+// driver photo uploads and the real cause on real driver devices was never confirmed, only guessed
+// at under pressure). Report-Only sends violation reports to /api/csp-report WITHOUT blocking
+// anything, so this rollout can collect real data from real driver phones — including the exact
+// photo-upload flow that broke last time — with zero risk of repeating that incident. Once a
+// production trial period shows no unexpected violations, flip reportOnly to false to actually
+// enforce it. Directives below are the full, verified set of every external domain the frontend
+// actually loads (checked directly against the live built index.html/CSS, not guessed): Leaflet +
+// its plugins and OSM/CARTO tiles (map views), OSRM (route distance calc) + Nominatim (address
+// search) called directly from the browser, Google Fonts, the Zekton font (styles.css:1, both the
+// @import itself and the .woff it pulls in), the three CDN-hosted libs in index.html (Chart.js,
+// SheetJS, html2pdf — all SRI-pinned), and blob: for browser-image-compression's Web Worker (the
+// suspected but never-confirmed culprit from the August incident).
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    reportOnly: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com', 'https://cdn.sheetjs.com', 'https://static.cloudflareinsights.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com', 'https://fonts.cdnfonts.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://fonts.cdnfonts.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: ["'self'", 'https://router.project-osrm.org', 'https://nominatim.openstreetmap.org'],
+      workerSrc: ["'self'", 'blob:'],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'self'"],
+      reportUri: '/api/csp-report',
+    },
+  },
 }));
+
+// Receives the browser's CSP violation reports while contentSecurityPolicy is in Report-Only
+// mode above. Deliberately not behind authMiddleware — the browser sends these on its own, often
+// from a driver session mid-delivery, with no way to attach a bearer token. Uses express.text()
+// scoped to just this route instead of the global express.json() below: browsers send this as
+// `application/csp-report` (some as `application/json`), neither of which express.json() parses
+// by default, and grabbing the raw body and parsing it manually sidesteps that entirely. Logs to
+// stdout (visible in Coolify) rather than the database — these can arrive in bursts and this
+// project already has one incident on record (see pending_db_photo_bloat memory) from unbounded
+// data landing in Postgres; console logs cost nothing and rotate on their own.
+app.post('/api/csp-report', express.text({ type: '*/*' }), (req, res) => {
+  try {
+    const report = JSON.parse(req.body)['csp-report'] || JSON.parse(req.body);
+    console.warn('[CSP Violation]', JSON.stringify({
+      blockedUri: report['blocked-uri'],
+      violatedDirective: report['violated-directive'],
+      documentUri: report['document-uri'],
+      userAgent: req.headers['user-agent'],
+    }));
+  } catch (e) {
+    console.warn('[CSP Violation] Received unparseable report:', req.body);
+  }
+  res.status(204).end();
+});
 
 // Aggressively disable caching for all responses to solve stale asset issues.
 app.use((req, res, next) => {
