@@ -2113,6 +2113,70 @@ router.get('/meli/callback', async (req, res) => {
     }
 });
 
+// Guarda temporalmente el token de una conexión Shopify iniciada por /shopify/install (ver
+// abajo) — a diferencia de /shopify/auth, esa ruta no sabe a qué cliente de Full Envíos
+// pertenece la tienda (Shopify la golpea directo, sin que nadie haya iniciado sesión antes),
+// así que el token no se puede guardar de una en la cuenta de nadie. Se muestra una sola vez
+// en /shopify-conectado.html para que el cliente lo copie y lo pegue en su configuración
+// manual — mismo patrón que ya usamos a mano con Donenic, pero ahora vía un OAuth real en vez
+// de un script local. En memoria (no en la base de datos) y de un solo uso: nunca es un dato
+// que deba sobrevivir un reinicio del servidor ni quedar dando vueltas más de unos minutos.
+const pendingShopifyTokens = new Map(); // ref -> { shop, accessToken, createdAt }
+const PENDING_SHOPIFY_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutos
+setInterval(() => {
+    const now = Date.now();
+    for (const [ref, entry] of pendingShopifyTokens) {
+        if (now - entry.createdAt > PENDING_SHOPIFY_TOKEN_TTL_MS) pendingShopifyTokens.delete(ref);
+    }
+}, 5 * 60 * 1000).unref();
+
+// GET /api/integrations/shopify/install
+// Punto de entrada público (sin sesión de Full Envíos) para cuando Shopify mismo dirige al
+// comerciante hacia la app — la "Application URL" configurada en el Partner Dashboard debe
+// apuntar aquí. A diferencia de /shopify/auth (que exige estar logueado en Full Envíos y lo
+// usa el botón "Conectar automáticamente" desde dentro del portal), esta ruta redirige al
+// OAuth de Shopify de inmediato, sin ningún inicio de sesión de por medio — es justo lo que
+// exige la revisión de la App Store ("Inicia la autenticación inmediatamente después de la
+// instalación"). El callback de abajo distingue este flujo del otro por state='install'.
+router.get('/shopify/install', async (req, res) => {
+    try {
+        let { shop } = req.query;
+        if (!shop) return res.status(400).send('Falta el parámetro shop.');
+        shop = shop.trim().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+        if (!shop.includes('.')) shop += '.myshopify.com';
+        if (!/^[a-z0-9\-]+\.myshopify\.com$/i.test(shop)) {
+            return res.status(400).send('Tienda de Shopify inválida.');
+        }
+
+        const { rows } = await db.query('SELECT shopify_client_id FROM integration_settings WHERE id = 1');
+        if (rows.length === 0 || !rows[0].shopify_client_id) {
+            return res.status(500).send('El administrador no ha configurado el Client ID de Shopify.');
+        }
+        const clientId = rows[0].shopify_client_id;
+        const host = req.get('host');
+        const protocol = host.includes('localhost') ? 'http' : 'https';
+        const redirectUri = `${protocol}://${host}/api/integrations/shopify/callback`;
+        const scopes = 'read_orders,read_shipping,read_products,read_customers';
+
+        const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=install`;
+        res.redirect(authUrl);
+    } catch (err) {
+        console.error('[ShopifyInstall] Error:', err);
+        res.status(500).send('Error interno al iniciar la instalación de Shopify.');
+    }
+});
+
+// GET /api/integrations/shopify/pending-token/:ref
+// Revelado de un solo uso del token capturado por el flujo /shopify/install — lo consume
+// shopify-conectado.html justo después de la redirección. Se borra al leerlo (o solo, a los
+// 15 minutos) para que no quede un token flotando en memoria más de lo necesario.
+router.get('/shopify/pending-token/:ref', (req, res) => {
+    const entry = pendingShopifyTokens.get(req.params.ref);
+    if (!entry) return res.status(404).json({ message: 'Este enlace ya se usó o expiró.' });
+    pendingShopifyTokens.delete(req.params.ref);
+    res.json({ shop: entry.shop, accessToken: entry.accessToken });
+});
+
 // GET /api/integrations/shopify/auth
 // Inicia el flujo de OAuth con Shopify
 router.get('/shopify/auth', authMiddleware, async (req, res) => {
@@ -2154,17 +2218,20 @@ router.get('/shopify/auth', authMiddleware, async (req, res) => {
 // GET /api/integrations/shopify/callback
 // Recibe el cÃ³digo de Shopify y guarda la cuenta
 router.get('/shopify/callback', async (req, res) => {
-    const { code, shop, state: userId, hmac } = req.query;
+    const { code, shop, state, hmac } = req.query;
 
-    if (!code || !userId || !shop) {
+    if (!code || !state || !shop) {
         return res.status(400).send('Faltan parÃ¡metros de autorizaciÃ³n de Shopify (code, shop o state).');
     }
+
+    const host = req.get('host');
+    const protocol = host.includes('localhost') ? 'http' : 'https';
 
     try {
         // 1. Obtener credenciales de la App Global
         const { rows: settingsRows } = await db.query('SELECT shopify_client_id, shopify_client_secret FROM integration_settings WHERE id = 1');
         if (settingsRows.length === 0) return res.status(500).send('ConfiguraciÃ³n global de Shopify no encontrada.');
-        
+
         const { shopify_client_id, shopify_client_secret } = settingsRows[0];
 
         // 2. Intercambiar cÃ³digo por Access Token
@@ -2187,7 +2254,19 @@ router.get('/shopify/callback', async (req, res) => {
             return res.status(401).send('Error al obtener el Access Token de Shopify. Verifica las credenciales de la App.');
         }
 
+        // Instalación iniciada por Shopify vía /shopify/install (ver arriba) — no hay ningún
+        // cliente de Full Envíos ya identificado para asociar el token, así que se guarda solo
+        // de forma temporal y se redirige de inmediato (sin clic de por medio, como exige la
+        // revisión de la App Store) a una página propia donde el comerciante lo copia y lo pega
+        // en su configuración manual.
+        if (state === 'install') {
+            const ref = crypto.randomUUID();
+            pendingShopifyTokens.set(ref, { shop, accessToken: tokenData.access_token, createdAt: Date.now() });
+            return res.redirect(`${protocol}://${host}/shopify-conectado.html?ref=${ref}`);
+        }
+
         // 3. Guardar la cuenta en el usuario
+        const userId = state;
         const { rows: userRows } = await db.query('SELECT id, name, integrations FROM users WHERE id = $1', [userId]);
         if (userRows.length === 0) return res.status(404).send('Usuario no encontrado.');
 
