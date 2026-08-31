@@ -108,11 +108,16 @@ app.use((req, res, next) => {
 // onboarding a client that needs one (a white-label domain, for example) — no other change
 // needed. Requests with no Origin header (server-to-server calls, webhooks, native apps like
 // driver-app) aren't browsers and are unaffected by CORS either way, so they're let through.
+//
+// Scoped to /api only (not app.use(cors(...)) globally) — static assets, the SPA shell, and
+// robots.txt/sitemap.xml don't need CORS response headers at all (a <script>/<img>/<link> tag
+// loading same-origin never needs them), and ZAP flagged the previous blanket application as a
+// "Cross-Domain Misconfiguration" finding for exactly that reason.
 const ALLOWED_ORIGINS = [
   'https://fullenvios.selcom.cl',
   'https://full2.fullenvios.cl',
 ];
-app.use(cors({
+app.use('/api', cors({
   origin: (origin, callback) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
