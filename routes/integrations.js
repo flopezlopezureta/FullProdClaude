@@ -1484,6 +1484,38 @@ router.post('/shopify/webhook', async (req, res) => {
 
     console.log(`[ShopifyWebhook] Received ${topic} from ${shopDomain}`);
 
+    // A diferencia de los 3 webhooks de cumplimiento (gdpr/*, más abajo), este nunca verificaba
+    // la firma — cualquiera podía llamarlo simulando ser Shopify e inyectar un pedido falso en
+    // la cuenta de un cliente real. Misma verificación que ya usan los de cumplimiento.
+    if (!(await verifyShopifyWebhookHmac(req))) {
+        console.error(`[ShopifyWebhook] Firma HMAC inválida para ${topic} de ${shopDomain}, solicitud rechazada.`);
+        return res.status(401).send('Firma inválida.');
+    }
+
+    if (topic === 'app/uninstalled') {
+        try {
+            const client = await findClientByShopDomain(shopDomain);
+            if (!client) {
+                console.warn(`[ShopifyWebhook] app/uninstalled: no se encontró cliente para la tienda ${shopDomain}`);
+                return res.status(200).send('OK');
+            }
+            const integrations = ensureMultiAccountStructure(client.integrations || {});
+            const account = integrations.accounts.find(acc => acc.type === 'SHOPIFY' && acc.credentials.shopUrl === shopDomain);
+            if (account) {
+                // No se borra la cuenta (se pierde el historial de a qué tienda pertenecía) — se
+                // marca desconectada y se apaga la importación automática, para que el polling
+                // deje de intentar usar un token que Shopify ya invalidó al desinstalar la app.
+                account.status = 'DESCONECTADA';
+                account.settings = { ...account.settings, autoImport: false };
+                await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), client.id]);
+                console.log(`[ShopifyWebhook] app/uninstalled: cuenta de ${shopDomain} marcada como desconectada para ${client.name}`);
+            }
+        } catch (err) {
+            console.error('[ShopifyWebhook] Error procesando app/uninstalled:', err);
+        }
+        return res.status(200).send('OK');
+    }
+
     if (topic !== 'orders/create' && topic !== 'orders/updated') {
         // We only care about new orders or significant updates for now
         return res.status(200).send('OK');
