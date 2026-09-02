@@ -2212,12 +2212,17 @@ router.get('/shopify/pending-token/:ref', (req, res) => {
 // TEMPORAL — diagnóstico del fallo "código ya usado" en /shopify/install. Nunca devuelve el
 // token, solo si el intercambio llegó a completarse alguna vez sin que el navegador lo viera.
 // Borrar junto con el resto de este debug una vez resuelto.
+const _instanceBootId = crypto.randomUUID(); // distingue réplicas/reinicios del proceso
 router.get('/shopify/debug-pending', authMiddleware, (req, res) => {
     if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
     const entries = [...pendingShopifyTokens.entries()].map(([ref, e]) => ({
         ref, shop: e.shop, ageSeconds: Math.round((Date.now() - e.createdAt) / 1000)
     }));
-    res.json({ count: entries.length, entries });
+    res.json({
+        count: entries.length,
+        entries,
+        instance: { bootId: _instanceBootId, pid: process.pid, hostname: require('os').hostname(), uptimeSeconds: Math.round(process.uptime()) }
+    });
 });
 
 // GET /api/integrations/shopify/auth
