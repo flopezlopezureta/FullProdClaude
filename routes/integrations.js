@@ -2173,25 +2173,7 @@ setInterval(() => {
 // TEMPORAL — historial de cada golpe a /shopify/install, para ver si un solo clic real
 // dispara más de una petición (antivirus/SmartScreen/precarga del navegador visitando el
 // enlace antes que el usuario). Borrar junto con el resto de este debug una vez resuelto.
-const _installHits = [];
-// Un solo clic real estaba generando dos peticiones a esta ruta en ~1-2 segundos (confirmado
-// con el historial de arriba: misma IP, mismo navegador) — cada una redirigía a una URL de
-// autorización distinta, y Shopify solo deja viva la primera; la segunda quedaba "código ya
-// usado" apenas el usuario terminaba de autorizar. No importa cuál sea la causa exacta del
-// lado del navegador (precarga, antivirus, doble clic) — acá se blinda reusando la MISMA URL
-// de autorización para la misma tienda si se repite la petición en pocos segundos, así ambas
-// (o las que sean) apuntan a una sola sesión de autorización en vez de competir entre sí.
-const _recentInstallAuthUrls = new Map(); // shop -> { authUrl, createdAt }
-const INSTALL_DEDUPE_WINDOW_MS = 10 * 1000;
-
 router.get('/shopify/install', async (req, res) => {
-    _installHits.push({
-        at: new Date().toISOString(),
-        shop: req.query.shop,
-        ua: req.headers['user-agent'],
-        ip: req.headers['cf-connecting-ip'] || req.ip
-    });
-    if (_installHits.length > 30) _installHits.shift();
     try {
         let { shop } = req.query;
         if (!shop) return res.status(400).send('Falta el parámetro shop.');
@@ -2199,11 +2181,6 @@ router.get('/shopify/install', async (req, res) => {
         if (!shop.includes('.')) shop += '.myshopify.com';
         if (!/^[a-z0-9\-]+\.myshopify\.com$/i.test(shop)) {
             return res.status(400).send('Tienda de Shopify inválida.');
-        }
-
-        const cached = _recentInstallAuthUrls.get(shop);
-        if (cached && (Date.now() - cached.createdAt) < INSTALL_DEDUPE_WINDOW_MS) {
-            return res.redirect(cached.authUrl);
         }
 
         const { rows } = await db.query('SELECT shopify_client_id FROM integration_settings WHERE id = 1');
@@ -2217,7 +2194,6 @@ router.get('/shopify/install', async (req, res) => {
         const scopes = 'read_orders,read_customers'; // recortado a lo que el código realmente usa (ver shopify.app.toml)
 
         const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=install`;
-        _recentInstallAuthUrls.set(shop, { authUrl, createdAt: Date.now() });
         res.redirect(authUrl);
     } catch (err) {
         console.error('[ShopifyInstall] Error:', err);
@@ -2234,45 +2210,6 @@ router.get('/shopify/pending-token/:ref', (req, res) => {
     if (!entry) return res.status(404).json({ message: 'Este enlace ya se usó o expiró.' });
     pendingShopifyTokens.delete(req.params.ref);
     res.json({ shop: entry.shop, accessToken: entry.accessToken });
-});
-
-// TEMPORAL — diagnóstico del fallo "código ya usado" en /shopify/install. Nunca devuelve el
-// token, solo si el intercambio llegó a completarse alguna vez sin que el navegador lo viera.
-// Borrar junto con el resto de este debug una vez resuelto.
-const _instanceBootId = crypto.randomUUID(); // distingue réplicas/reinicios del proceso
-router.get('/shopify/debug-pending', authMiddleware, (req, res) => {
-    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
-    const entries = [...pendingShopifyTokens.entries()].map(([ref, e]) => ({
-        ref, shop: e.shop, ageSeconds: Math.round((Date.now() - e.createdAt) / 1000)
-    }));
-    res.json({
-        count: entries.length,
-        entries,
-        installHits: _installHits,
-        instance: { bootId: _instanceBootId, pid: process.pid, hostname: require('os').hostname(), uptimeSeconds: Math.round(process.uptime()) }
-    });
-});
-
-// TEMPORAL — corrige shopify_client_secret, que quedó encriptado con un JWT_SECRET distinto al
-// de este contenedor (por eso decrypt() fallaba en silencio y devolvía el texto aún cifrado —
-// ver el catch de services/falabellaCrypto.js). Re-encripta con encrypt() de ESTE mismo proceso,
-// que sí tiene la clave correcta, y verifica el redondeo en la misma respuesta. El valor correcto
-// se manda en el cuerpo de la petición (nunca queda escrito en el código/git). De un solo uso —
-// borrar esta ruta junto con el resto del debug una vez confirmado.
-router.post('/shopify/debug-fix-secret', authMiddleware, express.json(), async (req, res) => {
-    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
-    try {
-        const { correctSecret } = req.body;
-        if (!correctSecret || !correctSecret.startsWith('shpss_')) {
-            return res.status(400).json({ message: 'Falta correctSecret (o no tiene el formato shpss_...) en el body.' });
-        }
-        const reEncrypted = encrypt(correctSecret);
-        await db.query('UPDATE integration_settings SET shopify_client_secret = $1 WHERE id = 1', [reEncrypted]);
-        const check = decrypt(reEncrypted);
-        res.json({ fixed: true, verifyRoundTripMatches: check === correctSecret, newDecryptedLen: check.length });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
 });
 
 // GET /api/integrations/shopify/auth
@@ -2318,19 +2255,6 @@ router.get('/shopify/auth', authMiddleware, async (req, res) => {
 router.get('/shopify/callback', async (req, res) => {
     const { code, shop, state, hmac } = req.query;
 
-    // TEMPORAL — mismo registro que /shopify/install, para ver si el callback también recibe
-    // más de una petición por intento (con qué código cada una). Borrar junto con el resto de
-    // este debug una vez resuelto.
-    _installHits.push({
-        at: new Date().toISOString(),
-        callback: true,
-        shop,
-        codePrefix: code ? String(code).slice(0, 8) : null,
-        ua: req.headers['user-agent'],
-        ip: req.headers['cf-connecting-ip'] || req.ip
-    });
-    if (_installHits.length > 30) _installHits.shift();
-
     if (!code || !state || !shop) {
         return res.status(400).send('Faltan parÃ¡metros de autorizaciÃ³n de Shopify (code, shop o state).');
     }
@@ -2347,20 +2271,11 @@ router.get('/shopify/callback', async (req, res) => {
 
         // 2. Intercambiar cÃ³digo por Access Token
         // Shopify requiere una peticiÃ³n POST a la tienda del cliente
-        const decryptedSecret = decrypt(shopify_client_secret);
         const postData = {
             client_id: shopify_client_id,
-            client_secret: decryptedSecret,
+            client_secret: decrypt(shopify_client_secret),
             code: code
         };
-
-        // TEMPORAL: detalle de diagnóstico del fallo "código ya usado" — se borra junto con el
-        // resto de este debug una vez resuelto. Replayar a mano el mismo code+secret desde un
-        // script local (fuera del contenedor desplegado) dio un token válido — así que se agrega
-        // el largo y los extremos del secreto ya desencriptado que usa ESTE proceso en vivo, para
-        // comparar contra el valor conocido-correcto (38 chars, empieza "shps", termina "9113")
-        // sin mostrar el secreto completo.
-        console.log(`[ShopifyCallback][DEBUG] shop=${shop} clientId=${shopify_client_id} codePrefix=${String(code).slice(0, 8)} codeLen=${String(code).length} host=${host} secretLen=${decryptedSecret.length} secretEdges=${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}`);
 
         const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
             method: 'POST',
@@ -2369,30 +2284,24 @@ router.get('/shopify/callback', async (req, res) => {
         });
 
         // Cuando el code ya venció o se usó dos veces (son de un solo uso y expiran en ~60s),
-        // Shopify no responde con JSON — responde con una página HTML completa de error, que
-        // rompía este parseo con una excepción y terminaba mostrando el mensaje genérico de más
-        // abajo ("Error interno..."), sin decir la causa real.
+        // Shopify no responde con JSON — responde con una página HTML completa de error. Se
+        // extrae el texto plano (sin tags) para mostrar la razón real en vez de un mensaje
+        // genérico que oculta el motivo.
         const rawBody = await response.text();
-        console.log(`[ShopifyCallback][DEBUG] Shopify respondió status=${response.status} content-type=${response.headers.get('content-type')} body(FULL)=${rawBody}`);
         let tokenData;
         try {
             tokenData = JSON.parse(rawBody);
         } catch (parseErr) {
-            // TEMPORAL: se muestra el detalle real en pantalla para diagnosticar sin depender
-            // de los logs del servidor — quitar este detalle una vez resuelto. Antes solo
-            // mostraba los primeros 200 caracteres (el título genérico "invalid_request") — se
-            // amplía a texto plano completo (sin tags) para ver si Shopify incluye una razón
-            // específica más abajo en la página de error.
             const textOnly = rawBody
                 .replace(/<style[\s\S]*?<\/style>/gi, '')
                 .replace(/<[^>]+>/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
-            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, secretLen: ${decryptedSecret.length}, secretEdges: ${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}, respuesta completa (sin HTML): ${textOnly.replace(/</g, '&lt;')}]`);
+            return res.status(400).send(`Shopify rechazó el intercambio del código: ${textOnly.replace(/</g, '&lt;')}`);
         }
         if (!tokenData.access_token) {
             console.error('[ShopifyCallback] Error exchanging code:', tokenData);
-            return res.status(401).send(`Error al obtener el Access Token de Shopify. Verifica las credenciales de la App. [DEBUG temporal — secretLen: ${decryptedSecret.length}, secretEdges: ${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}, respuesta Shopify: ${JSON.stringify(tokenData)}]`);
+            return res.status(401).send('Error al obtener el Access Token de Shopify. Verifica las credenciales de la App.');
         }
 
         // Instalación iniciada por Shopify vía /shopify/install (ver arriba) — no hay ningún
