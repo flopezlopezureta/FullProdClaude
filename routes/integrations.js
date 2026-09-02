@@ -2296,6 +2296,19 @@ router.get('/shopify/auth', authMiddleware, async (req, res) => {
 router.get('/shopify/callback', async (req, res) => {
     const { code, shop, state, hmac } = req.query;
 
+    // TEMPORAL — mismo registro que /shopify/install, para ver si el callback también recibe
+    // más de una petición por intento (con qué código cada una). Borrar junto con el resto de
+    // este debug una vez resuelto.
+    _installHits.push({
+        at: new Date().toISOString(),
+        callback: true,
+        shop,
+        codePrefix: code ? String(code).slice(0, 8) : null,
+        ua: req.headers['user-agent'],
+        ip: req.headers['cf-connecting-ip'] || req.ip
+    });
+    if (_installHits.length > 30) _installHits.shift();
+
     if (!code || !state || !shop) {
         return res.status(400).send('Faltan parÃ¡metros de autorizaciÃ³n de Shopify (code, shop o state).');
     }
