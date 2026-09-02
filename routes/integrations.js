@@ -2174,6 +2174,16 @@ setInterval(() => {
 // dispara más de una petición (antivirus/SmartScreen/precarga del navegador visitando el
 // enlace antes que el usuario). Borrar junto con el resto de este debug una vez resuelto.
 const _installHits = [];
+// Un solo clic real estaba generando dos peticiones a esta ruta en ~1-2 segundos (confirmado
+// con el historial de arriba: misma IP, mismo navegador) — cada una redirigía a una URL de
+// autorización distinta, y Shopify solo deja viva la primera; la segunda quedaba "código ya
+// usado" apenas el usuario terminaba de autorizar. No importa cuál sea la causa exacta del
+// lado del navegador (precarga, antivirus, doble clic) — acá se blinda reusando la MISMA URL
+// de autorización para la misma tienda si se repite la petición en pocos segundos, así ambas
+// (o las que sean) apuntan a una sola sesión de autorización en vez de competir entre sí.
+const _recentInstallAuthUrls = new Map(); // shop -> { authUrl, createdAt }
+const INSTALL_DEDUPE_WINDOW_MS = 10 * 1000;
+
 router.get('/shopify/install', async (req, res) => {
     _installHits.push({
         at: new Date().toISOString(),
@@ -2191,6 +2201,11 @@ router.get('/shopify/install', async (req, res) => {
             return res.status(400).send('Tienda de Shopify inválida.');
         }
 
+        const cached = _recentInstallAuthUrls.get(shop);
+        if (cached && (Date.now() - cached.createdAt) < INSTALL_DEDUPE_WINDOW_MS) {
+            return res.redirect(cached.authUrl);
+        }
+
         const { rows } = await db.query('SELECT shopify_client_id FROM integration_settings WHERE id = 1');
         if (rows.length === 0 || !rows[0].shopify_client_id) {
             return res.status(500).send('El administrador no ha configurado el Client ID de Shopify.');
@@ -2202,6 +2217,7 @@ router.get('/shopify/install', async (req, res) => {
         const scopes = 'read_orders,read_customers'; // recortado a lo que el código realmente usa (ver shopify.app.toml)
 
         const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=install`;
+        _recentInstallAuthUrls.set(shop, { authUrl, createdAt: Date.now() });
         res.redirect(authUrl);
     } catch (err) {
         console.error('[ShopifyInstall] Error:', err);
