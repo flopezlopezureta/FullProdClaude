@@ -2209,6 +2209,17 @@ router.get('/shopify/pending-token/:ref', (req, res) => {
     res.json({ shop: entry.shop, accessToken: entry.accessToken });
 });
 
+// TEMPORAL — diagnóstico del fallo "código ya usado" en /shopify/install. Nunca devuelve el
+// token, solo si el intercambio llegó a completarse alguna vez sin que el navegador lo viera.
+// Borrar junto con el resto de este debug una vez resuelto.
+router.get('/shopify/debug-pending', authMiddleware, (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
+    const entries = [...pendingShopifyTokens.entries()].map(([ref, e]) => ({
+        ref, shop: e.shop, ageSeconds: Math.round((Date.now() - e.createdAt) / 1000)
+    }));
+    res.json({ count: entries.length, entries });
+});
+
 // GET /api/integrations/shopify/auth
 // Inicia el flujo de OAuth con Shopify
 router.get('/shopify/auth', authMiddleware, async (req, res) => {
