@@ -2280,7 +2280,17 @@ router.get('/shopify/callback', async (req, res) => {
             body: JSON.stringify(postData)
         });
 
-        const tokenData = await response.json();
+        // Cuando el code ya venció o se usó dos veces (son de un solo uso y expiran en ~60s),
+        // Shopify no responde con JSON — responde con una página HTML completa de error, que
+        // rompía este parseo con una excepción y terminaba mostrando el mensaje genérico de más
+        // abajo ("Error interno..."), sin decir la causa real.
+        let tokenData;
+        try {
+            tokenData = await response.json();
+        } catch (parseErr) {
+            console.error(`[ShopifyCallback] Shopify no devolvió JSON al canjear el código (status ${response.status}) — probablemente el código ya expiró o se usó antes.`);
+            return res.status(400).send('El código de autorización de Shopify ya expiró o se usó antes (son de un solo uso, válidos por muy poco tiempo). Vuelve a empezar el proceso desde el principio, sin recargar esta página ni repetir el mismo enlace.');
+        }
         if (!tokenData.access_token) {
             console.error('[ShopifyCallback] Error exchanging code:', tokenData);
             return res.status(401).send('Error al obtener el Access Token de Shopify. Verifica las credenciales de la App.');
