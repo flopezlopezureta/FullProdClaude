@@ -2253,6 +2253,28 @@ router.get('/shopify/debug-pending', authMiddleware, (req, res) => {
     });
 });
 
+// TEMPORAL — corrige shopify_client_secret, que quedó encriptado con un JWT_SECRET distinto al
+// de este contenedor (por eso decrypt() fallaba en silencio y devolvía el texto aún cifrado —
+// ver el catch de services/falabellaCrypto.js). Re-encripta con encrypt() de ESTE mismo proceso,
+// que sí tiene la clave correcta, y verifica el redondeo en la misma respuesta. El valor correcto
+// se manda en el cuerpo de la petición (nunca queda escrito en el código/git). De un solo uso —
+// borrar esta ruta junto con el resto del debug una vez confirmado.
+router.post('/shopify/debug-fix-secret', authMiddleware, express.json(), async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
+    try {
+        const { correctSecret } = req.body;
+        if (!correctSecret || !correctSecret.startsWith('shpss_')) {
+            return res.status(400).json({ message: 'Falta correctSecret (o no tiene el formato shpss_...) en el body.' });
+        }
+        const reEncrypted = encrypt(correctSecret);
+        await db.query('UPDATE integration_settings SET shopify_client_secret = $1 WHERE id = 1', [reEncrypted]);
+        const check = decrypt(reEncrypted);
+        res.json({ fixed: true, verifyRoundTripMatches: check === correctSecret, newDecryptedLen: check.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/integrations/shopify/auth
 // Inicia el flujo de OAuth con Shopify
 router.get('/shopify/auth', authMiddleware, async (req, res) => {
