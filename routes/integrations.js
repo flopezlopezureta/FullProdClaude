@@ -2325,15 +2325,20 @@ router.get('/shopify/callback', async (req, res) => {
 
         // 2. Intercambiar cÃ³digo por Access Token
         // Shopify requiere una peticiÃ³n POST a la tienda del cliente
+        const decryptedSecret = decrypt(shopify_client_secret);
         const postData = {
             client_id: shopify_client_id,
-            client_secret: decrypt(shopify_client_secret),
+            client_secret: decryptedSecret,
             code: code
         };
 
         // TEMPORAL: detalle de diagnóstico del fallo "código ya usado" — se borra junto con el
-        // resto de este debug una vez resuelto.
-        console.log(`[ShopifyCallback][DEBUG] shop=${shop} clientId=${shopify_client_id} codePrefix=${String(code).slice(0, 8)} codeLen=${String(code).length} host=${host}`);
+        // resto de este debug una vez resuelto. Replayar a mano el mismo code+secret desde un
+        // script local (fuera del contenedor desplegado) dio un token válido — así que se agrega
+        // el largo y los extremos del secreto ya desencriptado que usa ESTE proceso en vivo, para
+        // comparar contra el valor conocido-correcto (38 chars, empieza "shps", termina "9113")
+        // sin mostrar el secreto completo.
+        console.log(`[ShopifyCallback][DEBUG] shop=${shop} clientId=${shopify_client_id} codePrefix=${String(code).slice(0, 8)} codeLen=${String(code).length} host=${host} secretLen=${decryptedSecret.length} secretEdges=${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}`);
 
         const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
             method: 'POST',
@@ -2361,11 +2366,11 @@ router.get('/shopify/callback', async (req, res) => {
                 .replace(/<[^>]+>/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
-            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, respuesta completa (sin HTML): ${textOnly.replace(/</g, '&lt;')}]`);
+            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, secretLen: ${decryptedSecret.length}, secretEdges: ${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}, respuesta completa (sin HTML): ${textOnly.replace(/</g, '&lt;')}]`);
         }
         if (!tokenData.access_token) {
             console.error('[ShopifyCallback] Error exchanging code:', tokenData);
-            return res.status(401).send('Error al obtener el Access Token de Shopify. Verifica las credenciales de la App.');
+            return res.status(401).send(`Error al obtener el Access Token de Shopify. Verifica las credenciales de la App. [DEBUG temporal — secretLen: ${decryptedSecret.length}, secretEdges: ${decryptedSecret.slice(0,4)}...${decryptedSecret.slice(-4)}, respuesta Shopify: ${JSON.stringify(tokenData)}]`);
         }
 
         // Instalación iniciada por Shopify vía /shopify/install (ver arriba) — no hay ningún
