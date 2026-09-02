@@ -2170,7 +2170,18 @@ setInterval(() => {
 // OAuth de Shopify de inmediato, sin ningún inicio de sesión de por medio — es justo lo que
 // exige la revisión de la App Store ("Inicia la autenticación inmediatamente después de la
 // instalación"). El callback de abajo distingue este flujo del otro por state='install'.
+// TEMPORAL — historial de cada golpe a /shopify/install, para ver si un solo clic real
+// dispara más de una petición (antivirus/SmartScreen/precarga del navegador visitando el
+// enlace antes que el usuario). Borrar junto con el resto de este debug una vez resuelto.
+const _installHits = [];
 router.get('/shopify/install', async (req, res) => {
+    _installHits.push({
+        at: new Date().toISOString(),
+        shop: req.query.shop,
+        ua: req.headers['user-agent'],
+        ip: req.headers['cf-connecting-ip'] || req.ip
+    });
+    if (_installHits.length > 30) _installHits.shift();
     try {
         let { shop } = req.query;
         if (!shop) return res.status(400).send('Falta el parámetro shop.');
@@ -2221,6 +2232,7 @@ router.get('/shopify/debug-pending', authMiddleware, (req, res) => {
     res.json({
         count: entries.length,
         entries,
+        installHits: _installHits,
         instance: { bootId: _instanceBootId, pid: process.pid, hostname: require('os').hostname(), uptimeSeconds: Math.round(process.uptime()) }
     });
 });
