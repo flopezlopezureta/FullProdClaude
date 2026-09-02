@@ -2346,14 +2346,22 @@ router.get('/shopify/callback', async (req, res) => {
         // rompía este parseo con una excepción y terminaba mostrando el mensaje genérico de más
         // abajo ("Error interno..."), sin decir la causa real.
         const rawBody = await response.text();
-        console.log(`[ShopifyCallback][DEBUG] Shopify respondió status=${response.status} content-type=${response.headers.get('content-type')} body(300)=${rawBody.slice(0, 300)}`);
+        console.log(`[ShopifyCallback][DEBUG] Shopify respondió status=${response.status} content-type=${response.headers.get('content-type')} body(FULL)=${rawBody}`);
         let tokenData;
         try {
             tokenData = JSON.parse(rawBody);
         } catch (parseErr) {
             // TEMPORAL: se muestra el detalle real en pantalla para diagnosticar sin depender
-            // de los logs del servidor — quitar este detalle una vez resuelto.
-            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, primeros 200 caracteres de la respuesta: ${rawBody.slice(0, 200).replace(/</g, '&lt;')}]`);
+            // de los logs del servidor — quitar este detalle una vez resuelto. Antes solo
+            // mostraba los primeros 200 caracteres (el título genérico "invalid_request") — se
+            // amplía a texto plano completo (sin tags) para ver si Shopify incluye una razón
+            // específica más abajo en la página de error.
+            const textOnly = rawBody
+                .replace(/<style[\s\S]*?<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, respuesta completa (sin HTML): ${textOnly.replace(/</g, '&lt;')}]`);
         }
         if (!tokenData.access_token) {
             console.error('[ShopifyCallback] Error exchanging code:', tokenData);
