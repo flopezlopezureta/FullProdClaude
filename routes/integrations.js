@@ -2290,6 +2290,10 @@ router.get('/shopify/callback', async (req, res) => {
             code: code
         };
 
+        // TEMPORAL: detalle de diagnóstico del fallo "código ya usado" — se borra junto con el
+        // resto de este debug una vez resuelto.
+        console.log(`[ShopifyCallback][DEBUG] shop=${shop} clientId=${shopify_client_id} codePrefix=${String(code).slice(0, 8)} codeLen=${String(code).length} host=${host}`);
+
         const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2300,12 +2304,15 @@ router.get('/shopify/callback', async (req, res) => {
         // Shopify no responde con JSON — responde con una página HTML completa de error, que
         // rompía este parseo con una excepción y terminaba mostrando el mensaje genérico de más
         // abajo ("Error interno..."), sin decir la causa real.
+        const rawBody = await response.text();
+        console.log(`[ShopifyCallback][DEBUG] Shopify respondió status=${response.status} content-type=${response.headers.get('content-type')} body(300)=${rawBody.slice(0, 300)}`);
         let tokenData;
         try {
-            tokenData = await response.json();
+            tokenData = JSON.parse(rawBody);
         } catch (parseErr) {
-            console.error(`[ShopifyCallback] Shopify no devolvió JSON al canjear el código (status ${response.status}) — probablemente el código ya expiró o se usó antes.`);
-            return res.status(400).send('El código de autorización de Shopify ya expiró o se usó antes (son de un solo uso, válidos por muy poco tiempo). Vuelve a empezar el proceso desde el principio, sin recargar esta página ni repetir el mismo enlace.');
+            // TEMPORAL: se muestra el detalle real en pantalla para diagnosticar sin depender
+            // de los logs del servidor — quitar este detalle una vez resuelto.
+            return res.status(400).send(`El código de autorización de Shopify ya expiró o se usó antes. [DEBUG temporal — status Shopify: ${response.status}, content-type: ${response.headers.get('content-type')}, primeros 200 caracteres de la respuesta: ${rawBody.slice(0, 200).replace(/</g, '&lt;')}]`);
         }
         if (!tokenData.access_token) {
             console.error('[ShopifyCallback] Error exchanging code:', tokenData);
