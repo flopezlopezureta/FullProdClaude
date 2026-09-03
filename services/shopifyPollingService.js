@@ -3,10 +3,13 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
-const { decrypt } = require('./falabellaCrypto');
+const { encrypt, decrypt } = require('./falabellaCrypto');
 
 // --- SHOPIFY API HELPERS ---
-const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData = null) => {
+// Shopify exige API GraphQL exclusiva para apps nuevas desde el 1 de abril de 2025 — REST
+// (/orders.json) ya no se acepta en revisión para una app que nunca fue aprobada antes de esa
+// fecha, como esta. Reemplaza al viejo makeShopifyRequest (REST) por completo.
+const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}) => {
     return new Promise((resolve, reject) => {
         if (!shopUrl) return reject(new Error('La URL de la tienda es requerida.'));
         if (!accessToken) return reject(new Error('El Access Token de Shopify es requerido.'));
@@ -21,15 +24,16 @@ const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData
             hostname = hostname.replace('.shopify.com', '.myshopify.com');
         }
 
+        const body = JSON.stringify({ query, variables });
         const options = {
             hostname: hostname,
-            path: `/admin/api/2026-01${path}`,
-            method: method,
+            path: '/admin/api/2026-01/graphql.json',
+            method: 'POST',
             headers: {
                 'X-Shopify-Access-Token': accessToken,
-                'X-Shopify-Api-Version': '2026-01',
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'Content-Length': Buffer.byteLength(body)
             }
         };
 
@@ -38,11 +42,13 @@ const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
                 try {
-                    const parsedData = JSON.parse(data);
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
-                        resolve(parsedData);
+                    const parsed = JSON.parse(data);
+                    // GraphQL puede responder 200 y aun así traer errores (query inválida,
+                    // campo sin permiso, etc.) en vez de un status HTTP de error.
+                    if (res.statusCode >= 200 && res.statusCode < 300 && !parsed.errors) {
+                        resolve(parsed.data);
                     } else {
-                        reject({ statusCode: res.statusCode, body: parsedData });
+                        reject({ statusCode: res.statusCode, body: parsed.errors || parsed });
                     }
                 } catch (e) {
                     reject({ statusCode: res.statusCode, body: data, isRaw: true });
@@ -57,10 +63,70 @@ const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData
         });
 
         req.on('error', (e) => reject(e));
-        if (postData) req.write(typeof postData === 'string' ? postData : JSON.stringify(postData));
+        req.write(body);
         req.end();
     });
 };
+
+// Misma query que routes/integrations.js usa para el fetch manual — mismos campos, para no
+// tener que tocar el resto del mapeo de pedido a paquete que ya existía con REST.
+const SHOPIFY_ORDERS_QUERY = `
+  query GetOrders($searchQuery: String!, $first: Int!) {
+    orders(first: $first, query: $searchQuery, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          legacyResourceId
+          name
+          number
+          email
+          customer { firstName defaultPhoneNumber { phoneNumber } }
+          shippingAddress { firstName lastName phone address1 address2 city province }
+          billingAddress { firstName lastName phone address1 address2 city province }
+        }
+      }
+    }
+  }
+`;
+
+// Renueva el access token si ya está por vencer (tokens "expiring", obtenidos con expiring:1
+// desde routes/integrations.js — ver ahí el porqué). Conexiones viejas sin expiresAt (tokens
+// "non-expiring" de antes de ese cambio) no entran a este if y siguen usando su token tal cual,
+// igual que siempre. Muta credentials.accessToken/refreshToken/expiresAt in-place y guarda en
+// la base cuando renueva, para que el resto del ciclo de este mismo poll ya use el token nuevo.
+async function getValidShopifyAccessToken(clientId, credentials, integrations, accountIndex) {
+    if (credentials.expiresAt && Date.now() >= credentials.expiresAt - 60000) {
+        const { rows: settingsRows } = await db.query('SELECT shopify_client_id, shopify_client_secret FROM integration_settings WHERE id = 1');
+        if (settingsRows.length === 0) throw new Error('Configuración global de Shopify no encontrada.');
+        const { shopify_client_id, shopify_client_secret } = settingsRows[0];
+
+        const refreshResponse = await fetch(`https://${credentials.shopUrl}/admin/oauth/access_token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                grant_type: 'refresh_token',
+                client_id: shopify_client_id,
+                client_secret: decrypt(shopify_client_secret),
+                refresh_token: decrypt(credentials.refreshToken)
+            })
+        });
+        const refreshed = await refreshResponse.json();
+        // Un 401 al renovar es terminal según Shopify (token revocado o app desinstalada) — no
+        // hay nada que reintentar, se deja que el catch de más abajo lo registre y siga con la
+        // siguiente cuenta.
+        if (!refreshResponse.ok || !refreshed.access_token) {
+            throw new Error(`No se pudo renovar el token de Shopify (${credentials.shopUrl}): ${JSON.stringify(refreshed)}`);
+        }
+
+        credentials.accessToken = encrypt(refreshed.access_token);
+        credentials.refreshToken = encrypt(refreshed.refresh_token);
+        credentials.expiresAt = Date.now() + (refreshed.expires_in * 1000);
+        if (accountIndex > -1) {
+            integrations.accounts[accountIndex].credentials = credentials;
+            await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
+        }
+    }
+    return decrypt(credentials.accessToken);
+}
 
 let isPolling = false;
 let pollingStartTime = null;
@@ -177,62 +243,70 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                 try {
                     const shopify = account.credentials;
                     const settings = account.settings || {};
+                    const accountIndex = integrations.accounts.findIndex(acc => acc.id === account.id);
 
                     if (!shopify.shopUrl || !shopify.accessToken) continue;
-                    // Same safe decrypt() as routes/integrations.js — a no-op on tokens saved
-                    // before encryption was added, so nothing breaks for existing connections.
-                    shopify.accessToken = decrypt(shopify.accessToken);
                     if (settings.autoImport !== true) continue;
 
-                    const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 2; 
+                    const syncIntervalMin = settings.syncInterval !== undefined ? settings.syncInterval : 2;
                     const lastSync = settings.lastSync ? new Date(settings.lastSync).getTime() : 0;
                     const now = Date.now();
-                    
+
                     if (now - lastSync < (syncIntervalMin * 60 * 1000)) continue;
+
+                    // Renueva solo si ya está por vencer — no-op (y solo desencripta) para
+                    // conexiones viejas sin expiresAt. Debe ir antes del fetch de pedidos, ya
+                    // que puede mutar shopify.accessToken/refreshToken/expiresAt.
+                    const validAccessToken = await getValidShopifyAccessToken(clientId, shopify, integrations, accountIndex);
 
                     // [ESTABILIDAD] Timeout de 45 seg por cuenta
                     await Promise.race([
                         (async () => {
                             // Update lastSync for this account
-                            const accountIndex = integrations.accounts.findIndex(acc => acc.id === account.id);
                             if (accountIndex > -1) {
                                 integrations.accounts[accountIndex].settings.lastSync = new Date().toISOString();
                                 await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
                             }
 
                             // 2. Fetch recent paid orders
-                            const ordersData = await makeShopifyRequest(shopify.shopUrl, shopify.accessToken, '/orders.json?status=open&financial_status=paid&limit=50');
-                            
-                            if (!ordersData.orders || ordersData.orders.length === 0) return;
+                            const gqlData = await makeShopifyGraphQLRequest(
+                                shopify.shopUrl,
+                                validAccessToken,
+                                SHOPIFY_ORDERS_QUERY,
+                                { searchQuery: 'status:open financial_status:paid', first: 50 }
+                            );
+                            const orders = (gqlData?.orders?.edges || []).map(e => e.node);
 
-                            console.log(`[ShopifyPolling] Found ${ordersData.orders.length} paid orders for client ${clientId} (${account.nickname})`);
+                            if (orders.length === 0) return;
 
-                            for (const order of ordersData.orders) {
+                            console.log(`[ShopifyPolling] Found ${orders.length} paid orders for client ${clientId} (${account.nickname})`);
+
+                            for (const order of orders) {
                                 try {
-                                    const orderId = order.id.toString();
-                                    const orderNumber = order.order_number ? order.order_number.toString() : (order.name || orderId);
+                                    const orderId = order.legacyResourceId;
+                                    const orderNumber = order.number ? order.number.toString() : (order.name || orderId);
                                     const { rows: existing } = await db.query('SELECT id FROM packages WHERE "shopifyOrderId" = $1 OR "id" = $2', [orderId, orderId]);
                                     if (existing.length > 0) continue;
 
-                                    const address = order.shipping_address || order.billing_address || {};
+                                    const address = order.shippingAddress || order.billingAddress || {};
                                     const province = (address.province || '').toLowerCase();
                                     const city = (address.city || '').toLowerCase();
-                                    
-                                    const isRM = province.includes('metropolitana') || 
-                                                 province.includes('santiago') || 
+
+                                    const isRM = province.includes('metropolitana') ||
+                                                 province.includes('santiago') ||
                                                  province.includes('rm') ||
                                                  province.includes('r.m.') ||
                                                  city.includes('santiago') ||
                                                  city.includes('metropolitana') ||
                                                  city.includes('rm') ||
                                                  validCommunes.includes(city);
-                                    
+
                                     if (!isRM) continue;
 
                                     const nowImport = new Date();
                                     const newPackage = {
                                         id: `${clientIdentifier}-${uuidv4().split('-')[0]}`,
-                                        recipientName: `${address.first_name || ''} ${address.last_name || ''}`.trim() || 'N/A',
+                                        recipientName: `${address.firstName || ''} ${address.lastName || ''}`.trim() || 'N/A',
                                         recipientPhone: address.phone || 'N/A',
                                         recipientEmail: order.email || '',
                                         status: 'PENDIENTE',

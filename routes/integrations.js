@@ -1082,41 +1082,30 @@ router.post('/:clientId/meli/import', authMiddleware, async (req, res) => {
 });
 
 // --- SHOPIFY API HELPERS ---
-const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData = null) => {
+// Shopify exige API GraphQL exclusiva para apps nuevas desde el 1 de abril de 2025 — REST
+// (/orders.json, /shop.json) ya no se acepta en revisión para apps que nunca fueron aprobadas
+// antes de esa fecha, como esta. Reemplaza al viejo makeShopifyRequest (REST) por completo.
+const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}) => {
     return new Promise((resolve, reject) => {
         if (!shopUrl) return reject(new Error('La URL de la tienda es requerida.'));
         if (!accessToken) return reject(new Error('El Access Token de Shopify es requerido.'));
 
-        // Extract only the hostname (e.g., shopname.myshopify.com)
-        let hostname = shopUrl.trim();
-        
-        // Remove protocol
-        hostname = hostname.replace(/^https?:\/\//, '');
-        
-        // Remove path if present (e.g. tienda.myshopify.com/admin)
-        hostname = hostname.split('/')[0];
-        
-        // Remove port if present
-        hostname = hostname.split(':')[0];
-
-        // Basic validation: if no dots, assume it's just the shop name
-        if (hostname && !hostname.includes('.')) {
-            hostname += '.myshopify.com';
-        }
-
+        let hostname = shopUrl.trim().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+        if (hostname && !hostname.includes('.')) hostname += '.myshopify.com';
         if (!hostname) {
-            return reject(new Error('URL de tienda invÃ¡lida. Por favor usa el formato "tienda.myshopify.com".'));
+            return reject(new Error('URL de tienda inválida. Por favor usa el formato "tienda.myshopify.com".'));
         }
 
+        const body = JSON.stringify({ query, variables });
         const options = {
-            hostname: hostname,
-            path: `/admin/api/2026-01${path}`,
-            method: method,
+            hostname,
+            path: '/admin/api/2026-01/graphql.json',
+            method: 'POST',
             headers: {
                 'X-Shopify-Access-Token': accessToken,
-                'X-Shopify-Api-Version': '2026-01',
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'Content-Length': Buffer.byteLength(body)
             }
         };
 
@@ -1125,53 +1114,72 @@ const makeShopifyRequest = (shopUrl, accessToken, path, method = 'GET', postData
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
                 try {
-                    const parsedData = JSON.parse(data);
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
-                        resolve(parsedData);
+                    const parsed = JSON.parse(data);
+                    // GraphQL puede responder 200 y aun así traer errores (query inválida,
+                    // campo sin permiso, etc.) en vez de un status HTTP de error — hay que
+                    // revisar el arreglo "errors" además del status code.
+                    if (res.statusCode >= 200 && res.statusCode < 300 && !parsed.errors) {
+                        resolve(parsed.data);
                     } else {
-                        // Shopify often returns errors as { errors: "..." } or { errors: { field: ["error"] } }
-                        reject({ statusCode: res.statusCode, body: parsedData });
+                        reject({ statusCode: res.statusCode, body: parsed.errors || parsed });
                     }
                 } catch (e) {
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
-                        resolve(data);
-                    } else {
-                        reject({ statusCode: res.statusCode, body: data, isRaw: true });
-                    }
+                    reject({ statusCode: res.statusCode, body: data, isRaw: true });
                 }
             });
         });
 
         req.on('error', (e) => {
-            console.error(`Shopify Request Error (${hostname}):`, e.message);
+            console.error(`Shopify GraphQL Request Error (${hostname}):`, e.message);
             reject(new Error(`Error de red al contactar a Shopify (${hostname}): ${e.message}`));
         });
 
-        if (postData) {
-            req.write(JSON.stringify(postData));
-        }
+        req.write(body);
         req.end();
     });
 };
 
+// Query compartida por el test de conexión manual y el fetch de pedidos para importar — misma
+// forma de datos que antes traía REST (shipping/billing address, cliente), solo que ahora en
+// camelCase y con legacyResourceId en vez de id numérico, para no tener que tocar el resto del
+// código que arma el paquete a partir de estos campos.
+const SHOPIFY_ORDERS_QUERY = `
+  query GetOrders($searchQuery: String!, $first: Int!) {
+    orders(first: $first, query: $searchQuery, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          legacyResourceId
+          name
+          number
+          email
+          customer { firstName defaultPhoneNumber { phoneNumber } }
+          shippingAddress { firstName lastName phone address1 address2 city province }
+          billingAddress { firstName lastName phone address1 address2 city province }
+        }
+      }
+    }
+  }
+`;
+
 const getValidShopifyIntegration = async (clientId, accountId = null) => {
     const { rows: userRows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
     if (userRows.length === 0) throw new Error('Cliente no encontrado.');
-    
+
     let integrations = ensureMultiAccountStructure(userRows[0].integrations || {});
     let shopifyIntegration = null;
+    let accountIndex = -1;
 
     if (accountId) {
-        const acc = integrations.accounts.find(a => a.id === accountId && a.type === 'SHOPIFY');
-        if (acc) shopifyIntegration = acc.credentials;
+        accountIndex = integrations.accounts.findIndex(a => a.id === accountId && a.type === 'SHOPIFY');
+        if (accountIndex > -1) shopifyIntegration = integrations.accounts[accountIndex].credentials;
     } else {
         shopifyIntegration = integrations.shopify;
         if (!shopifyIntegration && integrations.accounts) {
-            const acc = integrations.accounts.find(a => a.type === 'SHOPIFY');
-            if (acc) shopifyIntegration = acc.credentials;
+            accountIndex = integrations.accounts.findIndex(a => a.type === 'SHOPIFY');
+            if (accountIndex > -1) shopifyIntegration = integrations.accounts[accountIndex].credentials;
         }
     }
-    
+
     // If not in user, check global settings
     if (!shopifyIntegration || !shopifyIntegration.shopUrl || !shopifyIntegration.accessToken) {
         const { rows: settingsRows } = await db.query('SELECT shopify_shop_url, shopify_access_token FROM integration_settings WHERE id = 1');
@@ -1187,9 +1195,47 @@ const getValidShopifyIntegration = async (clientId, accountId = null) => {
         throw new Error('El cliente no tiene Shopify configurado.');
     }
 
-    // decrypt() safely returns its input unchanged if it isn't actually encrypted (see
-    // falabellaCrypto.js) — so tokens saved before this change (still plaintext) keep working
-    // exactly as before, while anything saved from now on comes back correctly decrypted.
+    // Renovar si el token es "expiring" (tiene expiresAt, viene de una conexión hecha después de
+    // agregar expiring:1 al intercambio) y ya venció o está por vencer en menos de 1 minuto.
+    // Conexiones viejas sin expiresAt (tokens "non-expiring" de antes de este cambio) no entran
+    // acá — decrypt() abajo las deja funcionar exactamente igual que siempre. accountIndex > -1
+    // es necesario para poder guardar el token renovado de vuelta en el lugar correcto.
+    if (accountIndex > -1 && shopifyIntegration.expiresAt && Date.now() >= shopifyIntegration.expiresAt - 60000) {
+        const { rows: settingsRows } = await db.query('SELECT shopify_client_id, shopify_client_secret FROM integration_settings WHERE id = 1');
+        if (settingsRows.length === 0) throw new Error('Configuración global de Shopify no encontrada.');
+        const { shopify_client_id, shopify_client_secret } = settingsRows[0];
+
+        const refreshResponse = await fetch(`https://${shopifyIntegration.shopUrl}/admin/oauth/access_token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                grant_type: 'refresh_token',
+                client_id: shopify_client_id,
+                client_secret: decrypt(shopify_client_secret),
+                refresh_token: decrypt(shopifyIntegration.refreshToken)
+            })
+        });
+        const refreshed = await refreshResponse.json();
+        // Un 401 al renovar es terminal según Shopify (token revocado o app desinstalada) — no
+        // hay nada que reintentar, solo informar el error hacia arriba.
+        if (!refreshResponse.ok || !refreshed.access_token) {
+            throw new Error(`No se pudo renovar el token de Shopify (${shopifyIntegration.shopUrl}): ${JSON.stringify(refreshed)}`);
+        }
+
+        shopifyIntegration = {
+            ...shopifyIntegration,
+            accessToken: encrypt(refreshed.access_token),
+            refreshToken: encrypt(refreshed.refresh_token),
+            expiresAt: Date.now() + (refreshed.expires_in * 1000)
+        };
+        integrations.accounts[accountIndex].credentials = shopifyIntegration;
+        await db.query('UPDATE users SET integrations = $1 WHERE id = $2', [JSON.stringify(integrations), clientId]);
+    }
+
+    // decrypt() safely returns its input unchanged si no está realmente encriptado (ver
+    // falabellaCrypto.js) — así que tokens guardados antes de este cambio (aún en texto plano)
+    // siguen funcionando igual, mientras que todo lo guardado desde ahora vuelve bien
+    // desencriptado.
     return { ...shopifyIntegration, accessToken: decrypt(shopifyIntegration.accessToken) };
 };
 
@@ -1301,8 +1347,8 @@ router.post('/test/shopify', authMiddleware, async (req, res) => {
 
     try {
         // Test by fetching shop info
-        const shopData = await makeShopifyRequest(shopifyShopUrl, shopifyAccessToken, '/shop.json');
-        res.json({ 
+        const shopData = await makeShopifyGraphQLRequest(shopifyShopUrl, shopifyAccessToken, `{ shop { name } }`);
+        res.json({
             message: 'ConexiÃ³n exitosa con Shopify.',
             shopName: shopData?.shop?.name
         });
@@ -1441,23 +1487,33 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
         let allOrders = [];
         for (const account of shopifyAccounts) {
             try {
+                // El pseudo-account 'legacy-shopify' (armado arriba) ya trae sus credenciales
+                // resueltas — pedir de nuevo con ese id no encontraría nada real en
+                // integrations.accounts. Para el resto, pasar por getValidShopifyIntegration
+                // renueva el token solo si ya está por vencer.
+                const credentials = account.id === 'legacy-shopify'
+                    ? account.credentials
+                    : await getValidShopifyIntegration(clientId, account.id);
+
                 // Fetch open orders
-                const data = await makeShopifyRequest(
-                    account.credentials.shopUrl, 
-                    account.credentials.accessToken, 
-                    '/orders.json?status=open&fulfillment_status=unfulfilled'
+                const gqlData = await makeShopifyGraphQLRequest(
+                    credentials.shopUrl,
+                    credentials.accessToken,
+                    SHOPIFY_ORDERS_QUERY,
+                    { searchQuery: 'status:open fulfillment_status:unfulfilled', first: 50 }
                 );
-                
-                if (data && data.orders) {
-                    const mapped = data.orders.map(order => ({
-                        id: order.id.toString(),
-                        recipientName: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim() || order.customer?.first_name || 'N/A',
-                        recipientPhone: order.shipping_address?.phone || order.customer?.phone || 'N/A',
-                        address: `${order.shipping_address?.address1 || ''} ${order.shipping_address?.address2 || ''}`.trim() || 'N/A',
-                        commune: normalizeCommune(order.shipping_address?.city || 'N/A'),
-                        city: order.shipping_address?.province || 'N/A',
-                        notes: `Shopify Order: ${order.name || order.id} (${account.nickname})`,
-                        orderNumber: order.order_number?.toString() || order.name || order.id.toString(),
+                const orders = (gqlData?.orders?.edges || []).map(e => e.node);
+
+                if (orders.length > 0) {
+                    const mapped = orders.map(order => ({
+                        id: order.legacyResourceId,
+                        recipientName: `${order.shippingAddress?.firstName || ''} ${order.shippingAddress?.lastName || ''}`.trim() || order.customer?.firstName || 'N/A',
+                        recipientPhone: order.shippingAddress?.phone || order.customer?.defaultPhoneNumber?.phoneNumber || 'N/A',
+                        address: `${order.shippingAddress?.address1 || ''} ${order.shippingAddress?.address2 || ''}`.trim() || 'N/A',
+                        commune: normalizeCommune(order.shippingAddress?.city || 'N/A'),
+                        city: order.shippingAddress?.province || 'N/A',
+                        notes: `Shopify Order: ${order.name || order.legacyResourceId} (${account.nickname})`,
+                        orderNumber: order.number?.toString() || order.name || order.legacyResourceId,
                         sourceAccountId: account.id,
                         sourceAccountName: account.nickname
                     }));
@@ -2270,11 +2326,16 @@ router.get('/shopify/callback', async (req, res) => {
         const { shopify_client_id, shopify_client_secret } = settingsRows[0];
 
         // 2. Intercambiar cÃ³digo por Access Token
-        // Shopify requiere una peticiÃ³n POST a la tienda del cliente
+        // Shopify requiere una peticiÃ³n POST a la tienda del cliente. expiring:1 pide un token
+        // que expira en 1h + refresh_token (90 días) — Shopify dejó de aceptar tokens "que no
+        // expiran" para apps nuevas, sin esto el intercambio fallaba con 403 en cada llamada
+        // posterior a la API (visto en vivo al probar el fetch de pedidos recién migrado a
+        // GraphQL). Ver getValidShopifyAccessToken más abajo para el renovado automático.
         const postData = {
             client_id: shopify_client_id,
             client_secret: decrypt(shopify_client_secret),
-            code: code
+            code: code,
+            expiring: 1
         };
 
         const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
@@ -2309,6 +2370,11 @@ router.get('/shopify/callback', async (req, res) => {
         // de forma temporal y se redirige de inmediato (sin clic de por medio, como exige la
         // revisión de la App Store) a una página propia donde el comerciante lo copia y lo pega
         // en su configuración manual.
+        // PENDIENTE: como el token ahora es de tipo "expiring" (ver expiring:1 arriba), el que se
+        // copia acá deja de servir ~1h después de pegarlo — este flujo manual todavía no guarda
+        // ni renueva el refresh_token que también vino en la respuesta. Aceptable por ahora solo
+        // porque su uso principal hoy es la prueba de instalación de la revisión de Shopify, no
+        // conexiones reales de clientes de largo plazo.
         if (state === 'install') {
             const ref = crypto.randomUUID();
             pendingShopifyTokens.set(ref, { shop, accessToken: tokenData.access_token, createdAt: Date.now() });
@@ -2331,7 +2397,9 @@ router.get('/shopify/callback', async (req, res) => {
             nickname: `Shopify (${shop.split('.')[0]})`,
             credentials: {
                 shopUrl: shop,
-                accessToken: encrypt(tokenData.access_token)
+                accessToken: encrypt(tokenData.access_token),
+                refreshToken: encrypt(tokenData.refresh_token),
+                expiresAt: Date.now() + (tokenData.expires_in * 1000)
             },
             settings: {
                 autoImport: true,
