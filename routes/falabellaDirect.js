@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const falabellaDirectService = require('../services/falabellaDirectService');
+const { encrypt, decrypt } = require('../services/falabellaCrypto');
 
 const isSuperUser = (email) => email === 'admin' || email === 'admin@admin.cl';
 
@@ -235,6 +236,29 @@ async function pushStatusWithRetry(packageId, lpn, statusCode, description, extr
         }
     }
 }
+
+// TEMPORAL — mismo bug que Shopify la misma noche (ver [[shopify_secret_reencrypt_local_vs_prod]]):
+// falabella_direct_client_secret quedó encriptado con un JWT_SECRET distinto al del contenedor
+// real, así que decrypt() fallaba en silencio (ver el catch de falabellaCrypto.js) y devolvía el
+// texto aún cifrado — confirmado en vivo con un 401 "invalid_client" al intentar la validación
+// UAT que pidió Falabella. Re-encripta con encrypt() de ESTE mismo proceso, que sí tiene la clave
+// correcta. El valor correcto se manda en el cuerpo de la petición (nunca en el código/git). De un
+// solo uso — borrar esta ruta junto con el resto del debug una vez confirmado.
+router.post('/debug-fix-secret', authMiddleware, express.json(), async (req, res) => {
+    if (!isSuperUser(req.user?.email) && req.user?.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
+    try {
+        const { correctSecret } = req.body;
+        if (!correctSecret) {
+            return res.status(400).json({ message: 'Falta correctSecret en el body.' });
+        }
+        const reEncrypted = encrypt(correctSecret);
+        await db.query('UPDATE integration_settings SET falabella_direct_client_secret = $1 WHERE id = 1', [reEncrypted]);
+        const check = decrypt(reEncrypted);
+        res.json({ fixed: true, verifyRoundTripMatches: check === correctSecret, newDecryptedLen: check.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 module.exports = router;
 module.exports.pushStatusWithRetry = pushStatusWithRetry;
