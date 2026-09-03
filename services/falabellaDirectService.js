@@ -65,6 +65,11 @@ async function authenticate(clientId, clientSecret, environment) {
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'x-environment': environment,
+            // Requerido según la doc de Falabella (headers: x-environment, x-country) — ya se
+            // mandaba correctamente en getOrderByLpn y el push de estados, pero faltaba acá, en
+            // la autenticación misma. Causaba "invalid_client" en cada intento, aunque las
+            // credenciales en sí siempre estuvieron bien.
+            'x-country': 'CL',
             'Content-Length': Buffer.byteLength(body),
         },
     }, body);
