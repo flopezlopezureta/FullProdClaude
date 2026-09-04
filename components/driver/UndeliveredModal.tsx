@@ -17,6 +17,7 @@ const commonReasons = [
     "Entrega rechazada por el destinatario",
     "Acceso denegado o zona peligrosa",
     "Cliente solicita reagendar entrega",
+    "Cliente canceló el pedido",
     "Otro motivo (especificar)",
 ];
 

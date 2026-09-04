@@ -2435,7 +2435,8 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
         }
 
         const isReschedule = reason.toLowerCase().includes('reagendar') || reason.toLowerCase().includes('reprogramar');
-        const targetStatus = isReschedule ? 'REPROGRAMADO' : 'PROBLEMA';
+        const isCancelled = reason.toLowerCase().includes('cancel');
+        const targetStatus = isReschedule ? 'REPROGRAMADO' : (isCancelled ? 'CANCELADO' : 'PROBLEMA');
 
         const { rows } = await db.query(
             'UPDATE packages SET status = $1, "deliveryPhotosBase64" = $2, "updatedAt" = $3 WHERE id = $4 RETURNING *',

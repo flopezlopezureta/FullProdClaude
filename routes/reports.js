@@ -60,11 +60,11 @@ router.get('/activity-audit', authMiddleware, async (req, res) => {
                 COUNT(pd.id) FILTER (WHERE pd.delivered_count > 0 AND pd.failed_attempts = 0) as "successFirstAttempt",
                 COUNT(pd.id) FILTER (WHERE pd.delivered_count > 0 AND pd.failed_attempts = 1) as "successSecondAttempt",
                 COUNT(pd.id) FILTER (WHERE pd.delivered_count > 0 AND pd.failed_attempts > 1) as "successMultipleAttempts",
-                COUNT(pd.id) FILTER (WHERE pd.current_status IN ('PROBLEMA', 'REPROGRAMADO') AND pd.delivered_count = 0) as "failedCurrently",
+                COUNT(pd.id) FILTER (WHERE pd.current_status IN ('PROBLEMA', 'REPROGRAMADO', 'CANCELADO') AND pd.delivered_count = 0) as "failedCurrently",
                 COUNT(pd.id) FILTER (WHERE pd.current_status = 'DEVUELTO' OR (pd.returned_count > 0 AND pd.delivered_count = 0)) as "returnedTotal",
                 COUNT(pd.id) FILTER (WHERE pd.current_status IN ('ASIGNADO', 'RETIRADO', 'EN_TRANSITO') AND pd.delivered_count = 0) as "inTransit",
-                COUNT(pd.id) FILTER (WHERE pd.current_status NOT IN ('ENTREGADO', 'PROBLEMA', 'REPROGRAMADO', 'DEVUELTO', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO') AND pd.delivered_count = 0) as "pending",
-                COUNT(pd.id) FILTER (WHERE pd.delivered_count > 0 OR pd.current_status IN ('PROBLEMA', 'REPROGRAMADO', 'DEVUELTO', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')) as "dispatched"
+                COUNT(pd.id) FILTER (WHERE pd.current_status NOT IN ('ENTREGADO', 'PROBLEMA', 'REPROGRAMADO', 'CANCELADO', 'DEVUELTO', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO') AND pd.delivered_count = 0) as "pending",
+                COUNT(pd.id) FILTER (WHERE pd.delivered_count > 0 OR pd.current_status IN ('PROBLEMA', 'REPROGRAMADO', 'CANCELADO', 'DEVUELTO', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')) as "dispatched"
             FROM package_data pd
             JOIN users u ON pd."creatorId" = u.id
             GROUP BY u.id, u.name, u."companyName"

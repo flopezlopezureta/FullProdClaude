@@ -257,7 +257,7 @@ router.get('/closures/summary', authMiddleware, async (req, res) => {
             SELECT 
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE status = 'ENTREGADO') as delivered,
-                COUNT(*) FILTER (WHERE status IN ('PROBLEMA', 'REPROGRAMADO', 'DEVUELTO')) as problems,
+                COUNT(*) FILTER (WHERE status IN ('PROBLEMA', 'REPROGRAMADO', 'CANCELADO', 'DEVUELTO')) as problems,
                 COUNT(*) FILTER (WHERE status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')) as pending
             FROM packages 
             WHERE "driverId" = $1 
