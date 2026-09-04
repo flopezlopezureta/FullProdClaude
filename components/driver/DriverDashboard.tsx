@@ -54,6 +54,10 @@ const DriverDashboard: React.FC = () => {
   // because the modal's onClose set deliveringPackages back to null, which re-ran the auto-open
   // effect below and found the same still-flagged package, reopening it in the same render pass.
   const [dismissedMeliPromptIds, setDismissedMeliPromptIds] = useState<Set<string>>(new Set());
+  // Aviso no bloqueante de pendientes de días anteriores (reemplaza el bloqueo duro que existió
+  // brevemente) — mismo criterio de persistencia que dismissedMeliPromptIds arriba, por la misma
+  // razón: el dashboard se remonta al cambiar de pestaña (Retiros, Devoluciones...) y volver.
+  const [dismissedStaleBannerIds, setDismissedStaleBannerIds] = useState<Set<string>>(new Set());
   const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set());
   const [reportingProblemPackage, setReportingProblemPackage] = useState<Package | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -190,6 +194,33 @@ const DriverDashboard: React.FC = () => {
     }
   }, [auth?.user?.id]);
 
+  // Load/save dismissedMeliPromptIds — see its declaration above for why this needs to survive
+  // a DriverDashboard remount (switching tabs and back), not just live in memory. (Missing from
+  // Production before this cherry-pick — ported over here since it's a real, unrelated gap this
+  // merge surfaced: dismissedMeliPromptIds existed as state but was never actually persisted.)
+  useEffect(() => {
+    if (!auth?.user) return;
+    const saved = storageUtils.getItem<string[]>(`dismissed_meli_prompts_${auth.user.id}`, []);
+    if (saved.length > 0) setDismissedMeliPromptIds(new Set(saved));
+  }, [auth?.user?.id]);
+
+  useEffect(() => {
+    if (!auth?.user || dismissedMeliPromptIds.size === 0) return;
+    storageUtils.safeSetItem(`dismissed_meli_prompts_${auth.user.id}`, Array.from(dismissedMeliPromptIds));
+  }, [dismissedMeliPromptIds, auth?.user?.id]);
+
+  // Load/save dismissedStaleBannerIds — same reasoning as dismissedMeliPromptIds above.
+  useEffect(() => {
+    if (!auth?.user) return;
+    const saved = storageUtils.getItem<string[]>(`dismissed_stale_banner_${auth.user.id}`, []);
+    if (saved.length > 0) setDismissedStaleBannerIds(new Set(saved));
+  }, [auth?.user?.id]);
+
+  useEffect(() => {
+    if (!auth?.user || dismissedStaleBannerIds.size === 0) return;
+    storageUtils.safeSetItem(`dismissed_stale_banner_${auth.user.id}`, Array.from(dismissedStaleBannerIds));
+  }, [dismissedStaleBannerIds, auth?.user?.id]);
+
   // Restore delivering package if it was interrupted
   useEffect(() => {
     if (myPackages.length > 0 && (!deliveringPackages || deliveringPackages.length === 0)) {
@@ -205,13 +236,16 @@ const DriverDashboard: React.FC = () => {
     }
   }, [myPackages, auth?.user?.id]);
 
-  // Effect to automatically open delivery modal for packages delivered in ML that need photos
+  // Effect to automatically open delivery modal for packages delivered in ML that need photos.
+  // Scans stalePackages too (not just myPackages/hoy) — un paquete de un día anterior que Mercado
+  // Libre ya marcó como entregado debe poder cerrarse igual que uno de hoy, sin que el conductor
+  // tenga que ir a buscarlo manualmente a la pestaña "Anteriores".
   useEffect(() => {
     if (!auth?.systemSettings?.meliAutoPromptPhotos || auth?.user?.driverPermissions?.meliAutoPromptPhotos !== true) return;
     if (deliveringPackages && deliveringPackages.length > 0) return;
     if (reportingProblemPackage) return;
 
-    const needsPhotosPackage = myPackages.find(
+    const needsPhotosPackage = [...myPackages, ...stalePackages].find(
       p => p.meliDeliveredNeedsPhotos === true && p.status !== PackageStatus.Delivered && p.status !== PackageStatus.Problem
           && !dismissedMeliPromptIds.has(p.id)
     );
@@ -221,7 +255,7 @@ const DriverDashboard: React.FC = () => {
       }
       setDeliveringPackages([needsPhotosPackage]);
     }
-  }, [myPackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage, dismissedMeliPromptIds]);
+  }, [myPackages, stalePackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage, dismissedMeliPromptIds]);
 
   const fetchData = async (silent = false) => {
       if (!auth?.user) return;
@@ -271,6 +305,14 @@ const DriverDashboard: React.FC = () => {
     const staleIntervalId = setInterval(fetchStale, 60000);
     return () => clearInterval(staleIntervalId);
   }, [auth?.user]);
+
+  // Pendientes de días anteriores que Mercado Libre YA marca como entregados se resuelven solos
+  // vía el modal automático (ver el useEffect de meliDeliveredNeedsPhotos más abajo) — el aviso
+  // en pantalla es solo para el resto, los que de verdad necesitan que el conductor los revise.
+  const staleBannerPackages = useMemo(
+    () => stalePackages.filter(p => !p.meliDeliveredNeedsPhotos && !dismissedStaleBannerIds.has(p.id)),
+    [stalePackages, dismissedStaleBannerIds]
+  );
 
   useEffect(() => {
     // Solo iniciamos el intervalo si NO estamos en proceso de entrega o reporte
@@ -861,6 +903,30 @@ const DriverDashboard: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {staleBannerPackages.length > 0 && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 dark:bg-amber-950/20 dark:border-amber-800">
+          <IconAlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+              Tienes {staleBannerPackages.length} paquete{staleBannerPackages.length === 1 ? '' : 's'} de día{staleBannerPackages.length === 1 ? '' : 's'} anterior{staleBannerPackages.length === 1 ? '' : 'es'} sin resolver
+            </p>
+            <button
+              onClick={() => setActiveTab('stale')}
+              className="text-xs font-medium text-amber-700 dark:text-amber-400 underline hover:no-underline mt-0.5"
+            >
+              Ver en la pestaña "Anteriores"
+            </button>
+          </div>
+          <button
+            onClick={() => setDismissedStaleBannerIds(prev => new Set([...prev, ...staleBannerPackages.map(p => p.id)]))}
+            title="Cerrar aviso"
+            className="p-1 rounded-full text-amber-600 hover:bg-amber-100 dark:text-amber-400 dark:hover:bg-amber-900/40 flex-shrink-0"
+          >
+            <IconX className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {viewMode === 'map' ? (
         <div className="bg-[var(--background-secondary)] shadow-md rounded-xl overflow-hidden border border-[var(--border-primary)] p-1">
