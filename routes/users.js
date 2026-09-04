@@ -525,6 +525,11 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             FROM users u
             JOIN packages p ON p."driverId" = u.id
             WHERE u.role = 'DRIVER'
+            -- "Bodega" es un contenedor temporal de asignación de GO DELIVERY, no un conductor
+            -- real — sus paquetes se quedan en EN_TRANSITO hasta que se reasignan a un conductor
+            -- de verdad, así que salía siempre en "cierre pendiente" sin que nadie hubiera
+            -- olvidado nada.
+            AND u.name != 'Bodega'
             AND p."assignedAt" >= $2 AND p."assignedAt" < $3
             GROUP BY u.id, u.name, u.phone
             ORDER BY "deliveryRate" DESC, "pending" DESC, u.name ASC

@@ -1,9 +1,10 @@
-import React, { useMemo, useContext } from 'react';
+import React, { useMemo, useContext, useState } from 'react';
 import type { Package, User } from '../../types';
 import { PackageStatus, MessagingPlan } from '../../constants';
 import { IconX, IconWhatsapp, IconMail, IconCheckCircle, IconAlertTriangle, IconUser } from '../Icon';
 import { AuthContext } from '../../contexts/AuthContext';
 import { getLogicalDateString } from '../../utils/dateUtils';
+import { api } from '../../services/api';
 
 interface ClientSummary {
     clientId: string;
@@ -21,10 +22,18 @@ interface EndOfDayReportModalProps {
   packages: Package[];
   driverName: string;
   users: User[];
+  // true solo cuando el cierre automático (tryAutoCloseRoute, pending === 0) ya lo registró
+  // antes de abrir este modal — en ese caso no hay nada más que confirmar, solo se muestra el
+  // resumen. Cuando es false (el conductor lo abrió a mano, con pendientes todavía), se ofrece
+  // el botón de cierre manual más abajo.
+  alreadyClosed: boolean;
 }
 
-const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, packages, driverName, users }) => {
+const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, packages, driverName, users, alreadyClosed }) => {
   const auth = useContext(AuthContext);
+  const [isClosing, setIsClosing] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const [justClosed, setJustClosed] = useState(false);
 
   const clientSummaries: ClientSummary[] = useMemo(() => {
     const tz = auth?.systemSettings?.timezone || 'America/Santiago';
@@ -67,6 +76,45 @@ const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, pack
     
     return Object.values(summaries).sort((a,b) => a.clientName.localeCompare(b.clientName));
   }, [packages, users]);
+
+  // A diferencia de clientSummaries (que solo mira paquetes ya resueltos hoy, para el aviso a
+  // cada cliente), esto cuenta TODO lo asignado hoy — incluye los que siguen sin tocar, que es
+  // justo lo que hace falta saber para permitir un cierre manual con pendientes.
+  const todayTotals = useMemo(() => {
+    const tz = auth?.systemSettings?.timezone || 'America/Santiago';
+    const todayStr = getLogicalDateString(new Date(), tz);
+    const assignedToday = packages.filter(p => p.assignedAt && getLogicalDateString(new Date(p.assignedAt), tz) === todayStr);
+
+    let delivered = 0, problems = 0, pending = 0;
+    for (const pkg of assignedToday) {
+        if (pkg.status === PackageStatus.Delivered) delivered++;
+        else if (pkg.status === PackageStatus.Problem) problems++;
+        else pending++;
+    }
+    return { total: assignedToday.length, delivered, problems, pending };
+  }, [packages, auth?.systemSettings?.timezone]);
+
+  const handleConfirmClosure = async () => {
+    setIsClosing(true);
+    setCloseError(null);
+    try {
+        await api.submitClosure({
+            total: todayTotals.total,
+            delivered: todayTotals.delivered,
+            problems: todayTotals.problems,
+            pending: todayTotals.pending,
+            notes: todayTotals.pending > 0
+                ? `Cierre manual con ${todayTotals.pending} paquete(s) sin gestionar — quedan pendientes para el día siguiente.`
+                : 'Cierre manual: jornada completa.',
+        });
+        setJustClosed(true);
+    } catch (err) {
+        console.error('Error al cerrar la jornada', err);
+        setCloseError('No se pudo registrar el cierre. Intenta de nuevo.');
+    } finally {
+        setIsClosing(false);
+    }
+  };
 
   const handleNotifyClient = (summary: ClientSummary) => {
     const tz = auth?.systemSettings?.timezone || 'America/Santiago';
@@ -111,9 +159,17 @@ const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, pack
         </header>
         <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
             <p className="text-sm text-[var(--text-secondary)] mb-4">
-                Has finalizado tus entregas por hoy. Aquí tienes un resumen por cliente.
+                {alreadyClosed
+                    ? 'Has finalizado tus entregas por hoy. Aquí tienes un resumen por cliente.'
+                    : 'Resumen de tu jornada hasta ahora.'}
                 {messagingPlan !== MessagingPlan.None && " Envía el reporte a cada uno."}
             </p>
+            {!alreadyClosed && !justClosed && todayTotals.pending > 0 && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
+                    <IconAlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0"/>
+                    <span>Te quedan <strong>{todayTotals.pending}</strong> paquete{todayTotals.pending !== 1 ? 's' : ''} sin gestionar. Si cierras ahora, quedan registrados para retomarlos mañana.</span>
+                </div>
+            )}
             {clientSummaries.length === 0 ? (
                 <p className="text-center text-[var(--text-muted)] py-10">No hay actividad para reportar hoy.</p>
             ) : (
@@ -145,10 +201,33 @@ const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, pack
                 </div>
             )}
         </div>
-        <footer className="px-6 py-4 bg-[var(--background-muted)] rounded-b-xl flex justify-end">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)]">
-            Cerrar
-          </button>
+        <footer className="px-6 py-4 bg-[var(--background-muted)] rounded-b-xl">
+          {closeError && <p className="text-sm text-red-600 mb-2">{closeError}</p>}
+          {justClosed ? (
+              <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-green-700 flex items-center gap-1.5 font-medium">
+                      <IconCheckCircle className="w-4 h-4"/> Jornada cerrada correctamente.
+                  </span>
+                  <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)]">
+                      Cerrar
+                  </button>
+              </div>
+          ) : alreadyClosed ? (
+              <div className="flex justify-end">
+                  <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)]">
+                      Cerrar
+                  </button>
+              </div>
+          ) : (
+              <div className="flex justify-end gap-2">
+                  <button type="button" onClick={onClose} disabled={isClosing} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)] disabled:opacity-50">
+                      Cancelar
+                  </button>
+                  <button type="button" onClick={handleConfirmClosure} disabled={isClosing} className="px-4 py-2 text-sm font-semibold text-white bg-[var(--brand-primary)] rounded-md hover:opacity-90 disabled:opacity-50">
+                      {isClosing ? 'Cerrando...' : 'Confirmar Cierre de Jornada'}
+                  </button>
+              </div>
+          )}
         </footer>
       </div>
     </div>
