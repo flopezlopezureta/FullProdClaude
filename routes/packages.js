@@ -706,7 +706,13 @@ router.get('/reports/flex-discrepancies', authMiddleware, async (req, res) => {
             JOIN users u ON p."driverId" = u.id
             WHERE p."driverId" IS NOT NULL
               AND DATE(p."estimatedDelivery") = current_date
-              AND (p.source = 'MERCADO_LIBRE' OR p."meliFlexCode" IS NOT NULL OR p."meliOrderId" IS NOT NULL)
+              -- Antes también entraba cualquier paquete con meliFlexCode/meliOrderId no nulos —
+              -- pero meliFlexCode se reutiliza como código de escaneo genérico para paquetes
+              -- MANUAL y SHOPIFY también, no es exclusivo de Mercado Libre. Eso hacía que ~97%
+              -- de las "discrepancias" fueran paquetes que nunca debieron necesitar Flex (125 de
+              -- 132 en una revisión real: 125 MANUAL + 4 SHOPIFY + solo 3 genuinos de Meli).
+              AND p.source = 'MERCADO_LIBRE'
+              AND p.status != 'CANCELADO'
             GROUP BY u.id, u.name
             ORDER BY "totalUnflexed" DESC
         `;
@@ -736,7 +742,8 @@ router.get('/reports/flex-discrepancies/:driverId', authMiddleware, async (req, 
             WHERE p."driverId" = $1
               AND DATE(p."estimatedDelivery") = current_date
               AND (p."isFlexed" = false OR p."isFlexed" IS NULL)
-              AND (p.source = 'MERCADO_LIBRE' OR p."meliFlexCode" IS NOT NULL OR p."meliOrderId" IS NOT NULL)
+              AND p.source = 'MERCADO_LIBRE'
+              AND p.status != 'CANCELADO'
             ORDER BY p.id ASC
         `;
         const { rows } = await db.query(query, [driverId]);
