@@ -10,7 +10,7 @@ import PackageDetailModal from '../PackageDetailModal';
 import DeliveryConfirmationModal from './DeliveryConfirmationModal';
 import UndeliveredModal from './UndeliveredModal';
 import { AuthContext } from '../../contexts/AuthContext';
-import { IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin, IconCheckCircle } from '../Icon';
+import { IconTruck, IconRoute, IconAlertTriangle, IconSearch, IconX, IconMapPin } from '../Icon';
 
 // A network-level failure (offline, DNS, timeout) surfaces as a plain fetch TypeError, not an
 // ApiError with a real HTTP status from the server — that distinction is what separates "queue
@@ -62,10 +62,6 @@ const DriverDashboard: React.FC = () => {
   const [stalePackages, setStalePackages] = useState<Package[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isEndOfDayModalOpen, setIsEndOfDayModalOpen] = useState(false);
-  // true cuando el modal se abrió porque tryAutoCloseRoute ya cerró la jornada sola (0
-  // pendientes) — false cuando el conductor lo abrió a mano con el botón "Cerrar mi Día",
-  // typicamente con pendientes todavía, y necesita confirmar el cierre él mismo.
-  const [endOfDayModalAutoClosed, setEndOfDayModalAutoClosed] = useState(true);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [offlinePendingCount, setOfflinePendingCount] = useState(0);
 
@@ -344,7 +340,6 @@ const DriverDashboard: React.FC = () => {
     );
 
     if (allProcessedNow && !allProcessedBefore) {
-      setEndOfDayModalAutoClosed(true);
       setIsEndOfDayModalOpen(true);
       // Registra el cierre de jornada en daily_closures para que el Centro de Control
       // (Auditoría de Cierres) vea a este conductor como cerrado — antes solo lo hacía
@@ -864,16 +859,6 @@ const DriverDashboard: React.FC = () => {
                 <span className="opacity-80 text-[8px] uppercase tracking-tighter">Asignados</span>
                 <span className="text-sm">{totalAssignedForToday}</span>
             </div>
-
-            {totalAssignedForToday > 0 && (
-                <button
-                    onClick={() => { setEndOfDayModalAutoClosed(false); setIsEndOfDayModalOpen(true); }}
-                    title="Cerrar mi día, incluso si quedan paquetes pendientes"
-                    className="inline-flex items-center justify-center p-2 rounded-xl shadow-sm text-white bg-slate-600 hover:bg-slate-700 transition-all"
-                >
-                    <IconCheckCircle className="w-6 h-6" />
-                </button>
-            )}
         </div>
       </div>
 
@@ -995,7 +980,6 @@ const DriverDashboard: React.FC = () => {
             packages={myPackages}
             driverName={auth.user.name}
             users={users}
-            alreadyClosed={endOfDayModalAutoClosed}
         />
       )}
     </div>
