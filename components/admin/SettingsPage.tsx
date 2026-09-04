@@ -49,6 +49,7 @@ interface SettingsState {
     pendingNotificationsEnabled: boolean;
     adminWhatsappNumber: string;
     adminCallmebotApiKey: string;
+    blockDeliveryOnStalePending: boolean;
 }
 
 const SettingsPage: React.FC = () => {
@@ -81,6 +82,7 @@ const SettingsPage: React.FC = () => {
         pendingNotificationsEnabled: false,
         adminWhatsappNumber: '',
         adminCallmebotApiKey: '',
+        blockDeliveryOnStalePending: false,
     });
     const [originalSettings, setOriginalSettings] = useState<SettingsState | null>(null);
     const [password, setPassword] = useState('');
@@ -130,6 +132,7 @@ const SettingsPage: React.FC = () => {
                 pendingNotificationsEnabled: auth.systemSettings.pendingNotificationsEnabled ?? false,
                 adminWhatsappNumber: auth.systemSettings.adminWhatsappNumber || '',
                 adminCallmebotApiKey: auth.systemSettings.adminCallmebotApiKey || '',
+                blockDeliveryOnStalePending: auth.systemSettings.blockDeliveryOnStalePending ?? false,
             };
             setSettings(loadedSettings);
             setOriginalSettings(loadedSettings);
@@ -208,8 +211,9 @@ const SettingsPage: React.FC = () => {
                 pendingNotificationsEnabled: settings.pendingNotificationsEnabled,
                 adminWhatsappNumber: settings.adminWhatsappNumber,
                 adminCallmebotApiKey: settings.adminCallmebotApiKey,
+                blockDeliveryOnStalePending: settings.blockDeliveryOnStalePending,
             });
-            setOriginalSettings(settings); 
+            setOriginalSettings(settings);
             showSuccess('Configuración general y de plan actualizada con éxito.');
         } catch (error) {
             showError('Error al actualizar la configuración.');
@@ -344,7 +348,8 @@ const SettingsPage: React.FC = () => {
             settings.fleetControlEnabled !== originalSettings.fleetControlEnabled ||
             settings.pendingNotificationsEnabled !== originalSettings.pendingNotificationsEnabled ||
             settings.adminWhatsappNumber !== originalSettings.adminWhatsappNumber ||
-            settings.adminCallmebotApiKey !== originalSettings.adminCallmebotApiKey
+            settings.adminCallmebotApiKey !== originalSettings.adminCallmebotApiKey ||
+            settings.blockDeliveryOnStalePending !== originalSettings.blockDeliveryOnStalePending
         );
     }, [settings, originalSettings]);
 
@@ -730,6 +735,30 @@ const SettingsPage: React.FC = () => {
                                                         type="checkbox"
                                                         name="fleetControlEnabled"
                                                         checked={settings.fleetControlEnabled ?? true}
+                                                        onChange={handleSettingsChange}
+                                                        className="sr-only peer"
+                                                    />
+                                                    <div className="w-14 h-8 bg-gray-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-indigo-500 dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    )}
+
+                                    {isSuperUser && (
+                                        <div className="pt-4 border-t border-indigo-200 bg-indigo-50/40 p-4 rounded-xl dark:bg-indigo-950/20 my-3">
+                                            <label className="flex items-center justify-between cursor-pointer">
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className="text-base font-bold text-indigo-900 dark:text-indigo-300">Bloquear Entregas con Pendientes de Días Anteriores</h3>
+                                                        <span className="px-2 py-0.5 text-[9px] font-black bg-indigo-600 text-white rounded-full uppercase tracking-wider">Superadmin Exclusivo</span>
+                                                    </div>
+                                                    <p className="text-xs text-indigo-700 dark:text-indigo-400 mt-1 max-w-md">Si está activado, un conductor no podrá confirmar entregas de hoy mientras tenga paquetes de días anteriores sin resolver (ni entregados, ni con Problema reportado). Se desbloquea solo apenas el conductor los resuelve — no requiere intervención de un admin.</p>
+                                                </div>
+                                                <div className="relative">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="blockDeliveryOnStalePending"
+                                                        checked={settings.blockDeliveryOnStalePending}
                                                         onChange={handleSettingsChange}
                                                         className="sr-only peer"
                                                     />

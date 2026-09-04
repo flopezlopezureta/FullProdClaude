@@ -2080,6 +2080,30 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             }
         }
 
+        // Super-admin toggle: si un conductor tiene paquetes de un día ANTERIOR que sigue sin
+        // tocar en absoluto (ni entregado, ni con Problema documentado), no puede entregar
+        // paquetes de HOY hasta resolverlos — fuerza a documentar cada parada en vez de dejarla
+        // ignorada. Se autorresuelve solo: en cuanto el conductor marca esos paquetes viejos
+        // (entregado o problema+foto), esta consulta deja de encontrarlos y el bloqueo desaparece.
+        const { rows: blockSettingsRows } = await db.query('SELECT "blockDeliveryOnStalePending" FROM system_settings WHERE id = 1');
+        if (blockSettingsRows.length > 0 && blockSettingsRows[0].blockDeliveryOnStalePending && sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
+            const todayStr = await timeService.getLogicalDate();
+            const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
+            const { rows: staleRows } = await db.query(
+                `SELECT COUNT(*)::int as count FROM packages
+                 WHERE "driverId" = $1
+                   AND "assignedAt" < $2
+                   AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
+                [sourceCheckRows[0].driverId, todayStart]
+            );
+            const staleCount = staleRows[0]?.count || 0;
+            if (staleCount > 0) {
+                return res.status(403).json({
+                    message: `Tienes ${staleCount} paquete${staleCount === 1 ? '' : 's'} de día${staleCount === 1 ? '' : 's'} anterior${staleCount === 1 ? '' : 'es'} sin resolver. Márcalo${staleCount === 1 ? '' : 's'} como entregado o reporta el problema antes de continuar con las entregas de hoy.`
+                });
+            }
+        }
+
         const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');
         const meliFlexValidation = settingsRows.length > 0 ? settingsRows[0].meliFlexValidation : true;
 
