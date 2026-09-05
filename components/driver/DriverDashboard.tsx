@@ -324,6 +324,23 @@ const DriverDashboard: React.FC = () => {
     [stalePackages, dismissedStaleBannerIds]
   );
 
+  // Espejo en el frontend del bloqueo de routes/packages.js's /:id/deliver — mismo criterio
+  // (Meli ya confirmó la entrega, el conductor no la cerró). Se agrega acá para frenar al
+  // conductor apenas selecciona OTRA entrega, en vez de dejarlo llenar foto y nombre para recién
+  // entonces rechazarlo. El backend queda como respaldo real; esto es solo para la experiencia.
+  const meliBlockingPackages = useMemo(
+    () => [...myPackages, ...stalePackages].filter(p => p.meliDeliveredNeedsPhotos === true),
+    [myPackages, stalePackages]
+  );
+  const findMeliBlocker = (excludeIds: string[]) =>
+    auth?.systemSettings?.blockDeliveryOnMeliConfirmed !== false
+      ? meliBlockingPackages.find(p => !excludeIds.includes(p.id))
+      : undefined;
+  const alertMeliBlocker = (blocker: Package) => {
+    const companyName = auth?.systemSettings?.companyName || 'la app';
+    alert(`Mercado Libre detectó el cierre de la entrega en ${blocker.recipientAddress} y aún no la cierras en ${companyName}. Debes cerrarla para continuar con las entregas.`);
+  };
+
   useEffect(() => {
     // Solo iniciamos el intervalo si NO estamos en proceso de entrega o reporte
     // Esto evita que refrescos accidentales en segundo plano cierren los modales
@@ -545,6 +562,11 @@ const DriverDashboard: React.FC = () => {
   };
 
   const handleStartDelivery = (pkg: Package) => {
+    const blocker = findMeliBlocker([pkg.id]);
+    if (blocker) {
+      alertMeliBlocker(blocker);
+      return;
+    }
     // Si la opción de selección múltiple está habilitada en el setup, pre-seleccionamos
     // automáticamente los paquetes que tengan el mismo destinatario y dirección.
     if (auth?.systemSettings?.multiSelectEnabled) {
@@ -565,6 +587,11 @@ const DriverDashboard: React.FC = () => {
   const handleStartBatchDelivery = () => {
     const selectedList = pendingPackages.filter(p => selectedPackages.has(p.id));
     if (selectedList.length === 0) return;
+    const blocker = findMeliBlocker(selectedList.map(p => p.id));
+    if (blocker) {
+      alertMeliBlocker(blocker);
+      return;
+    }
     setDeliveringPackages(selectedList);
     if (auth?.user) {
         localStorage.setItem(`pending_delivering_id_${auth.user.id}`, selectedList[0].id);
