@@ -59,6 +59,7 @@ export interface SystemSettings {
     pendingNotificationsEnabled?: boolean;
     adminWhatsappNumber?: string;
     adminCallmebotApiKey?: string;
+    blockDeliveryOnMeliConfirmed?: boolean;
 }
 
 export interface ZonePricing {

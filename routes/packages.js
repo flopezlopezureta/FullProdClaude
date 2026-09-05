@@ -2088,7 +2088,9 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         // confirmación de Meli de HOY mismo no debe bloquearlos a mitad de su propia ruta — solo
         // si amaneció el día siguiente y sigue sin cerrar. Excluye el propio paquete que se está
         // entregando ahora mismo — si no, nunca podría cerrarse a sí mismo.
-        if (sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
+        const { rows: meliBlockSettingsRows } = await db.query('SELECT "blockDeliveryOnMeliConfirmed" FROM system_settings WHERE id = 1');
+        const blockDeliveryOnMeliConfirmed = meliBlockSettingsRows.length > 0 ? meliBlockSettingsRows[0].blockDeliveryOnMeliConfirmed : true;
+        if (blockDeliveryOnMeliConfirmed && sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
             const todayStr = await timeService.getLogicalDate();
             const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
             const { rows: meliBlockRows } = await db.query(
