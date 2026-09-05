@@ -2094,7 +2094,7 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             const todayStr = await timeService.getLogicalDate();
             const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
             const { rows: meliBlockRows } = await db.query(
-                `SELECT id, "recipientAddress" FROM packages
+                `SELECT id, "recipientAddress", "assignedAt" FROM packages
                  WHERE "driverId" = $1
                    AND id != $2
                    AND "meliDeliveredNeedsPhotos" = true
@@ -2107,10 +2107,11 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
                 const { rows: companyRows } = await db.query('SELECT "companyName" FROM system_settings WHERE id = 1');
                 const companyName = companyRows[0]?.companyName || 'la app';
                 const address = meliBlockRows[0].recipientAddress || 'una dirección registrada';
+                const pendingSince = new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: '2-digit' }).format(new Date(meliBlockRows[0].assignedAt));
                 const isPlural = meliBlockRows.length > 1;
                 const extra = isPlural ? ` (y ${meliBlockRows.length - 1} más)` : '';
                 return res.status(403).json({
-                    message: `Mercado Libre detectó el cierre de la entrega en ${address}${extra} y aún no la${isPlural ? 's' : ''} cierras en ${companyName}. Debes cerrarla${isPlural ? 's' : ''} para continuar con las entregas.`
+                    message: `Mercado Libre detectó el cierre de la entrega en ${address}, pendiente desde el ${pendingSince}${extra}, y aún no la${isPlural ? 's' : ''} cierras en ${companyName}. Debes cerrarla${isPlural ? 's' : ''} para continuar con las entregas.`
                 });
             }
         }

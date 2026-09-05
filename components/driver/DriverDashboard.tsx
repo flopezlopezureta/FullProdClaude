@@ -336,9 +336,13 @@ const DriverDashboard: React.FC = () => {
     auth?.systemSettings?.blockDeliveryOnMeliConfirmed !== false
       ? meliBlockingPackages.find(p => !excludeIds.includes(p.id))
       : undefined;
+  const [meliBlockAlert, setMeliBlockAlert] = useState<{ address: string; since: string; companyName: string } | null>(null);
   const alertMeliBlocker = (blocker: Package) => {
-    const companyName = auth?.systemSettings?.companyName || 'la app';
-    alert(`Mercado Libre detectó el cierre de la entrega en ${blocker.recipientAddress} y aún no la cierras en ${companyName}. Debes cerrarla para continuar con las entregas.`);
+    setMeliBlockAlert({
+      address: blocker.recipientAddress,
+      since: new Date(blocker.assignedAt as any).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: '2-digit' }),
+      companyName: auth?.systemSettings?.companyName || 'la app',
+    });
   };
 
   useEffect(() => {
@@ -1047,6 +1051,24 @@ const DriverDashboard: React.FC = () => {
             }}
             onRedelivery={handleRedelivery}
         />
+      )}
+
+      {meliBlockAlert && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4" onClick={() => setMeliBlockAlert(null)}>
+          <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <IconAlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+            <h3 className="text-lg font-bold text-[var(--text-primary)] mb-2">Entrega pendiente en Mercado Libre</h3>
+            <p className="text-sm text-[var(--text-secondary)] mb-5">
+              Mercado Libre detectó el cierre de la entrega en <strong>{meliBlockAlert.address}</strong>, pendiente desde el {meliBlockAlert.since}, y aún no la cierras en {meliBlockAlert.companyName}. Debes cerrarla para continuar con las entregas.
+            </p>
+            <button
+              onClick={() => setMeliBlockAlert(null)}
+              className="w-full px-4 py-2 text-sm font-semibold text-white bg-[var(--brand-primary)] rounded-lg hover:opacity-90"
+            >
+              Aceptar
+            </button>
+          </div>
+        </div>
       )}
 
       {deliveringPackages && deliveringPackages.length > 0 && (
