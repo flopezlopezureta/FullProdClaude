@@ -2080,26 +2080,30 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             }
         }
 
-        // Si Mercado Libre YA confirmó la entrega de otro paquete de este conductor y todavía
-        // sigue sin cerrarse en FullEnvíos (meliDeliveredNeedsPhotos = true, y su estado nunca
-        // avanzó — ni entregado, ni con Problema/Reprogramado/Cancelado documentado), se bloquea
-        // cualquier OTRA entrega hasta que lo cierre. A diferencia del bloqueo genérico que se
-        // probó y se quitó antes, este exige confirmación externa real (no solo "es viejo"), y
-        // por eso el usuario pidió reactivarlo en esta forma más acotada. Excluye el propio
-        // paquete que se está entregando ahora mismo — si no, nunca podría cerrarse a sí mismo.
+        // Si Mercado Libre YA confirmó la entrega de otro paquete de este conductor, sigue sin
+        // cerrarse en FullEnvíos (meliDeliveredNeedsPhotos = true, estado nunca avanzó — ni
+        // entregado, ni con Problema/Reprogramado/Cancelado documentado) Y ES DE UN DÍA ANTERIOR,
+        // se bloquea cualquier OTRA entrega hasta que lo cierre. El filtro de día anterior es
+        // deliberado: muchos conductores cierran recién en la noche al llegar a casa, así que una
+        // confirmación de Meli de HOY mismo no debe bloquearlos a mitad de su propia ruta — solo
+        // si amaneció el día siguiente y sigue sin cerrar. Excluye el propio paquete que se está
+        // entregando ahora mismo — si no, nunca podría cerrarse a sí mismo.
         if (sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
+            const todayStr = await timeService.getLogicalDate();
+            const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
             const { rows: meliBlockRows } = await db.query(
                 `SELECT COUNT(*)::int as count FROM packages
                  WHERE "driverId" = $1
                    AND id != $2
                    AND "meliDeliveredNeedsPhotos" = true
+                   AND "assignedAt" < $3
                    AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
-                [sourceCheckRows[0].driverId, id]
+                [sourceCheckRows[0].driverId, id, todayStart]
             );
             const meliBlockCount = meliBlockRows[0]?.count || 0;
             if (meliBlockCount > 0) {
                 return res.status(403).json({
-                    message: `Tienes ${meliBlockCount} entrega${meliBlockCount === 1 ? '' : 's'} ya confirmada${meliBlockCount === 1 ? '' : 's'} como entregada${meliBlockCount === 1 ? '' : 's'} en Mercado Libre que aún no cierras en la app. Ciérrala${meliBlockCount === 1 ? '' : 's'} antes de continuar con otras entregas.`
+                    message: `Tienes ${meliBlockCount} entrega${meliBlockCount === 1 ? '' : 's'} de día${meliBlockCount === 1 ? '' : 's'} anterior${meliBlockCount === 1 ? '' : 'es'} ya confirmada${meliBlockCount === 1 ? '' : 's'} como entregada${meliBlockCount === 1 ? '' : 's'} en Mercado Libre que aún no cierras en la app. Ciérrala${meliBlockCount === 1 ? '' : 's'} antes de continuar con otras entregas.`
                 });
             }
         }
