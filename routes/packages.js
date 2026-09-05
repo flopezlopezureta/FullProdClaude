@@ -425,7 +425,7 @@ router.get('/driver/stale', authMiddleware, async (req, res) => {
             `SELECT * FROM packages
              WHERE "driverId" = $1
                AND status = ANY($2::text[])
-               AND COALESCE("assignedAt", "createdAt") >= NOW() - INTERVAL '3 days'
+               AND COALESCE("assignedAt", "createdAt") >= NOW() - INTERVAL '7 days'
                AND NOT (
                     ("estimatedDelivery" >= $3 AND "estimatedDelivery" < $4)
                     OR ("assignedAt" >= $3 AND "assignedAt" < $4)
