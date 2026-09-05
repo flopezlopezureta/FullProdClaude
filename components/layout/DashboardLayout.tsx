@@ -26,6 +26,7 @@ import GlobalBillingPage from '../admin/GlobalBillingPage';
 import AdminBillingSummary from '../admin/AdminBillingSummary';
 import LogisticsBIDashboard from '../admin/LogisticsBIDashboard';
 import LateDeliveriesAnalysis from '../admin/LateDeliveriesAnalysis';
+import MeliConfirmedStuckReport from '../admin/MeliConfirmedStuckReport';
 import DispatchScanner from '../auxiliar/DispatchScanner';
 import { PickupDashboard } from '../admin/PickupDashboard';
 import PickupReportPage from '../admin/PickupReportPage';
@@ -241,6 +242,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'late-deliveries':
         if (isAdmin) return { title: 'Auditoría de Entregas Tardías (>21:00)', content: <LateDeliveriesAnalysis /> };
+        break;
+
+      case 'meli-confirmed-stuck':
+        if (isAdmin) return { title: 'Pendientes Confirmados por Mercado Libre', content: <MeliConfirmedStuckReport /> };
         break;
 
       case 'driver-performance':

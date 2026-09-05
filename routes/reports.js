@@ -80,4 +80,42 @@ router.get('/activity-audit', authMiddleware, async (req, res) => {
     }
 });
 
+/**
+ * GET /api/reports/meli-confirmed-stuck
+ * Paquetes que Mercado Libre ya reportó como entregados (meliDeliveredNeedsPhotos = true) pero que
+ * siguen abiertos en el sistema — SIN límite de días a propósito (a diferencia de /driver/stale y
+ * el bloqueo del conductor, que se mantienen acotados a 7 días por decisión explícita del usuario,
+ * para no exponer de golpe a toda la flota). Este reporte es la única forma de encontrar casos
+ * viejos (semanas o meses) que ya no le van a bloquear ni avisar a ningún conductor.
+ */
+router.get('/meli-confirmed-stuck', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    try {
+        const { rows } = await db.query(`
+            SELECT
+                p.id,
+                p."recipientAddress",
+                p."recipientCommune",
+                p.status,
+                p."assignedAt",
+                p.source,
+                d.name as "driverName",
+                c.name as "clientName",
+                EXTRACT(DAY FROM NOW() - p."assignedAt")::int as "daysPending"
+            FROM packages p
+            LEFT JOIN users d ON p."driverId" = d.id
+            LEFT JOIN users c ON p."creatorId" = c.id
+            WHERE p."meliDeliveredNeedsPhotos" = true
+              AND p.status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')
+            ORDER BY p."assignedAt" ASC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error('Error in meli-confirmed-stuck report:', err);
+        res.status(500).json({ message: 'Error al generar el reporte de pendientes confirmados por Mercado Libre.' });
+    }
+});
+
 module.exports = router;

@@ -122,6 +122,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         { id: 'delivery-analytics', label: 'Análisis Logístico (BI)', icon: <IconBarChart className="h-5 w-5" /> },
         { id: 'activity-audit', label: 'Auditoría de Actividad', icon: <IconFileText className="h-5 w-5 text-amber-600" /> },
         { id: 'late-deliveries', label: 'Auditoría Nocturna (>21h)', icon: <IconClock className="h-5 w-5 text-red-500" /> },
+        { id: 'meli-confirmed-stuck', label: 'Pendientes Confirmados Meli', icon: <IconAlertTriangle className="h-5 w-5 text-amber-600" /> },
       ]
     },
     { id: 'driver-performance', label: 'Reporte Conductores', icon: <IconChartBar className="h-6 w-6" /> },
