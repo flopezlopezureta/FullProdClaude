@@ -404,7 +404,10 @@ async function pollPackageStatuses() {
                                 });
                             }
                         }
-                    } else if (mlStatus === 'shipped' && !['EN_TRANSITO', 'EN_RUTA', 'PROBLEMA', 'REPROGRAMADO', 'ENTREGADO', 'DEVUELTO', 'CANCELADO'].includes(pkg.status)) {
+                    } else if (mlStatus === 'shipped' && pkg.driverId && !['EN_TRANSITO', 'EN_RUTA', 'PROBLEMA', 'REPROGRAMADO', 'ENTREGADO', 'DEVUELTO', 'CANCELADO'].includes(pkg.status)) {
+                        // Sin conductor asignado, "shipped" en Meli no significa que FullEnvíos lo esté
+                        // repartiendo — puede ser un cliente que despacha ese pedido por otro transportista.
+                        // Sin este chequeo quedaba en EN_TRANSITO para siempre pareciendo una entrega real.
                         newStatus = 'EN_TRANSITO';
                         eventStatus = 'En Tránsito';
                         eventDetails = 'El envío ha sido marcado como SHIPPED (En Camino) por Mercado Libre.';
