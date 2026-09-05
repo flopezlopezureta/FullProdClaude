@@ -172,6 +172,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [token]);
 
+  // systemSettings above only ever loads once per session (at login/initialization) and then
+  // sits in memory untouched — a session left open across an admin toggle change (e.g. a
+  // driver's app open all day) keeps acting on the stale value indefinitely, since nothing else
+  // in this file ever re-fetches it. Confirmed as the real cause of a driver still being blocked
+  // by the Meli-confirmed check hours after an admin turned it off system-wide. Polling here
+  // (independent of the packages/data polling elsewhere) closes that gap for every logged-in
+  // session, not just drivers.
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(async () => {
+      try {
+        const settings = await api.getSystemSettings();
+        setSystemSettings(settings);
+        try {
+          localStorage.setItem('cached_system_settings', JSON.stringify(settings));
+        } catch (cacheErr) {
+          console.warn('[Auth] Failed to cache system settings', cacheErr);
+        }
+      } catch (err) {
+        console.warn('[Auth] Periodic system settings refresh failed, keeping last known values.', err);
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [token]);
+
   useEffect(() => {
     if (systemSettings.companyName) {
       document.title = systemSettings.companyName;

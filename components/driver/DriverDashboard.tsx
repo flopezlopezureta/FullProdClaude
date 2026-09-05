@@ -321,10 +321,17 @@ const DriverDashboard: React.FC = () => {
   // (Meli ya confirmó la entrega, el conductor no la cerró). Se agrega acá para frenar al
   // conductor apenas selecciona OTRA entrega, en vez de dejarlo llenar foto y nombre para recién
   // entonces rechazarlo. El backend queda como respaldo real; esto es solo para la experiencia.
-  const meliBlockingPackages = useMemo(
-    () => [...myPackages, ...stalePackages].filter(p => p.meliDeliveredNeedsPhotos === true),
-    [myPackages, stalePackages]
-  );
+  const meliBlockingPackages = useMemo(() => {
+    // Debe reflejar la misma regla de "no es de hoy" que el bloqueo real del backend
+    // (routes/packages.js /:id/deliver) — si no, un paquete confirmado por Meli hace unos
+    // minutos podría bloquear al conductor a mitad de su propia ruta, justo lo que esa regla
+    // existe para evitar.
+    const todayStr = getLogicalDateString(new Date(), auth?.systemSettings?.timezone);
+    return [...myPackages, ...stalePackages].filter(p =>
+      p.meliDeliveredNeedsPhotos === true &&
+      getLogicalDateString(p.assignedAt ? new Date(p.assignedAt) : new Date(0), auth?.systemSettings?.timezone) !== todayStr
+    );
+  }, [myPackages, stalePackages, auth?.systemSettings?.timezone]);
   const findMeliBlocker = (targetIds: string[]) => {
     if (auth?.systemSettings?.blockDeliveryOnMeliConfirmed === false) return undefined;
     // Si lo que se está por seleccionar/entregar es en sí uno de los paquetes bloqueantes, se
