@@ -214,17 +214,10 @@ const DriverDashboard: React.FC = () => {
     storageUtils.safeSetItem(`dismissed_meli_prompts_${auth.user.id}`, Array.from(dismissedMeliPromptIds));
   }, [dismissedMeliPromptIds, auth?.user?.id]);
 
-  // Load/save dismissedStaleBannerIds — same reasoning as dismissedMeliPromptIds above.
-  useEffect(() => {
-    if (!auth?.user) return;
-    const saved = storageUtils.getItem<string[]>(`dismissed_stale_banner_${auth.user.id}`, []);
-    if (saved.length > 0) setDismissedStaleBannerIds(new Set(saved));
-  }, [auth?.user?.id]);
-
-  useEffect(() => {
-    if (!auth?.user || dismissedStaleBannerIds.size === 0) return;
-    storageUtils.safeSetItem(`dismissed_stale_banner_${auth.user.id}`, Array.from(dismissedStaleBannerIds));
-  }, [dismissedStaleBannerIds, auth?.user?.id]);
+  // A propósito SIN persistencia en localStorage (a diferencia de dismissedMeliPromptIds arriba):
+  // el conductor pidió que el aviso de pendientes vuelva a aparecer cada vez que entra a esta
+  // pantalla, no solo la primera vez — cerrarlo con la X lo oculta para esta vista actual, pero
+  // vuelve a aparecer apenas se remonta el componente (cambiar de pestaña y volver, recargar, etc).
 
   // Restore delivering package if it was interrupted
   useEffect(() => {
