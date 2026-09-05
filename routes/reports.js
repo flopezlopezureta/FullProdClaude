@@ -87,6 +87,13 @@ router.get('/activity-audit', authMiddleware, async (req, res) => {
  * el bloqueo del conductor, que se mantienen acotados a 7 días por decisión explícita del usuario,
  * para no exponer de golpe a toda la flota). Este reporte es la única forma de encontrar casos
  * viejos (semanas o meses) que ya no le van a bloquear ni avisar a ningún conductor.
+ *
+ * Excluye "driverId" NULL: son paquetes que nunca llegaron a asignarse a un conductor, así que
+ * nadie los puede "cerrar" — no son casos accionables para este reporte (encontrados 32.533 así,
+ * todos con el mismo "assignedAt" exacto del 2026-08-16, evidentemente un evento masivo/import,
+ * no conductores reales; inflaban el resultado a ~39.000 filas y eso era lo que colgaba la página).
+ * LIMIT + total real vía COUNT(*) OVER(): sin esto, incluso los casos reales (~6.800, repartidos
+ * entre decenas de conductores) siguen siendo demasiadas filas para una tabla sin paginar.
  */
 router.get('/meli-confirmed-stuck', authMiddleware, async (req, res) => {
     if (req.user.role !== 'ADMIN') {
@@ -103,13 +110,16 @@ router.get('/meli-confirmed-stuck', authMiddleware, async (req, res) => {
                 p.source,
                 d.name as "driverName",
                 c.name as "clientName",
-                EXTRACT(DAY FROM NOW() - p."assignedAt")::int as "daysPending"
+                EXTRACT(DAY FROM NOW() - p."assignedAt")::int as "daysPending",
+                COUNT(*) OVER()::int as "totalMatching"
             FROM packages p
             LEFT JOIN users d ON p."driverId" = d.id
             LEFT JOIN users c ON p."creatorId" = c.id
             WHERE p."meliDeliveredNeedsPhotos" = true
+              AND p."driverId" IS NOT NULL
               AND p.status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')
             ORDER BY p."assignedAt" ASC
+            LIMIT 300
         `);
         res.json(rows);
     } catch (err) {

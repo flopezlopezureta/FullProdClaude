@@ -11,6 +11,7 @@ interface MeliStuckPackage {
     driverName: string | null;
     clientName: string | null;
     daysPending: number;
+    totalMatching: number;
 }
 
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -18,21 +19,30 @@ const formatDate = (iso: string) => new Date(iso).toLocaleDateString('es-CL', { 
 const MeliConfirmedStuckReport: React.FC = () => {
     const [data, setData] = useState<MeliStuckPackage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchData = async () => {
         setIsLoading(true);
+        setError(null);
         try {
             const response = await fetch('/api/reports/meli-confirmed-stuck', {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             const result = await response.json();
-            if (response.ok) setData(result);
-        } catch (error) {
+            if (response.ok) {
+                setData(result);
+            } else {
+                setError(result?.message || `Error del servidor (${response.status}).`);
+            }
+        } catch (error: any) {
             console.error('Error fetching meli-confirmed-stuck report:', error);
+            setError('No se pudo cargar el reporte: falló la conexión con el servidor.');
         } finally {
             setIsLoading(false);
         }
     };
+
+    const totalMatching = data[0]?.totalMatching ?? data.length;
 
     useEffect(() => {
         fetchData();
@@ -40,17 +50,32 @@ const MeliConfirmedStuckReport: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            <div className="bg-amber-50 border-l-4 border-amber-500 p-6 rounded-2xl flex items-center gap-4">
-                <div className="p-3 bg-amber-100 text-amber-600 rounded-full">
-                    <IconAlertTriangle className="w-8 h-8" />
+            {error ? (
+                <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-2xl flex items-center gap-4">
+                    <div className="p-3 bg-red-100 text-red-600 rounded-full">
+                        <IconAlertTriangle className="w-8 h-8" />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-black text-red-900">No se pudo cargar el reporte</h3>
+                        <p className="text-sm text-red-700 font-medium">{error}</p>
+                    </div>
                 </div>
-                <div>
-                    <h3 className="text-lg font-black text-amber-900">Pendientes confirmados por Mercado Libre</h3>
-                    <p className="text-sm text-amber-700 font-medium">
-                        <span className="font-black">{data.length} paquete{data.length === 1 ? '' : 's'}</span> que Mercado Libre ya reportó como entregado{data.length === 1 ? '' : 's'}, pero que siguen abiertos en el sistema — sin límite de antigüedad. Estos no aparecen en los avisos normales del conductor (acotados a 7 días).
-                    </p>
+            ) : (
+                <div className="bg-amber-50 border-l-4 border-amber-500 p-6 rounded-2xl flex items-center gap-4">
+                    <div className="p-3 bg-amber-100 text-amber-600 rounded-full">
+                        <IconAlertTriangle className="w-8 h-8" />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-black text-amber-900">Pendientes confirmados por Mercado Libre</h3>
+                        <p className="text-sm text-amber-700 font-medium">
+                            <span className="font-black">{totalMatching} paquete{totalMatching === 1 ? '' : 's'}</span> que Mercado Libre ya reportó como entregado{totalMatching === 1 ? '' : 's'}, pero que siguen abiertos en el sistema y asignados a un conductor — sin límite de antigüedad. Estos no aparecen en los avisos normales del conductor (acotados a 7 días).
+                            {data.length > 0 && data.length < totalMatching && (
+                                <> Mostrando los {data.length} más antiguos.</>
+                            )}
+                        </p>
+                    </div>
                 </div>
-            </div>
+            )}
 
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-6 border-b border-gray-100 flex items-center justify-between">
@@ -90,7 +115,10 @@ const MeliConfirmedStuckReport: React.FC = () => {
                                     </td>
                                 </tr>
                             ))}
-                            {data.length === 0 && !isLoading && (
+                            {data.length === 0 && isLoading && (
+                                <tr><td colSpan={6} className="px-6 py-10 text-center text-gray-400 text-sm">Cargando...</td></tr>
+                            )}
+                            {data.length === 0 && !isLoading && !error && (
                                 <tr><td colSpan={6} className="px-6 py-10 text-center text-gray-400 text-sm">No hay pendientes confirmados por Mercado Libre sin cerrar.</td></tr>
                             )}
                         </tbody>
