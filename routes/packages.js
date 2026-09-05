@@ -2092,18 +2092,23 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             const todayStr = await timeService.getLogicalDate();
             const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
             const { rows: meliBlockRows } = await db.query(
-                `SELECT COUNT(*)::int as count FROM packages
+                `SELECT id, "recipientAddress" FROM packages
                  WHERE "driverId" = $1
                    AND id != $2
                    AND "meliDeliveredNeedsPhotos" = true
                    AND "assignedAt" < $3
-                   AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
+                   AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')
+                 ORDER BY "assignedAt" ASC`,
                 [sourceCheckRows[0].driverId, id, todayStart]
             );
-            const meliBlockCount = meliBlockRows[0]?.count || 0;
-            if (meliBlockCount > 0) {
+            if (meliBlockRows.length > 0) {
+                const { rows: companyRows } = await db.query('SELECT "companyName" FROM system_settings WHERE id = 1');
+                const companyName = companyRows[0]?.companyName || 'la app';
+                const address = meliBlockRows[0].recipientAddress || 'una dirección registrada';
+                const isPlural = meliBlockRows.length > 1;
+                const extra = isPlural ? ` (y ${meliBlockRows.length - 1} más)` : '';
                 return res.status(403).json({
-                    message: `Tienes ${meliBlockCount} entrega${meliBlockCount === 1 ? '' : 's'} de día${meliBlockCount === 1 ? '' : 's'} anterior${meliBlockCount === 1 ? '' : 'es'} ya confirmada${meliBlockCount === 1 ? '' : 's'} como entregada${meliBlockCount === 1 ? '' : 's'} en Mercado Libre que aún no cierras en la app. Ciérrala${meliBlockCount === 1 ? '' : 's'} antes de continuar con otras entregas.`
+                    message: `Mercado Libre detectó el cierre de la entrega en ${address}${extra} y aún no la${isPlural ? 's' : ''} cierras en ${companyName}. Debes cerrarla${isPlural ? 's' : ''} para continuar con las entregas.`
                 });
             }
         }
