@@ -398,14 +398,23 @@ const DriverDashboard: React.FC = () => {
 
   // Effect to detect when all packages are processed
   useEffect(() => {
-    if (prevPackagesRef.current === undefined) {
-      prevPackagesRef.current = myPackages;
-      return;
-    }
-
     const allProcessedNow = myPackages.length > 0 && myPackages.every(
       p => p.status === PackageStatus.Delivered || p.status === PackageStatus.Problem
     );
+
+    if (prevPackagesRef.current === undefined) {
+      prevPackagesRef.current = myPackages;
+      // La pantalla acaba de montarse y ya viene todo resuelto (el conductor terminó su
+      // último paquete mientras la app estaba en otra pestaña, con el teléfono bloqueado,
+      // o recién la vuelve a abrir más tarde) — la transición de abajo nunca ocurrió dentro
+      // de esta sesión, así que sin esto el conductor queda para siempre como "Sin
+      // Pendientes" en vez de "Cerrado en App", aunque haya terminado todo. Se dispara sin
+      // abrir el modal de fin de jornada, porque no acaba de pasar ahora mismo.
+      if (allProcessedNow) {
+        tryAutoCloseRoute();
+      }
+      return;
+    }
 
     const allProcessedBefore = prevPackagesRef.current.length > 0 && prevPackagesRef.current.every(
       p => p.status === PackageStatus.Delivered || p.status === PackageStatus.Problem
@@ -641,6 +650,11 @@ const DriverDashboard: React.FC = () => {
       return next;
     });
 
+    // Igual que driver-app (la app nativa): dispara el chequeo de cierre automático justo
+    // aquí, no solo desde el efecto que mira la lista completa — así el cierre no depende
+    // de que ningún otro código "vea" el cambio a tiempo.
+    tryAutoCloseRoute();
+
     setDeliveringPackages(null);
     setSelectedPackages(new Set()); // Limpiar selección después de entregar
 
@@ -676,6 +690,7 @@ const DriverDashboard: React.FC = () => {
     try {
         const updatedPackage = await api.markPackageAsProblem(pkgId, reason, photos);
         setMyPackages(prev => prev.map(p => p.id === pkgId ? updatedPackage : p));
+        tryAutoCloseRoute();
         setReportingProblemPackage(null);
     } catch (error: any) {
         if (isNetworkFailure(error)) {
