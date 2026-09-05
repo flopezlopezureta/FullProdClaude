@@ -72,6 +72,11 @@ const DriverDashboard: React.FC = () => {
   const auth = useContext(AuthContext);
   const isInitialLoad = useRef(true);
   const prevPackagesRef = useRef<Package[] | undefined>(undefined);
+  // Una sola vez por montaje del dashboard (no en cada poll de 60s) — si al entrar hay
+  // pendientes de días anteriores, se abre esa pestaña de entrada en vez de "Pendientes".
+  // Se vuelve a disparar si el conductor sale a otra sección y reingresa (remonta el
+  // componente), que es justo el efecto buscado: recordárselo cada vez que reingresa.
+  const hasAutoOpenedStaleTab = useRef(false);
 
   const [driverCoords, setDriverCoords] = useState<{ latitude: number, longitude: number } | null>(null);
   const [roadDistances, setRoadDistances] = useState<Record<string, { distance: number, isRoad: boolean }>>({});
@@ -296,7 +301,12 @@ const DriverDashboard: React.FC = () => {
     const fetchStale = async () => {
       try {
         const stale = await api.getStaleDriverPackages();
-        setStalePackages(Array.isArray(stale) ? stale : []);
+        const staleList = Array.isArray(stale) ? stale : [];
+        setStalePackages(staleList);
+        if (!hasAutoOpenedStaleTab.current && staleList.length > 0) {
+          hasAutoOpenedStaleTab.current = true;
+          setActiveTab('stale');
+        }
       } catch (error) {
         console.error("Failed to fetch stale driver packages", error);
       }
