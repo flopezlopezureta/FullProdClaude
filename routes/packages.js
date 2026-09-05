@@ -2080,6 +2080,30 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             }
         }
 
+        // Si Mercado Libre YA confirmó la entrega de otro paquete de este conductor y todavía
+        // sigue sin cerrarse en FullEnvíos (meliDeliveredNeedsPhotos = true, y su estado nunca
+        // avanzó — ni entregado, ni con Problema/Reprogramado/Cancelado documentado), se bloquea
+        // cualquier OTRA entrega hasta que lo cierre. A diferencia del bloqueo genérico que se
+        // probó y se quitó antes, este exige confirmación externa real (no solo "es viejo"), y
+        // por eso el usuario pidió reactivarlo en esta forma más acotada. Excluye el propio
+        // paquete que se está entregando ahora mismo — si no, nunca podría cerrarse a sí mismo.
+        if (sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
+            const { rows: meliBlockRows } = await db.query(
+                `SELECT COUNT(*)::int as count FROM packages
+                 WHERE "driverId" = $1
+                   AND id != $2
+                   AND "meliDeliveredNeedsPhotos" = true
+                   AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
+                [sourceCheckRows[0].driverId, id]
+            );
+            const meliBlockCount = meliBlockRows[0]?.count || 0;
+            if (meliBlockCount > 0) {
+                return res.status(403).json({
+                    message: `Tienes ${meliBlockCount} entrega${meliBlockCount === 1 ? '' : 's'} ya confirmada${meliBlockCount === 1 ? '' : 's'} como entregada${meliBlockCount === 1 ? '' : 's'} en Mercado Libre que aún no cierras en la app. Ciérrala${meliBlockCount === 1 ? '' : 's'} antes de continuar con otras entregas.`
+                });
+            }
+        }
+
         const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');
         const meliFlexValidation = settingsRows.length > 0 ? settingsRows[0].meliFlexValidation : true;
 
