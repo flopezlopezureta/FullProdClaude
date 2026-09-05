@@ -383,16 +383,26 @@ async function pollPackageStatuses() {
                                 [pkg.id, 'CIERRE_OFICIAL_ML', 'Mercado Libre API (Auto-Capture)', `Entrega detectada en Meli: ${meliTime.toISOString()}`, meliTime]
                             );
                         }
-                        if (meliAutoPromptPhotos && pkg.status !== 'ENTREGADO') {
+                        // meliDeliveredNeedsPhotos records an objective fact (Meli confirmed this
+                        // delivery) — it must be set regardless of meliAutoPromptPhotos, since
+                        // that setting only controls whether the driver gets proactively
+                        // interrupted with a popup, not whether the fact itself gets recorded.
+                        // Previously both were gated together, which silently made the
+                        // Meli-confirmed-delivery block (routes/packages.js /:id/deliver) inert
+                        // whenever meliAutoPromptPhotos was off, even though the CIERRE_OFICIAL_ML
+                        // tracking event above was already being logged correctly.
+                        if (pkg.status !== 'ENTREGADO') {
                             await db.query(
                                 'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1 WHERE id = $2',
                                 [now, pkg.id]
                             );
-                            emitDriverEvent(pkg.driverId, {
-                                packageId: pkg.id,
-                                trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
-                                type: 'MELI_DELIVERY_CLOSED'
-                            });
+                            if (meliAutoPromptPhotos) {
+                                emitDriverEvent(pkg.driverId, {
+                                    packageId: pkg.id,
+                                    trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
+                                    type: 'MELI_DELIVERY_CLOSED'
+                                });
+                            }
                         }
                     } else if (mlStatus === 'shipped' && !['EN_TRANSITO', 'EN_RUTA', 'PROBLEMA', 'REPROGRAMADO', 'ENTREGADO', 'DEVUELTO', 'CANCELADO'].includes(pkg.status)) {
                         newStatus = 'EN_TRANSITO';
