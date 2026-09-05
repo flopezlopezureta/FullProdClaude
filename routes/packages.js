@@ -2087,7 +2087,10 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         // deliberado: muchos conductores cierran recién en la noche al llegar a casa, así que una
         // confirmación de Meli de HOY mismo no debe bloquearlos a mitad de su propia ruta — solo
         // si amaneció el día siguiente y sigue sin cerrar. Excluye el propio paquete que se está
-        // entregando ahora mismo — si no, nunca podría cerrarse a sí mismo.
+        // entregando ahora mismo — si no, nunca podría cerrarse a sí mismo. También tiene piso de
+        // 7 días (igual que /driver/stale, la pestaña "Anteriores" y su aviso en pantalla): un
+        // paquete más viejo ya no cuenta aquí como bloqueante — casos así solo deben verse en el
+        // reporte de administrador (meli-confirmed-stuck), nunca bloqueando al conductor en la app.
         const { rows: meliBlockSettingsRows } = await db.query('SELECT "blockDeliveryOnMeliConfirmed" FROM system_settings WHERE id = 1');
         const blockDeliveryOnMeliConfirmed = meliBlockSettingsRows.length > 0 ? meliBlockSettingsRows[0].blockDeliveryOnMeliConfirmed : true;
         if (blockDeliveryOnMeliConfirmed && sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
@@ -2103,6 +2106,7 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
                  WHERE id = $1
                    AND "meliDeliveredNeedsPhotos" = true
                    AND "assignedAt" < $2
+                   AND "assignedAt" >= NOW() - INTERVAL '7 days'
                    AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
                 [id, todayStart]
             );
@@ -2113,6 +2117,7 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
                    AND id != $2
                    AND "meliDeliveredNeedsPhotos" = true
                    AND "assignedAt" < $3
+                   AND "assignedAt" >= NOW() - INTERVAL '7 days'
                    AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')
                  ORDER BY "assignedAt" ASC`,
                 [sourceCheckRows[0].driverId, id, todayStart]
