@@ -325,10 +325,16 @@ const DriverDashboard: React.FC = () => {
     () => [...myPackages, ...stalePackages].filter(p => p.meliDeliveredNeedsPhotos === true),
     [myPackages, stalePackages]
   );
-  const findMeliBlocker = (excludeIds: string[]) =>
-    auth?.systemSettings?.blockDeliveryOnMeliConfirmed !== false
-      ? meliBlockingPackages.find(p => !excludeIds.includes(p.id))
-      : undefined;
+  const findMeliBlocker = (targetIds: string[]) => {
+    if (auth?.systemSettings?.blockDeliveryOnMeliConfirmed === false) return undefined;
+    // Si lo que se está por seleccionar/entregar es en sí uno de los paquetes bloqueantes, se
+    // permite sin más — resolver cualquiera de ellos siempre debe poder hacerse. Si no, con 2+
+    // paquetes bloqueantes se genera un loop: cerrar A pide cerrar B primero, y cerrar B pide
+    // cerrar A primero, sin dejar cerrar ninguno de los dos.
+    const isResolvingABlocker = meliBlockingPackages.some(p => targetIds.includes(p.id));
+    if (isResolvingABlocker) return undefined;
+    return meliBlockingPackages.find(p => !targetIds.includes(p.id));
+  };
   const [meliBlockAlert, setMeliBlockAlert] = useState<{ address: string; since: string; companyName: string } | null>(null);
   const alertMeliBlocker = (blocker: Package) => {
     setMeliBlockAlert({

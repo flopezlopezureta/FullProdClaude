@@ -2093,7 +2093,21 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         if (blockDeliveryOnMeliConfirmed && sourceCheckRows.length > 0 && sourceCheckRows[0].driverId) {
             const todayStr = await timeService.getLogicalDate();
             const { start: todayStart } = await timeService.getLogicalRange(todayStr, todayStr);
-            const { rows: meliBlockRows } = await db.query(
+            // Si el paquete que se está entregando AHORA es él mismo uno de los "bloqueantes"
+            // (confirmado por Meli, de día anterior, sin cerrar), se permite sin más — resolver
+            // cualquiera de ellos siempre debe poder hacerse. Sin este chequeo, con 2+ paquetes
+            // bloqueantes se generaba un loop real: cerrar A pedía cerrar B primero, y cerrar B
+            // pedía cerrar A primero, dejando al conductor sin poder cerrar ninguno de los dos.
+            const { rows: selfCheckRows } = await db.query(
+                `SELECT 1 FROM packages
+                 WHERE id = $1
+                   AND "meliDeliveredNeedsPhotos" = true
+                   AND "assignedAt" < $2
+                   AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')`,
+                [id, todayStart]
+            );
+            const isResolvingABlocker = selfCheckRows.length > 0;
+            const { rows: meliBlockRows } = isResolvingABlocker ? { rows: [] } : await db.query(
                 `SELECT id, "recipientAddress", "assignedAt" FROM packages
                  WHERE "driverId" = $1
                    AND id != $2
