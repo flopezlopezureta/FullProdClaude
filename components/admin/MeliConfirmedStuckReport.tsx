@@ -20,12 +20,15 @@ const MeliConfirmedStuckReport: React.FC = () => {
     const [data, setData] = useState<MeliStuckPackage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
 
     const fetchData = async () => {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch('/api/reports/meli-confirmed-stuck', {
+            const params = startDate && endDate ? `?startDate=${startDate}&endDate=${endDate}` : '';
+            const response = await fetch(`/api/reports/meli-confirmed-stuck${params}`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             const result = await response.json();
@@ -43,10 +46,12 @@ const MeliConfirmedStuckReport: React.FC = () => {
     };
 
     const totalMatching = data[0]?.totalMatching ?? data.length;
+    const hasDateFilter = !!(startDate && endDate);
+    const clearDateFilter = () => { setStartDate(''); setEndDate(''); };
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [startDate, endDate]);
 
     return (
         <div className="space-y-6">
@@ -68,7 +73,7 @@ const MeliConfirmedStuckReport: React.FC = () => {
                     <div>
                         <h3 className="text-lg font-black text-amber-900">Pendientes confirmados por Mercado Libre</h3>
                         <p className="text-sm text-amber-700 font-medium">
-                            <span className="font-black">{totalMatching} paquete{totalMatching === 1 ? '' : 's'}</span> que Mercado Libre ya reportó como entregado{totalMatching === 1 ? '' : 's'}, pero que siguen abiertos en el sistema y asignados a un conductor — sin límite de antigüedad. Estos no aparecen en los avisos normales del conductor (acotados a 7 días).
+                            <span className="font-black">{totalMatching} paquete{totalMatching === 1 ? '' : 's'}</span> que Mercado Libre ya reportó como entregado{totalMatching === 1 ? '' : 's'}, pero que siguen abiertos en el sistema y asignados a un conductor{hasDateFilter ? ' en el rango seleccionado' : ' — sin límite de antigüedad'}. Estos no aparecen en los avisos normales del conductor (acotados a 7 días).
                             {data.length > 0 && data.length < totalMatching && (
                                 <> Mostrando los {data.length} más antiguos.</>
                             )}
@@ -83,10 +88,33 @@ const MeliConfirmedStuckReport: React.FC = () => {
                         <IconTruck className="w-5 h-5 text-indigo-500" />
                         Listado
                     </h3>
-                    <button onClick={fetchData} disabled={isLoading} className="px-6 py-2 bg-gray-900 text-white rounded-xl font-bold text-xs hover:bg-gray-800 flex items-center gap-2 transition-all">
-                        <IconRefresh className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-                        Actualizar
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                            <span className="text-[10px] font-black text-gray-400 uppercase">Desde</span>
+                            <input
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                className="bg-transparent text-xs font-bold text-gray-900 border-none outline-none focus:ring-0 cursor-pointer"
+                            />
+                            <span className="text-[10px] font-black text-gray-400 uppercase">Hasta</span>
+                            <input
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                className="bg-transparent text-xs font-bold text-gray-900 border-none outline-none focus:ring-0 cursor-pointer"
+                            />
+                        </div>
+                        {hasDateFilter && (
+                            <button onClick={clearDateFilter} className="px-3 py-2 text-[10px] font-black uppercase text-gray-500 hover:text-gray-900 transition-colors">
+                                Quitar filtro
+                            </button>
+                        )}
+                        <button onClick={fetchData} disabled={isLoading} className="px-6 py-2 bg-gray-900 text-white rounded-xl font-bold text-xs hover:bg-gray-800 flex items-center gap-2 transition-all">
+                            <IconRefresh className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+                            Actualizar
+                        </button>
+                    </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-100">
