@@ -252,16 +252,23 @@ router.get('/closures/summary', authMiddleware, async (req, res) => {
     try {
         const driverId = req.user.id;
         const { start, nextDayStart } = await timeService.getLogicalTodayRange();
-        
+
+        // Filtra por assignedAt (lo que se le despachó HOY), igual que el Centro de Control y el
+        // resto de las consultas de "carga del día" en la app - NO por updatedAt. Con updatedAt,
+        // un pendiente viejo (p.ej. una confirmación de Mercado Libre que el poller sigue
+        // retocando cada 5 minutos) se contaba como "pendiente de hoy" cada día que se le tocaba,
+        // impidiendo el cierre automático indefinidamente aunque el reparto de hoy ya estuviera
+        // completo. Un pendiente de un día anterior debe verse ese día, no acumularse en todos
+        // los días siguientes.
         const query = `
-            SELECT 
+            SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE status = 'ENTREGADO') as delivered,
                 COUNT(*) FILTER (WHERE status IN ('PROBLEMA', 'REPROGRAMADO', 'CANCELADO', 'DEVUELTO')) as problems,
                 COUNT(*) FILTER (WHERE status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO')) as pending
-            FROM packages 
-            WHERE "driverId" = $1 
-            AND "updatedAt" >= $2 AND "updatedAt" < $3
+            FROM packages
+            WHERE "driverId" = $1
+            AND "assignedAt" >= $2 AND "assignedAt" < $3
         `;
 
         const { rows } = await db.query(query, [driverId, start, nextDayStart]);
