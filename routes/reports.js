@@ -116,6 +116,7 @@ router.get('/meli-confirmed-stuck', authMiddleware, async (req, res) => {
                 p.status,
                 p."assignedAt",
                 p.source,
+                p."meliStuckReviewed",
                 d.name as "driverName",
                 c.name as "clientName",
                 EXTRACT(DAY FROM NOW() - p."assignedAt")::int as "daysPending",
@@ -134,6 +135,30 @@ router.get('/meli-confirmed-stuck', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Error in meli-confirmed-stuck report:', err);
         res.status(500).json({ message: 'Error al generar el reporte de pendientes confirmados por Mercado Libre.' });
+    }
+});
+
+// PATCH /api/reports/meli-confirmed-stuck/:id/reviewed
+// Marca/desmarca un paquete de este reporte como revisado por un administrador. No cambia status
+// ni ningún otro dato del paquete - es solo una marca de seguimiento manual para esta lista.
+router.patch('/meli-confirmed-stuck/:id/reviewed', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    try {
+        const { id } = req.params;
+        const { reviewed } = req.body;
+        const { rows } = await db.query(
+            'UPDATE packages SET "meliStuckReviewed" = $1 WHERE id = $2 RETURNING id, "meliStuckReviewed"',
+            [!!reviewed, id]
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Paquete no encontrado.' });
+        }
+        res.json(rows[0]);
+    } catch (err) {
+        console.error('Error updating meliStuckReviewed:', err);
+        res.status(500).json({ message: 'Error al actualizar el estado de revisión.' });
     }
 });
 

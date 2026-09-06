@@ -598,7 +598,8 @@ async function initializeDatabase() {
                 "recipientRut" TEXT,
                 "isFlexed" BOOLEAN DEFAULT false,
                 "flexedAt" TIMESTAMPTZ,
-                "meliDeliveredNeedsPhotos" BOOLEAN DEFAULT false
+                "meliDeliveredNeedsPhotos" BOOLEAN DEFAULT false,
+                "meliStuckReviewed" BOOLEAN DEFAULT false
             );
         `);
         console.log('Table "packages" is ready.');
@@ -1010,6 +1011,12 @@ async function initializeDatabase() {
             console.log('MIGRATION APPLIED: Column "meliDeliveredNeedsPhotos" was added to "packages".');
         } catch (err) {
             if (err.code !== '42701') { console.error('Error during packages migration (meliDeliveredNeedsPhotos):', err); }
+        }
+        try {
+            await db.query('ALTER TABLE packages ADD COLUMN "meliStuckReviewed" BOOLEAN DEFAULT false');
+            console.log('MIGRATION APPLIED: Column "meliStuckReviewed" was added to "packages".');
+        } catch (err) {
+            if (err.code !== '42701') { console.error('Error during packages migration (meliStuckReviewed):', err); }
         }
         try {
             await db.query('ALTER TABLE system_settings ADD COLUMN "pendingNotificationsEnabled" BOOLEAN DEFAULT false');

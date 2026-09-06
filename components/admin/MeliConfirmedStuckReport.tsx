@@ -12,6 +12,7 @@ interface MeliStuckPackage {
     clientName: string | null;
     daysPending: number;
     totalMatching: number;
+    meliStuckReviewed: boolean;
 }
 
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -48,6 +49,25 @@ const MeliConfirmedStuckReport: React.FC = () => {
     const totalMatching = data[0]?.totalMatching ?? data.length;
     const hasDateFilter = !!(startDate && endDate);
     const clearDateFilter = () => { setStartDate(''); setEndDate(''); };
+
+    const toggleReviewed = async (pkg: MeliStuckPackage) => {
+        const nextValue = !pkg.meliStuckReviewed;
+        setData(prev => prev.map(p => p.id === pkg.id ? { ...p, meliStuckReviewed: nextValue } : p));
+        try {
+            const response = await fetch(`/api/reports/meli-confirmed-stuck/${pkg.id}/reviewed`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: JSON.stringify({ reviewed: nextValue })
+            });
+            if (!response.ok) throw new Error('No se pudo guardar');
+        } catch (err) {
+            console.error('Error al marcar como revisado:', err);
+            setData(prev => prev.map(p => p.id === pkg.id ? { ...p, meliStuckReviewed: !nextValue } : p));
+        }
+    };
 
     useEffect(() => {
         fetchData();
@@ -87,6 +107,9 @@ const MeliConfirmedStuckReport: React.FC = () => {
                     <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
                         <IconTruck className="w-5 h-5 text-indigo-500" />
                         Listado
+                        <span className="px-2.5 py-1 text-xs font-black bg-indigo-100 text-indigo-700 rounded-full">
+                            {totalMatching} encontrado{totalMatching === 1 ? '' : 's'}
+                        </span>
                     </h3>
                     <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
@@ -120,17 +143,20 @@ const MeliConfirmedStuckReport: React.FC = () => {
                     <table className="min-w-full divide-y divide-gray-100">
                         <thead className="bg-gray-50">
                             <tr>
+                                <th className="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">#</th>
                                 <th className="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">ID</th>
                                 <th className="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Cliente</th>
                                 <th className="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Conductor</th>
                                 <th className="px-6 py-4 text-left text-xs font-bold text-gray-400 uppercase tracking-wider">Dirección</th>
                                 <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">Pendiente desde</th>
                                 <th className="px-6 py-4 text-right text-xs font-bold text-gray-400 uppercase tracking-wider">Días</th>
+                                <th className="px-6 py-4 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">Revisado</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                            {data.map(pkg => (
-                                <tr key={pkg.id} className="hover:bg-gray-50/50 transition-colors text-sm">
+                            {data.map((pkg, index) => (
+                                <tr key={pkg.id} className={`hover:bg-gray-50/50 transition-colors text-sm ${pkg.meliStuckReviewed ? 'bg-emerald-50/40' : ''}`}>
+                                    <td className="px-6 py-4 text-gray-400 font-bold">{index + 1}</td>
                                     <td className="px-6 py-4 font-bold text-gray-900">{pkg.id}</td>
                                     <td className="px-6 py-4 text-gray-600">{pkg.clientName || '—'}</td>
                                     <td className="px-6 py-4 text-gray-600">{pkg.driverName || 'Sin asignar'}</td>
@@ -141,13 +167,21 @@ const MeliConfirmedStuckReport: React.FC = () => {
                                             {pkg.daysPending} día{pkg.daysPending === 1 ? '' : 's'}
                                         </span>
                                     </td>
+                                    <td className="px-6 py-4 text-center">
+                                        <input
+                                            type="checkbox"
+                                            checked={pkg.meliStuckReviewed}
+                                            onChange={() => toggleReviewed(pkg)}
+                                            className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                        />
+                                    </td>
                                 </tr>
                             ))}
                             {data.length === 0 && isLoading && (
-                                <tr><td colSpan={6} className="px-6 py-10 text-center text-gray-400 text-sm">Cargando...</td></tr>
+                                <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-400 text-sm">Cargando...</td></tr>
                             )}
                             {data.length === 0 && !isLoading && !error && (
-                                <tr><td colSpan={6} className="px-6 py-10 text-center text-gray-400 text-sm">No hay pendientes confirmados por Mercado Libre sin cerrar.</td></tr>
+                                <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-400 text-sm">No hay pendientes confirmados por Mercado Libre sin cerrar.</td></tr>
                             )}
                         </tbody>
                     </table>
