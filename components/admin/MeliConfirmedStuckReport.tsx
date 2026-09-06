@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { IconAlertTriangle, IconRefresh, IconTruck } from '../Icon';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 interface MeliStuckPackage {
     id: string;
@@ -17,12 +18,19 @@ interface MeliStuckPackage {
 
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: '2-digit' });
 
+// Vista por defecto: mes en curso (dia 1 hasta hoy). Sigue siendo editable - "Quitar filtro" lleva
+// a la vista sin limite de antiguedad, no a este default.
+const getFirstOfMonth = () => {
+    const now = new Date();
+    return getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+};
+
 const MeliConfirmedStuckReport: React.FC = () => {
     const [data, setData] = useState<MeliStuckPackage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
+    const [startDate, setStartDate] = useState(getFirstOfMonth);
+    const [endDate, setEndDate] = useState(getLocalDateString);
 
     const fetchData = async () => {
         setIsLoading(true);
