@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { IconAlertTriangle, IconRefresh, IconTruck } from '../Icon';
 import { getLocalDateString } from '../../utils/dateUtils';
+import { api } from '../../services/api';
+import type { Package } from '../../types';
+import PackageDetailModal from '../PackageDetailModal';
 
 interface MeliStuckPackage {
     id: string;
@@ -54,9 +57,26 @@ const MeliConfirmedStuckReport: React.FC = () => {
         }
     };
 
+    const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
+    const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
+
     const totalMatching = data[0]?.totalMatching ?? data.length;
     const hasDateFilter = !!(startDate && endDate);
     const clearDateFilter = () => { setStartDate(''); setEndDate(''); };
+
+    const openHistory = async (id: string) => {
+        if (loadingDetailId) return;
+        setLoadingDetailId(id);
+        try {
+            const fullPackage = await api.getPackage(id);
+            setSelectedPackage(fullPackage);
+        } catch (err: any) {
+            console.error('Error al cargar el detalle del paquete:', err);
+            alert(err.message || 'No se pudo cargar el historial de este paquete.');
+        } finally {
+            setLoadingDetailId(null);
+        }
+    };
 
     const toggleReviewed = async (pkg: MeliStuckPackage) => {
         const nextValue = !pkg.meliStuckReviewed;
@@ -163,8 +183,15 @@ const MeliConfirmedStuckReport: React.FC = () => {
                         </thead>
                         <tbody className="divide-y divide-gray-50">
                             {data.map((pkg, index) => (
-                                <tr key={pkg.id} className={`hover:bg-gray-50/50 transition-colors text-sm ${pkg.meliStuckReviewed ? 'bg-emerald-50/40' : ''}`}>
-                                    <td className="px-6 py-4 text-gray-400 font-bold">{index + 1}</td>
+                                <tr
+                                    key={pkg.id}
+                                    onClick={() => openHistory(pkg.id)}
+                                    className={`hover:bg-gray-50/50 transition-colors text-sm cursor-pointer ${pkg.meliStuckReviewed ? 'bg-emerald-50/40' : ''}`}
+                                    title="Ver historial de este paquete"
+                                >
+                                    <td className="px-6 py-4 text-gray-400 font-bold">
+                                        {loadingDetailId === pkg.id ? <IconRefresh className="w-3.5 h-3.5 animate-spin text-indigo-500" /> : index + 1}
+                                    </td>
                                     <td className="px-6 py-4 font-bold text-gray-900">{pkg.id}</td>
                                     <td className="px-6 py-4 text-gray-600">{pkg.clientName || '—'}</td>
                                     <td className="px-6 py-4 text-gray-600">{pkg.driverName || 'Sin asignar'}</td>
@@ -175,7 +202,7 @@ const MeliConfirmedStuckReport: React.FC = () => {
                                             {pkg.daysPending} día{pkg.daysPending === 1 ? '' : 's'}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-center">
+                                    <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                                         <input
                                             type="checkbox"
                                             checked={pkg.meliStuckReviewed}
@@ -195,6 +222,10 @@ const MeliConfirmedStuckReport: React.FC = () => {
                     </table>
                 </div>
             </div>
+
+            {selectedPackage && (
+                <PackageDetailModal pkg={selectedPackage} onClose={() => setSelectedPackage(null)} />
+            )}
         </div>
     );
 };
