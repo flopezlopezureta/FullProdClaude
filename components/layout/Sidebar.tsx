@@ -12,6 +12,12 @@ interface SidebarProps {
   onClose: () => void;
 }
 
+// Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
+// desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v1';
+const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
+const MELI_STUCK_BLINK_INTERVAL_MS = 300;
+
 const getRoleInSpanish = (role?: Role): string => {
     if (!role) return '';
     const normalizedRole = String(role).toUpperCase();
@@ -50,6 +56,30 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
   });
 
   const [hoveredMenu, setHoveredMenu] = useState<string | null>(null);
+
+  const [showMeliStuckNewBadge, setShowMeliStuckNewBadge] = useState(() => {
+    try {
+      return localStorage.getItem(MELI_STUCK_NEW_BADGE_KEY) !== 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [meliStuckBadgeVisible, setMeliStuckBadgeVisible] = useState(true);
+
+  useEffect(() => {
+    if (!showMeliStuckNewBadge) return;
+    let toggles = 0;
+    const interval = setInterval(() => {
+      setMeliStuckBadgeVisible(v => !v);
+      toggles++;
+      if (toggles >= MELI_STUCK_BLINK_TOGGLES) {
+        clearInterval(interval);
+        setShowMeliStuckNewBadge(false);
+        try { localStorage.setItem(MELI_STUCK_NEW_BADGE_KEY, 'true'); } catch {}
+      }
+    }, MELI_STUCK_BLINK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   const [usersList, setUsersList] = useState<any[]>([]);
 
@@ -413,6 +443,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
                             {count}
                           </span>
                         )}
+                        {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && meliStuckBadgeVisible && (
+                          <span className="ml-auto flex-shrink-0 px-2 py-0.5 text-[9px] font-black uppercase bg-indigo-600 text-white rounded-full">
+                            Nuevo
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -445,6 +480,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
                           {count > 0 && (
                             <span className="ml-auto flex-shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-xs font-black bg-[var(--brand-primary)] text-white">
                               {count}
+                            </span>
+                          )}
+                          {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && meliStuckBadgeVisible && (
+                            <span className="ml-auto flex-shrink-0 px-2 py-0.5 text-[9px] font-black uppercase bg-indigo-600 text-white rounded-full">
+                              Nuevo
                             </span>
                           )}
                         </button>
