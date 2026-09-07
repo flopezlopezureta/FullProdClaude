@@ -1,5 +1,5 @@
 
-import React, { useContext, useState, useEffect, useRef } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import { AuthContext } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
 import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconFileUpload, IconWifi, IconSearch } from '../Icon';
@@ -12,11 +12,10 @@ interface SidebarProps {
   onClose: () => void;
 }
 
-// Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
-// desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
-const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v5';
-const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
-const MELI_STUCK_BLINK_INTERVAL_MS = 300;
+// Aviso de "Nuevo" junto al item del menu: se queda encendido hasta que el admin entra a esa
+// pantalla por primera vez, y ahi se apaga para siempre (por navegador). Subir la version del key
+// si se quiere volver a avisar.
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v6';
 
 const getRoleInSpanish = (role?: Role): string => {
     if (!role) return '';
@@ -64,43 +63,16 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       return false;
     }
   });
-  const [meliStuckBadgeVisible, setMeliStuckBadgeVisible] = useState(true);
-  // Ref, no estado: mutarlo no causa re-render ni re-ejecucion de este efecto.
-  const meliStuckBlinkStartedRef = useRef(false);
-  // Tambien en un ref (no una variable local del efecto) para que el cleanup de desmontaje de
-  // abajo, en un efecto SEPARADO, pueda encontrar y limpiar el intervalo correcto.
-  const meliStuckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // El submenu "Informes Operativos" (id 'reports') empieza colapsado - si el parpadeo arrancara
-  // apenas monta el Sidebar (como en el primer intento), para cuando el admin realmente abre este
-  // submenu y puede ver el item, el parpadeo ya termino y desaparecio. Por eso arranca recien
-  // cuando el submenu queda visible (abierto en movil, o con el mouse encima en escritorio).
-  const isReportsMenuOpenOrHovered = openMenus.has('reports') || hoveredMenu === 'reports';
 
+  // Se apaga la primera vez que el admin efectivamente entra a esa pantalla (no con temporizador
+  // ni parpadeo, que resultaron fragiles con el hover del menu) - simple y sin sorpresas: se queda
+  // encendido hasta que activeView sea este item, y ahi se apaga para siempre en este navegador.
   useEffect(() => {
-    if (!showMeliStuckNewBadge || !isReportsMenuOpenOrHovered || meliStuckBlinkStartedRef.current) return;
-    meliStuckBlinkStartedRef.current = true;
-    let toggles = 0;
-    // A proposito SIN "return () => clearInterval(...)" aqui: si el mouse se mueve fuera y vuelve
-    // a entrar al menu (o cualquier otra cosa hace que este efecto se re-ejecute), un cleanup
-    // ligado a estas dependencias mataria el parpadeo a medio camino - y como el ref ya quedo
-    // marcado como "iniciado", nunca podria reintentarse. Una vez que arranca, debe completarse
-    // solo. La limpieza real (por si el componente se desmonta) esta en el efecto de abajo.
-    meliStuckIntervalRef.current = setInterval(() => {
-      setMeliStuckBadgeVisible(v => !v);
-      toggles++;
-      if (toggles >= MELI_STUCK_BLINK_TOGGLES) {
-        if (meliStuckIntervalRef.current) clearInterval(meliStuckIntervalRef.current);
-        setShowMeliStuckNewBadge(false);
-        try { localStorage.setItem(MELI_STUCK_NEW_BADGE_KEY, 'true'); } catch {}
-      }
-    }, MELI_STUCK_BLINK_INTERVAL_MS);
-  }, [isReportsMenuOpenOrHovered, showMeliStuckNewBadge]);
-
-  useEffect(() => {
-    return () => {
-      if (meliStuckIntervalRef.current) clearInterval(meliStuckIntervalRef.current);
-    };
-  }, []);
+    if (showMeliStuckNewBadge && activeView === 'meli-confirmed-stuck') {
+      setShowMeliStuckNewBadge(false);
+      try { localStorage.setItem(MELI_STUCK_NEW_BADGE_KEY, 'true'); } catch {}
+    }
+  }, [activeView, showMeliStuckNewBadge]);
 
   const [usersList, setUsersList] = useState<any[]>([]);
 
@@ -464,7 +436,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
                             {count}
                           </span>
                         )}
-                        {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && meliStuckBadgeVisible && (
+                        {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && (
                           <span className="ml-auto flex-shrink-0 px-2 py-0.5 text-[9px] font-black uppercase bg-indigo-600 text-white rounded-full">
                             Nuevo
                           </span>
@@ -503,7 +475,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
                               {count}
                             </span>
                           )}
-                          {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && meliStuckBadgeVisible && (
+                          {subItem.id === 'meli-confirmed-stuck' && showMeliStuckNewBadge && (
                             <span className="ml-auto flex-shrink-0 px-2 py-0.5 text-[9px] font-black uppercase bg-indigo-600 text-white rounded-full">
                               Nuevo
                             </span>
