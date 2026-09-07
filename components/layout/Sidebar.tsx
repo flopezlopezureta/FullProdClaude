@@ -14,7 +14,7 @@ interface SidebarProps {
 
 // Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
 // desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
-const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v1';
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v2';
 const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
 const MELI_STUCK_BLINK_INTERVAL_MS = 300;
 
