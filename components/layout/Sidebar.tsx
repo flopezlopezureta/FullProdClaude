@@ -14,7 +14,7 @@ interface SidebarProps {
 
 // Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
 // desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
-const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v4';
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v5';
 const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
 const MELI_STUCK_BLINK_INTERVAL_MS = 300;
 
@@ -65,11 +65,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     }
   });
   const [meliStuckBadgeVisible, setMeliStuckBadgeVisible] = useState(true);
-  // Debe ser un ref, no un estado: si fuera estado, el propio setMeliStuckBlinkStarted(true) de
-  // abajo dispara una re-ejecucion de este efecto (esta en las dependencias) - React limpia el
-  // intervalo recien creado ANTES de esa segunda ejecucion, matandolo casi al instante y sin
-  // llegar a parpadear ni una vez. Un ref no causa re-render ni re-ejecucion del efecto.
+  // Ref, no estado: mutarlo no causa re-render ni re-ejecucion de este efecto.
   const meliStuckBlinkStartedRef = useRef(false);
+  // Tambien en un ref (no una variable local del efecto) para que el cleanup de desmontaje de
+  // abajo, en un efecto SEPARADO, pueda encontrar y limpiar el intervalo correcto.
+  const meliStuckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // El submenu "Informes Operativos" (id 'reports') empieza colapsado - si el parpadeo arrancara
   // apenas monta el Sidebar (como en el primer intento), para cuando el admin realmente abre este
   // submenu y puede ver el item, el parpadeo ya termino y desaparecio. Por eso arranca recien
@@ -80,17 +80,27 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     if (!showMeliStuckNewBadge || !isReportsMenuOpenOrHovered || meliStuckBlinkStartedRef.current) return;
     meliStuckBlinkStartedRef.current = true;
     let toggles = 0;
-    const interval = setInterval(() => {
+    // A proposito SIN "return () => clearInterval(...)" aqui: si el mouse se mueve fuera y vuelve
+    // a entrar al menu (o cualquier otra cosa hace que este efecto se re-ejecute), un cleanup
+    // ligado a estas dependencias mataria el parpadeo a medio camino - y como el ref ya quedo
+    // marcado como "iniciado", nunca podria reintentarse. Una vez que arranca, debe completarse
+    // solo. La limpieza real (por si el componente se desmonta) esta en el efecto de abajo.
+    meliStuckIntervalRef.current = setInterval(() => {
       setMeliStuckBadgeVisible(v => !v);
       toggles++;
       if (toggles >= MELI_STUCK_BLINK_TOGGLES) {
-        clearInterval(interval);
+        if (meliStuckIntervalRef.current) clearInterval(meliStuckIntervalRef.current);
         setShowMeliStuckNewBadge(false);
         try { localStorage.setItem(MELI_STUCK_NEW_BADGE_KEY, 'true'); } catch {}
       }
     }, MELI_STUCK_BLINK_INTERVAL_MS);
-    return () => clearInterval(interval);
   }, [isReportsMenuOpenOrHovered, showMeliStuckNewBadge]);
+
+  useEffect(() => {
+    return () => {
+      if (meliStuckIntervalRef.current) clearInterval(meliStuckIntervalRef.current);
+    };
+  }, []);
 
   const [usersList, setUsersList] = useState<any[]>([]);
 
