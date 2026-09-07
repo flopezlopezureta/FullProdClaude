@@ -1,5 +1,5 @@
 
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect, useRef } from 'react';
 import { AuthContext } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
 import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconFileUpload, IconWifi, IconSearch } from '../Icon';
@@ -14,7 +14,7 @@ interface SidebarProps {
 
 // Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
 // desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
-const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v3';
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v4';
 const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
 const MELI_STUCK_BLINK_INTERVAL_MS = 300;
 
@@ -65,7 +65,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     }
   });
   const [meliStuckBadgeVisible, setMeliStuckBadgeVisible] = useState(true);
-  const [meliStuckBlinkStarted, setMeliStuckBlinkStarted] = useState(false);
+  // Debe ser un ref, no un estado: si fuera estado, el propio setMeliStuckBlinkStarted(true) de
+  // abajo dispara una re-ejecucion de este efecto (esta en las dependencias) - React limpia el
+  // intervalo recien creado ANTES de esa segunda ejecucion, matandolo casi al instante y sin
+  // llegar a parpadear ni una vez. Un ref no causa re-render ni re-ejecucion del efecto.
+  const meliStuckBlinkStartedRef = useRef(false);
   // El submenu "Informes Operativos" (id 'reports') empieza colapsado - si el parpadeo arrancara
   // apenas monta el Sidebar (como en el primer intento), para cuando el admin realmente abre este
   // submenu y puede ver el item, el parpadeo ya termino y desaparecio. Por eso arranca recien
@@ -73,8 +77,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
   const isReportsMenuOpenOrHovered = openMenus.has('reports') || hoveredMenu === 'reports';
 
   useEffect(() => {
-    if (!showMeliStuckNewBadge || !isReportsMenuOpenOrHovered || meliStuckBlinkStarted) return;
-    setMeliStuckBlinkStarted(true);
+    if (!showMeliStuckNewBadge || !isReportsMenuOpenOrHovered || meliStuckBlinkStartedRef.current) return;
+    meliStuckBlinkStartedRef.current = true;
     let toggles = 0;
     const interval = setInterval(() => {
       setMeliStuckBadgeVisible(v => !v);
@@ -86,7 +90,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       }
     }, MELI_STUCK_BLINK_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [isReportsMenuOpenOrHovered, showMeliStuckNewBadge, meliStuckBlinkStarted]);
+  }, [isReportsMenuOpenOrHovered, showMeliStuckNewBadge]);
 
   const [usersList, setUsersList] = useState<any[]>([]);
 
