@@ -14,7 +14,7 @@ interface SidebarProps {
 
 // Aviso de "Nuevo" junto al item del menu, la primera vez que un admin lo ve: parpadea 3 veces y
 // desaparece para siempre (por navegador). Subir la version del key si se quiere volver a avisar.
-const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v2';
+const MELI_STUCK_NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v3';
 const MELI_STUCK_BLINK_TOGGLES = 6; // 3 parpadeos = 6 cambios de visible/invisible
 const MELI_STUCK_BLINK_INTERVAL_MS = 300;
 
@@ -65,9 +65,16 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     }
   });
   const [meliStuckBadgeVisible, setMeliStuckBadgeVisible] = useState(true);
+  const [meliStuckBlinkStarted, setMeliStuckBlinkStarted] = useState(false);
+  // El submenu "Informes Operativos" (id 'reports') empieza colapsado - si el parpadeo arrancara
+  // apenas monta el Sidebar (como en el primer intento), para cuando el admin realmente abre este
+  // submenu y puede ver el item, el parpadeo ya termino y desaparecio. Por eso arranca recien
+  // cuando el submenu queda visible (abierto en movil, o con el mouse encima en escritorio).
+  const isReportsMenuOpenOrHovered = openMenus.has('reports') || hoveredMenu === 'reports';
 
   useEffect(() => {
-    if (!showMeliStuckNewBadge) return;
+    if (!showMeliStuckNewBadge || !isReportsMenuOpenOrHovered || meliStuckBlinkStarted) return;
+    setMeliStuckBlinkStarted(true);
     let toggles = 0;
     const interval = setInterval(() => {
       setMeliStuckBadgeVisible(v => !v);
@@ -79,7 +86,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
       }
     }, MELI_STUCK_BLINK_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [isReportsMenuOpenOrHovered, showMeliStuckNewBadge, meliStuckBlinkStarted]);
 
   const [usersList, setUsersList] = useState<any[]>([]);
 
