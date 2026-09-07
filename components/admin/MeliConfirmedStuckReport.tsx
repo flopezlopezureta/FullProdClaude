@@ -28,12 +28,32 @@ const getFirstOfMonth = () => {
     return getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
 };
 
+// Aviso de "Nuevo" que se muestra una unica vez por navegador la primera vez que un admin entra
+// a esta pestana, para avisar de las funciones agregadas (historial, revisado, filtro de fecha).
+// Subir la version del key si se agregan mas funciones y se quiere volver a avisar.
+const NEW_BADGE_KEY = 'meliStuckReport_seenNewBadge_v1';
+const NEW_BADGE_DURATION_MS = 4000;
+
 const MeliConfirmedStuckReport: React.FC = () => {
     const [data, setData] = useState<MeliStuckPackage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [startDate, setStartDate] = useState(getFirstOfMonth);
     const [endDate, setEndDate] = useState(getLocalDateString);
+    const [showNewBadge, setShowNewBadge] = useState(() => {
+        try {
+            return localStorage.getItem(NEW_BADGE_KEY) !== 'true';
+        } catch {
+            return false;
+        }
+    });
+
+    useEffect(() => {
+        if (!showNewBadge) return;
+        try { localStorage.setItem(NEW_BADGE_KEY, 'true'); } catch {}
+        const timer = setTimeout(() => setShowNewBadge(false), NEW_BADGE_DURATION_MS);
+        return () => clearTimeout(timer);
+    }, []);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -103,6 +123,23 @@ const MeliConfirmedStuckReport: React.FC = () => {
 
     return (
         <div className="space-y-6">
+            {showNewBadge && (
+                <>
+                    <div className="fixed top-20 right-6 z-50 flex items-center gap-3 bg-indigo-600 text-white px-5 py-3 rounded-2xl shadow-2xl meli-stuck-new-badge">
+                        <span className="px-2 py-0.5 text-[10px] font-black uppercase bg-white text-indigo-700 rounded-full">Nuevo</span>
+                        <p className="text-xs font-bold">Ahora puedes revisar el historial de cada paquete, marcarlo como revisado y filtrar por fecha.</p>
+                    </div>
+                    <style>{`
+                        @keyframes meliStuckNewBadgeFade {
+                            from { opacity: 0; transform: translateY(-8px); }
+                            to { opacity: 1; transform: translateY(0); }
+                        }
+                        .meli-stuck-new-badge {
+                            animation: meliStuckNewBadgeFade 0.3s ease-out forwards;
+                        }
+                    `}</style>
+                </>
+            )}
             {error ? (
                 <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-2xl flex items-center gap-4">
                     <div className="p-3 bg-red-100 text-red-600 rounded-full">
