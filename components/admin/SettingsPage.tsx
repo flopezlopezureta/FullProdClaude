@@ -50,6 +50,7 @@ interface SettingsState {
     adminWhatsappNumber: string;
     adminCallmebotApiKey: string;
     blockDeliveryOnMeliConfirmed: boolean;
+    showStaleTabToDrivers: boolean;
 }
 
 const SettingsPage: React.FC = () => {
@@ -83,6 +84,7 @@ const SettingsPage: React.FC = () => {
         adminWhatsappNumber: '',
         adminCallmebotApiKey: '',
         blockDeliveryOnMeliConfirmed: true,
+        showStaleTabToDrivers: false,
     });
     const [originalSettings, setOriginalSettings] = useState<SettingsState | null>(null);
     const [password, setPassword] = useState('');
@@ -133,6 +135,7 @@ const SettingsPage: React.FC = () => {
                 adminWhatsappNumber: auth.systemSettings.adminWhatsappNumber || '',
                 adminCallmebotApiKey: auth.systemSettings.adminCallmebotApiKey || '',
                 blockDeliveryOnMeliConfirmed: auth.systemSettings.blockDeliveryOnMeliConfirmed ?? true,
+                showStaleTabToDrivers: auth.systemSettings.showStaleTabToDrivers ?? false,
             };
             setSettings(loadedSettings);
             setOriginalSettings(loadedSettings);
@@ -212,6 +215,7 @@ const SettingsPage: React.FC = () => {
                 adminWhatsappNumber: settings.adminWhatsappNumber,
                 adminCallmebotApiKey: settings.adminCallmebotApiKey,
                 blockDeliveryOnMeliConfirmed: settings.blockDeliveryOnMeliConfirmed,
+                showStaleTabToDrivers: settings.showStaleTabToDrivers,
             });
             setOriginalSettings(settings);
             showSuccess('Configuración general y de plan actualizada con éxito.');
@@ -349,7 +353,8 @@ const SettingsPage: React.FC = () => {
             settings.pendingNotificationsEnabled !== originalSettings.pendingNotificationsEnabled ||
             settings.adminWhatsappNumber !== originalSettings.adminWhatsappNumber ||
             settings.adminCallmebotApiKey !== originalSettings.adminCallmebotApiKey ||
-            settings.blockDeliveryOnMeliConfirmed !== originalSettings.blockDeliveryOnMeliConfirmed
+            settings.blockDeliveryOnMeliConfirmed !== originalSettings.blockDeliveryOnMeliConfirmed ||
+            settings.showStaleTabToDrivers !== originalSettings.showStaleTabToDrivers
         );
     }, [settings, originalSettings]);
 
@@ -759,6 +764,30 @@ const SettingsPage: React.FC = () => {
                                                         type="checkbox"
                                                         name="blockDeliveryOnMeliConfirmed"
                                                         checked={settings.blockDeliveryOnMeliConfirmed ?? true}
+                                                        onChange={handleSettingsChange}
+                                                        className="sr-only peer"
+                                                    />
+                                                    <div className="w-14 h-8 bg-gray-200 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-2 peer-focus:ring-indigo-500 dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    )}
+
+                                    {isSuperUser && (
+                                        <div className="pt-4 border-t border-indigo-200 bg-indigo-50/40 p-4 rounded-xl dark:bg-indigo-950/20 my-3">
+                                            <label className="flex items-center justify-between cursor-pointer">
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className="text-base font-bold text-indigo-900 dark:text-indigo-300">Mostrar Pestaña "Anteriores" a los Conductores</h3>
+                                                        <span className="px-2 py-0.5 text-[9px] font-black bg-indigo-600 text-white rounded-full uppercase tracking-wider">Superadmin Exclusivo</span>
+                                                    </div>
+                                                    <p className="text-xs text-indigo-700 dark:text-indigo-400 mt-1 max-w-md">Si está desactivado (por defecto), la pestaña "Anteriores" y su aviso en pantalla se ocultan de la app del conductor. Los paquetes de días anteriores se siguen registrando igual, solo no se muestran ahí hasta que se reactive.</p>
+                                                </div>
+                                                <div className="relative">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="showStaleTabToDrivers"
+                                                        checked={settings.showStaleTabToDrivers ?? false}
                                                         onChange={handleSettingsChange}
                                                         className="sr-only peer"
                                                     />

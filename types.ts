@@ -60,6 +60,7 @@ export interface SystemSettings {
     adminWhatsappNumber?: string;
     adminCallmebotApiKey?: string;
     blockDeliveryOnMeliConfirmed?: boolean;
+    showStaleTabToDrivers?: boolean;
 }
 
 export interface ZonePricing {

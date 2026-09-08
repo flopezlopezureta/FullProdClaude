@@ -296,7 +296,10 @@ const DriverDashboard: React.FC = () => {
         const stale = await api.getStaleDriverPackages();
         const staleList = Array.isArray(stale) ? stale : [];
         setStalePackages(staleList);
-        if (!hasAutoOpenedStaleTab.current && staleList.length > 0) {
+        // El fetch en si sigue corriendo siempre - meliBlockingPackages y el modal automatico de
+        // Meli confirmado dependen de estos datos aunque la pestana este oculta (ver el toggle
+        // showStaleTabToDrivers). Solo la auto-seleccion de la pestana respeta el toggle.
+        if (auth?.systemSettings?.showStaleTabToDrivers && !hasAutoOpenedStaleTab.current && staleList.length > 0) {
           hasAutoOpenedStaleTab.current = true;
           setActiveTab('stale');
         }
@@ -313,8 +316,10 @@ const DriverDashboard: React.FC = () => {
   // vía el modal automático (ver el useEffect de meliDeliveredNeedsPhotos más abajo) — el aviso
   // en pantalla es solo para el resto, los que de verdad necesitan que el conductor los revise.
   const staleBannerPackages = useMemo(
-    () => stalePackages.filter(p => !p.meliDeliveredNeedsPhotos && !dismissedStaleBannerIds.has(p.id)),
-    [stalePackages, dismissedStaleBannerIds]
+    () => auth?.systemSettings?.showStaleTabToDrivers
+      ? stalePackages.filter(p => !p.meliDeliveredNeedsPhotos && !dismissedStaleBannerIds.has(p.id))
+      : [],
+    [stalePackages, dismissedStaleBannerIds, auth?.systemSettings?.showStaleTabToDrivers]
   );
 
   // Espejo en el frontend del bloqueo de routes/packages.js's /:id/deliver — mismo criterio
@@ -1006,11 +1011,11 @@ const DriverDashboard: React.FC = () => {
               </button>
               <button
                 onClick={() => setActiveTab('history')}
-                className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} ${stalePackages.length === 0 ? 'rounded-tr-lg' : ''}`}
+                className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} ${!(auth?.systemSettings?.showStaleTabToDrivers && stalePackages.length > 0) ? 'rounded-tr-lg' : ''}`}
               >
                 <span>Cerrados ({dailyHistoryPackages.length})</span>
               </button>
-              {stalePackages.length > 0 && (
+              {auth?.systemSettings?.showStaleTabToDrivers && stalePackages.length > 0 && (
                 <button
                   onClick={() => setActiveTab('stale')}
                   className={`${tabStyles} ${activeTab === 'stale' ? activeTabStyles : inactiveTabStyles} rounded-tr-lg`}
