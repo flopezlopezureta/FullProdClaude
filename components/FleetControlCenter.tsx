@@ -2,13 +2,24 @@ import React, { useState, useEffect, useContext } from 'react';
 import { api } from '../services/api';
 import { AuthContext } from '../contexts/AuthContext';
 import { getLocalDateString } from '../utils/dateUtils';
-import { 
-  IconRefresh, IconUser, IconCheckCircle, IconAlertTriangle, 
-  IconClock, IconAward, IconChevronDown, IconChevronUp, IconBell
+import type { Package } from '../types';
+import PackageDetailModal from './PackageDetailModal';
+import {
+  IconRefresh, IconUser, IconCheckCircle, IconAlertTriangle,
+  IconClock, IconAward, IconChevronDown, IconChevronUp, IconBell, IconX
 } from './Icon';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
+
+const CLOSURE_STATUS_STYLES: { [key: string]: string } = {
+  ENTREGADO: 'bg-emerald-100 text-emerald-700',
+  DEVUELTO: 'bg-orange-100 text-orange-700',
+  PROBLEMA: 'bg-red-100 text-red-700',
+  REPROGRAMADO: 'bg-red-100 text-red-700',
+  CANCELADO: 'bg-red-100 text-red-700',
+};
+const defaultStatusStyle = 'bg-amber-100 text-amber-700';
 
 type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA';
 
@@ -29,6 +40,45 @@ export const FleetControlCenter: React.FC = () => {
   const [notifyingDriverId, setNotifyingDriverId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('ALL');
+
+  const [driverDetail, setDriverDetail] = useState<{ driverId: string; driverName: string; packages: Package[] } | null>(null);
+  const [isLoadingDriverDetail, setIsLoadingDriverDetail] = useState(false);
+  const [selectedPackageDetail, setSelectedPackageDetail] = useState<Package | null>(null);
+
+  // Trae TODAS las entregas del conductor para el día seleccionado (sin filtrar por estado, a
+  // propósito - el pedido fue explícito: mostrar incluso las que quedaron pendientes, no solo las
+  // cerradas). Reutiliza el mismo endpoint general de paquetes con los mismos filtros de fecha
+  // (assignedAt) que ya usa el resto de esta pantalla, para que la lista coincida con los números
+  // de la tabla de auditoría.
+  const openDriverDetail = async (driverId: string, driverName: string) => {
+    setIsLoadingDriverDetail(true);
+    setDriverDetail({ driverId, driverName, packages: [] });
+    try {
+      const res = await api.getPackages({
+        driverFilter: driverId,
+        startDate: selectedDate,
+        endDate: selectedDate,
+        limit: 0,
+        includeHistory: 'false'
+      });
+      setDriverDetail({ driverId, driverName, packages: res.packages || [] });
+    } catch (err) {
+      console.error('Error fetching driver day detail:', err);
+      alert('No se pudieron cargar las entregas de este conductor.');
+      setDriverDetail(null);
+    } finally {
+      setIsLoadingDriverDetail(false);
+    }
+  };
+
+  const openPackageDetail = async (pkgId: string) => {
+    try {
+      const fullPackage = await api.getPackage(pkgId);
+      setSelectedPackageDetail(fullPackage);
+    } catch (err: any) {
+      alert(err.message || 'No se pudo cargar el detalle de este paquete.');
+    }
+  };
 
   const fetchData = async (targetDate?: string) => {
     const dateToFetch = targetDate || selectedDate;
@@ -252,7 +302,12 @@ export const FleetControlCenter: React.FC = () => {
                         const hasPending = driver.pending > 0;
                         const isPending = !isClosed && hasPending;
                         return (
-                          <tr key={driver.driverId} className="hover:bg-slate-50 transition-colors">
+                          <tr
+                            key={driver.driverId}
+                            onClick={() => openDriverDetail(driver.driverId, driver.driverName)}
+                            className="hover:bg-slate-50 transition-colors cursor-pointer"
+                            title="Ver todas las entregas del día de este conductor"
+                          >
                             <td className="px-5 py-3 font-bold text-slate-900">
                               <div className="flex flex-col">
                                 <span className="uppercase">{driver.driverName}</span>
@@ -289,7 +344,7 @@ export const FleetControlCenter: React.FC = () => {
                             <td className="px-5 py-3 text-center font-bold text-slate-600">
                               {driver.closuresLast30Days} cierres
                             </td>
-                            <td className="px-5 py-3 text-right">
+                            <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                               {!isClosed && (
                                 <button
                                   onClick={() => handleNotifyClosure(driver.driverId, driver.driverName)}
@@ -476,6 +531,58 @@ export const FleetControlCenter: React.FC = () => {
           )}
 
         </div>
+      )}
+
+      {driverDetail && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-60 flex items-center justify-center p-4" onClick={() => setDriverDetail(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 uppercase">{driverDetail.driverName}</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Entregas del {new Date(selectedDate + 'T00:00:00').toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p>
+              </div>
+              <button onClick={() => setDriverDetail(null)} className="p-2 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <IconX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto custom-scrollbar flex-1">
+              {isLoadingDriverDetail ? (
+                <p className="px-6 py-10 text-center text-slate-400 text-sm font-bold uppercase">Cargando...</p>
+              ) : driverDetail.packages.length === 0 ? (
+                <p className="px-6 py-10 text-center text-slate-400 text-sm font-bold uppercase">Este conductor no tiene entregas asignadas ese día.</p>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2 font-black text-slate-400 uppercase">ID</th>
+                      <th className="px-4 py-2 font-black text-slate-400 uppercase">Cliente</th>
+                      <th className="px-4 py-2 font-black text-slate-400 uppercase">Dirección</th>
+                      <th className="px-4 py-2 text-center font-black text-slate-400 uppercase">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {driverDetail.packages.map(pkg => (
+                      <tr key={pkg.id} onClick={() => openPackageDetail(pkg.id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                        <td className="px-4 py-2.5 font-bold text-slate-900">{pkg.id}</td>
+                        <td className="px-4 py-2.5 text-slate-600">{(pkg as any).clientName || '—'}</td>
+                        <td className="px-4 py-2.5 text-slate-600">{pkg.recipientAddress}, {pkg.recipientCommune}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase ${CLOSURE_STATUS_STYLES[pkg.status as string] || defaultStatusStyle}`}>
+                            {pkg.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedPackageDetail && (
+        <PackageDetailModal pkg={selectedPackageDetail} onClose={() => setSelectedPackageDetail(null)} />
       )}
     </div>
   );
