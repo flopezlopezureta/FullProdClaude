@@ -20,6 +20,7 @@ const CLOSURE_STATUS_STYLES: { [key: string]: string } = {
   CANCELADO: 'bg-red-100 text-red-700',
 };
 const defaultStatusStyle = 'bg-amber-100 text-amber-700';
+const OPEN_STATUSES = ['PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO'];
 
 type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA';
 
@@ -68,7 +69,13 @@ export const FleetControlCenter: React.FC = () => {
         limit: 0,
         includeHistory: 'false'
       });
-      setDriverDetail({ driverId, driverName, packages: res.packages || [] });
+      // Los pendientes primero - es justo lo que se pide revisar con más urgencia al abrir esto.
+      const sortedPackages = [...(res.packages || [])].sort((a, b) => {
+        const aOpen = OPEN_STATUSES.includes(a.status as string) ? 0 : 1;
+        const bOpen = OPEN_STATUSES.includes(b.status as string) ? 0 : 1;
+        return aOpen - bOpen;
+      });
+      setDriverDetail({ driverId, driverName, packages: sortedPackages });
     } catch (err) {
       console.error('Error fetching driver day detail:', err);
       alert('No se pudieron cargar las entregas de este conductor.');
