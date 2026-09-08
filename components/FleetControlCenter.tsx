@@ -21,6 +21,14 @@ const CLOSURE_STATUS_STYLES: { [key: string]: string } = {
 };
 const defaultStatusStyle = 'bg-amber-100 text-amber-700';
 const OPEN_STATUSES = ['PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO'];
+const DIFFICULTY_STATUSES = ['PROBLEMA', 'REPROGRAMADO', 'CANCELADO', 'DEVUELTO'];
+// Orden de revisión: primero lo que sigue abierto, después cualquier dificultad de entrega
+// (problema/reagendado/cancelado/devuelto), y al final lo ya entregado sin inconvenientes.
+const getSortPriority = (status: string) => {
+  if (OPEN_STATUSES.includes(status)) return 0;
+  if (DIFFICULTY_STATUSES.includes(status)) return 1;
+  return 2;
+};
 
 type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA';
 
@@ -69,11 +77,11 @@ export const FleetControlCenter: React.FC = () => {
         limit: 0,
         includeHistory: 'false'
       });
-      // Los pendientes primero - es justo lo que se pide revisar con más urgencia al abrir esto.
+      // Pendientes primero, despues cualquier dificultad de entrega (problema/reagendado/
+      // cancelado/devuelto), y al final lo entregado sin inconvenientes - es justo lo que se pide
+      // revisar con más urgencia al abrir esto.
       const sortedPackages = [...(res.packages || [])].sort((a, b) => {
-        const aOpen = OPEN_STATUSES.includes(a.status as string) ? 0 : 1;
-        const bOpen = OPEN_STATUSES.includes(b.status as string) ? 0 : 1;
-        return aOpen - bOpen;
+        return getSortPriority(a.status as string) - getSortPriority(b.status as string);
       });
       setDriverDetail({ driverId, driverName, packages: sortedPackages });
     } catch (err) {
