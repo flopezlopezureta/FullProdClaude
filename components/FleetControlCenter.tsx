@@ -58,6 +58,13 @@ export const FleetControlCenter: React.FC = () => {
         driverFilter: driverId,
         startDate: selectedDate,
         endDate: selectedDate,
+        // Sin esto, buildPackageQuery (routes/packages.js) filtra por createdAt/estimatedDelivery
+        // en vez de assignedAt cuando quien pregunta es un admin (ese filtro por assignedAt solo
+        // se activa solo cuando el propio conductor pide su dia) - un paquete reasignado HOY pero
+        // creado dias antes (assignedAt actualizado, createdAt no) quedaba invisible aqui aunque
+        // la tabla de auditoria (que si usa assignedAt) lo contara bien. Confirmado con el caso
+        // real de Anais Faundez / KANI-4b67-7814bed2.
+        dateType: 'egress',
         limit: 0,
         includeHistory: 'false'
       });
