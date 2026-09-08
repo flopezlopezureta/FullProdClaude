@@ -30,6 +30,8 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
   const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
   const [isFlexing, setIsFlexing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [isAddingComment, setIsAddingComment] = useState(false);
 
   // --- Admin Closure States ---
   const [isAdminDelivering, setIsAdminDelivering] = useState(false);
@@ -146,6 +148,23 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
       alert(error.message || "Error al cambiar el estado Flex.");
     } finally {
       setIsFlexing(false);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!newComment.trim() || isAddingComment) return;
+    setIsAddingComment(true);
+    try {
+      const updatedPkg = await api.addPackageComment(pkg.id, newComment.trim());
+      if (onUpdatePackage) {
+        onUpdatePackage(updatedPkg);
+      }
+      setNewComment('');
+    } catch (error: any) {
+      console.error("Error adding comment:", error);
+      alert(error.message || "Error al agregar el comentario.");
+    } finally {
+      setIsAddingComment(false);
     }
   };
 
@@ -657,6 +676,28 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
                       <IconHistory className="w-4 h-4" />
                       Historial de Movimientos
                   </h4>
+                  {auth?.user?.role === Role.Admin && (
+                      <div className="mb-4 p-3 bg-[var(--background-muted)] rounded-lg border border-[var(--border-secondary)]">
+                          <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest ml-1 mb-1 block">Agregar Comentario al Historial</label>
+                          <textarea
+                              value={newComment}
+                              onChange={(e) => setNewComment(e.target.value)}
+                              placeholder="Escribe una nota u observación sobre este envío..."
+                              rows={2}
+                              className="w-full px-3 py-2 text-sm bg-[var(--background-primary)] border border-[var(--border-secondary)] rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                          />
+                          <div className="flex justify-end mt-2">
+                              <button
+                                  onClick={handleAddComment}
+                                  disabled={!newComment.trim() || isAddingComment}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300"
+                              >
+                                  {isAddingComment ? <IconRefresh className="w-3.5 h-3.5 animate-spin" /> : <IconPencil className="w-3.5 h-3.5" />}
+                                  Agregar Comentario
+                              </button>
+                          </div>
+                      </div>
+                  )}
                   <div className="relative border-l-2 border-blue-200 ml-3 space-y-6 pb-2">
                   {pkg.history && pkg.history.length > 0 ? (
                       [...pkg.history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((event, index) => {
@@ -671,6 +712,7 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
                                        event.status === PackageStatus.Delivered ? <IconCheckCircle className="w-3 h-3" /> :
                                        event.status === PackageStatus.Problem ? <IconAlertTriangle className="w-3 h-3" /> :
                                        event.status === PackageStatus.Returned ? <IconArrowUturnLeft className="w-3 h-3" /> :
+                                       event.status === 'COMENTARIO' ? <IconPencil className="w-3 h-3" /> :
                                        <IconClock className="w-3 h-3" />}
                                   </span>
                                   <div className={`p-3 rounded-lg border ${isLast ? 'bg-blue-50/50 border-blue-100' : 'bg-gray-50/30 border-gray-100'}`}>

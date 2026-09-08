@@ -1572,6 +1572,35 @@ router.post('/:id/flex', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/packages/:id/comment
+// Agrega un comentario libre al historial del paquete, sin cambiar su estado - para que un admin
+// deje contexto/notas (ej. "cliente llamó preguntando por esto") visible para quien revise el
+// historial después. No es un reemplazo de los eventos estructurados (entrega, problema, etc.).
+router.post('/:id/comment', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Solo un administrador puede agregar comentarios.' });
+    }
+    const { id } = req.params;
+    const { comment } = req.body;
+    if (!comment || !comment.trim()) {
+        return res.status(400).json({ message: 'El comentario no puede estar vacío.' });
+    }
+    try {
+        const { rows } = await db.query('SELECT * FROM packages WHERE id = $1', [id]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
+
+        await addTrackingEvent(id, 'COMENTARIO', req.user.name, comment.trim());
+        await logAction(req.user.id, req.user.name, 'ADD_PACKAGE_COMMENT', { packageId: id });
+
+        const updatedPackage = rows[0];
+        updatedPackage.history = await getHistory(id);
+        res.json(updatedPackage);
+    } catch (err) {
+        console.error('Error adding package comment:', err);
+        res.status(500).json({ message: 'Error al agregar el comentario.' });
+    }
+});
+
 // POST /api/packages/sync-meli-all
 router.post('/sync-meli-all', authMiddleware, async (req, res) => {
     try {
