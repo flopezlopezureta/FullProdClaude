@@ -154,6 +154,7 @@ const LiveMap: React.FC = () => {
     }, [driverStatuses, driverSearch]);
 
     useEffect(() => {
+        console.log('[LiveMap DEBUG] Efecto de marcadores. mapRef:', !!mapRef.current, 'markersLayerRef:', !!markersLayerRef.current, 'packageClusterRef:', !!packageClusterRef.current, 'selectedDriverId:', selectedDriverId);
         if (!mapRef.current || !markersLayerRef.current || !packageClusterRef.current) return;
 
         markersLayerRef.current.clearLayers();
@@ -190,6 +191,7 @@ const LiveMap: React.FC = () => {
         const visiblePackages = selectedDriverId
             ? packages.filter(p => p.driverId === selectedDriverId && p.destLatitude && p.destLongitude)
             : [];
+        console.log('[LiveMap DEBUG] visiblePackages para', selectedDriverId, ':', visiblePackages.length, 'de', packages.length, 'paquetes totales cargados');
 
         visiblePackages.forEach(pkg => {
             const position: [number, number] = [pkg.destLatitude!, pkg.destLongitude!];
@@ -222,13 +224,18 @@ const LiveMap: React.FC = () => {
         if (selectedDriverId !== lastFitDriverIdRef.current) {
             lastFitDriverIdRef.current = selectedDriverId;
             if (selectedDriverId) {
-                const bounds = packageClusterRef.current.getBounds();
-                const selDriver = activeDrivers.find(d => d.id === selectedDriverId);
-                if (selDriver?.latitude && selDriver?.longitude) {
-                    bounds.extend([selDriver.latitude, selDriver.longitude]);
-                }
-                if (bounds.isValid && bounds.isValid()) {
-                    mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+                try {
+                    const bounds = packageClusterRef.current.getBounds();
+                    const selDriver = activeDrivers.find(d => d.id === selectedDriverId);
+                    if (selDriver?.latitude && selDriver?.longitude) {
+                        bounds.extend([selDriver.latitude, selDriver.longitude]);
+                    }
+                    console.log('[LiveMap DEBUG] bounds.isValid():', bounds?.isValid?.());
+                    if (bounds.isValid && bounds.isValid()) {
+                        mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+                    }
+                } catch (err) {
+                    console.error('[LiveMap DEBUG] Error al encuadrar el mapa:', err);
                 }
             }
         }
@@ -236,6 +243,7 @@ const LiveMap: React.FC = () => {
     }, [activeDrivers, packages, allUsers, selectedDriverId]);
     
     const handleDriverClick = (driver: typeof driverStatuses[0]) => {
+        console.log('[LiveMap DEBUG] Click en fila de conductor:', driver.name, driver.id);
         setSelectedDriverId(prev => prev === driver.id ? null : driver.id);
         if (driver.isOnline && driver.latitude && driver.longitude && mapRef.current) {
             mapRef.current.setView([driver.latitude, driver.longitude], 14, { animate: true });
