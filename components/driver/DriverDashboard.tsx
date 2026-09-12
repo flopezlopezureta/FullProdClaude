@@ -1010,7 +1010,15 @@ const DriverDashboard: React.FC = () => {
                 <span>Pendientes ({pendingPackages.length})</span>
               </button>
               <button
-                onClick={() => setActiveTab('history')}
+                onClick={() => {
+                  setActiveTab('history');
+                  // Otra oportunidad de disparar el cierre automático además de justo tras
+                  // confirmar una entrega/problema - si esa llamada falló en silencio (ej. señal
+                  // débil justo en la última entrega del día), el conductor puede quedar con el
+                  // día completo pero sin cierre registrado hasta su próxima acción, que a veces
+                  // nunca llega.
+                  tryAutoCloseRoute();
+                }}
                 className={`${tabStyles} ${activeTab === 'history' ? activeTabStyles : inactiveTabStyles} ${!(auth?.systemSettings?.showStaleTabToDrivers && stalePackages.length > 0) ? 'rounded-tr-lg' : ''}`}
               >
                 <span>Cerrados ({dailyHistoryPackages.length})</span>
