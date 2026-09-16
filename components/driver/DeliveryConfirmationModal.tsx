@@ -448,7 +448,7 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
                     </div>
                     {rutError && <p className="text-xs text-red-600 mt-1 ml-1">{rutError}</p>}
                     {isFalabellaDirectDelivery && !(auth?.systemSettings.isRutRequired ?? true) && (
-                        <p className="text-xs text-[var(--text-muted)] mt-1 ml-1">Falabella Directo exige el RUT de quien recibe para poder cerrar la entrega.</p>
+                        <p className="text-xs text-[var(--text-muted)] mt-1 ml-1">Falabella Directo exige el RUT de quien recibe y coordenadas GPS reales para poder cerrar la entrega.</p>
                     )}
                 </div>
             )}
