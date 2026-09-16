@@ -4,8 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const falabellaDirectService = require('../services/falabellaDirectService');
-const { encrypt, decrypt, signPhotoToken } = require('../services/falabellaCrypto');
-const { logAction } = require('../services/logger');
+const { encrypt, decrypt } = require('../services/falabellaCrypto');
 
 const isSuperUser = (email) => email === 'admin' || email === 'admin@admin.cl';
 
@@ -261,82 +260,17 @@ router.post('/debug-fix-secret', authMiddleware, express.json(), async (req, res
     }
 });
 
-// TEMPORAL — repara un duplicado real (orden Falabella 3251387429, Kanino): Falabella empujó
-// esa orden también por Falabella Directo (LPN) como parte de un rollout controlado, sin que
-// quien escaneó la etiqueta física supiera del contexto — creó FALDIR-1708bf34 (sin conductor,
-// sin datos reales de Falabella) mientras la integración normal de Kanino (Seller Center) ya
-// procesaba y entregaba la MISMA orden física como KANI-4b67-20192d7f (con evidencia real: 2
-// fotos + receptora). Falabella sigue viendo el pedido "abierto" porque nunca recibió el aviso
-// DELIVERED_001 por el canal de Falabella Directo. Este endpoint cierra FALDIR-1708bf34
-// reutilizando la evidencia real (es el mismo hecho físico) y dispara ese aviso. De un solo
-// uso — borrar esta ruta junto con el resto del debug una vez confirmado el cierre en Falabella.
-router.get('/repair-faldir-1708bf34', authMiddleware, async (req, res) => {
+// TEMPORAL — solo lectura: inspecciona la respuesta cruda de Falabella Directo para un LPN ya
+// conocido (el pedido 3251387429/Kanino), para ver si el payload trae algún dato de vendedor/
+// seller que permita identificar automáticamente de qué cliente viene un pedido de Directo — hoy
+// no se usa ningún campo así, solo receptor/dirección/número de orden. No modifica nada. Borrar
+// junto con el resto del debug de esta ruta una vez revisado.
+router.get('/debug-inspect-order/:lpn', authMiddleware, async (req, res) => {
     if (!isSuperUser(req.user?.email) && req.user?.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
-    const FALDIR_ID = 'FALDIR-1708bf34';
-    const REAL_DELIVERY_PKG_ID = 'KANI-4b67-20192d7f';
-    const DRIVER_ID = 'user-52ecc8ca-ac26-4a6d-89c3-537ccbfbf4cb'; // Anais Faundez, quien realmente hizo la entrega
     try {
-        const { rows: faldirRows } = await db.query('SELECT * FROM packages WHERE id = $1', [FALDIR_ID]);
-        if (faldirRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
-        const faldir = faldirRows[0];
-        if (faldir.status === 'ENTREGADO') {
-            return res.json({ message: 'Ya estaba cerrado, no se hizo nada.', alreadyDone: true, pkg: faldir });
-        }
-        if (!faldir.falabellaDirectLpn) {
-            return res.status(400).json({ message: 'Este paquete no tiene LPN de Falabella Directo — no se puede notificar el cierre.' });
-        }
-
-        const { rows: realRows } = await db.query(
-            'SELECT "deliveryPhotosBase64", "deliveryReceiverName", "recipientPhone" FROM packages WHERE id = $1',
-            [REAL_DELIVERY_PKG_ID]
-        );
-        if (realRows.length === 0) return res.status(404).json({ message: 'Paquete de referencia (la entrega real) no encontrado.' });
-        const real = realRows[0];
-        if (!real.deliveryPhotosBase64) {
-            return res.status(400).json({ message: 'El paquete de referencia no tiene fotos de evidencia registradas.' });
-        }
-        const photosBase64 = typeof real.deliveryPhotosBase64 === 'string' ? JSON.parse(real.deliveryPhotosBase64) : real.deliveryPhotosBase64;
-        if (!Array.isArray(photosBase64) || photosBase64.length < 2) {
-            return res.status(400).json({ message: 'Se necesitan al menos 2 fotos de evidencia (exigencia de Falabella Directo) y el paquete de referencia no las tiene.' });
-        }
-        const receiverName = (real.deliveryReceiverName || '').trim() || 'Karen Tobar Olivares';
-        const receiverId = ((real.recipientPhone || '').replace(/[^a-zA-Z0-9 _\-.]/g, '').trim()) || 'SinDato';
-
-        const { latitude, longitude } = await getDriverLocation(DRIVER_ID);
-        if (latitude === 0 && longitude === 0) {
-            return res.status(400).json({ message: 'El conductor de referencia no tiene coordenadas GPS reales registradas — Falabella Directo las exige.' });
-        }
-
-        const now = new Date();
-        const { rows: updatedRows } = await db.query(
-            'UPDATE packages SET status = $1, "driverId" = $2, "deliveryReceiverName" = $3, "deliveryReceiverId" = $4, "deliveryPhotosBase64" = $5, "meliDeliveredNeedsPhotos" = false, "assignedAt" = COALESCE("assignedAt", $6), "updatedAt" = $6 WHERE id = $7 RETURNING *',
-            ['ENTREGADO', DRIVER_ID, receiverName, receiverId, JSON.stringify(photosBase64), now, FALDIR_ID]
-        );
-        const updatedPackage = updatedRows[0];
-
-        await db.query(
-            'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
-            [FALDIR_ID, 'ENTREGADO', updatedPackage.recipientAddress,
-             `Entregado a ${receiverName}. (Reparo administrativo — paquete duplicado de Falabella Directo; la entrega física real ya estaba confirmada en ${REAL_DELIVERY_PKG_ID}.)`, now]
-        );
-        await logAction(req.user.id, req.user.name, 'DELIVER_PACKAGE', { packageId: FALDIR_ID, receiverName, repair: true, referencePackageId: REAL_DELIVERY_PKG_ID });
-
-        const baseUrl = process.env.PUBLIC_BASE_URL || 'https://fullenvios.selcom.cl';
-        const photoCount = Math.min(photosBase64.length, 5);
-        const images = Array.from({ length: photoCount }, (_, i) =>
-            `${baseUrl}/api/packages/public/falabella-photo/${FALDIR_ID}/${i}?token=${signPhotoToken(FALDIR_ID, i)}`
-        );
-
-        await falabellaDirectService.pushStatusUpdate(
-            faldir.falabellaDirectLpn,
-            'DELIVERED_001',
-            `Entregado a ${receiverName}.`,
-            { latitude, longitude, deliveryProof: { recipientName: receiverName, recipientId: receiverId, images } }
-        );
-
-        res.json({ message: `Reparado y notificado a Falabella Directo (LPN ${faldir.falabellaDirectLpn}).`, pkg: updatedPackage });
+        const order = await falabellaDirectService.getOrderByLpn(req.params.lpn);
+        res.json({ order });
     } catch (e) {
-        console.error('[Repair FALDIR-1708bf34] Error:', e);
         res.status(500).json({ error: e.message });
     }
 });
