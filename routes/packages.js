@@ -1080,6 +1080,20 @@ router.post('/batch-assign-driver', authMiddleware, async (req, res) => {
         let driverName = 'Disponible';
         const isUnassigning = !driverId || driverId === 'none';
 
+        // Misma regla que /:id/assign-driver: un paquete de Falabella Directo nunca debe quedar
+        // sin conductor — revisa el lote completo antes de tocar nada para no dejar la operación a
+        // medias si alguno de los paquetes seleccionados es de ese origen.
+        if (isUnassigning) {
+            const falDirPlaceholders = packageIds.map((_, i) => `$${i + 1}`).join(', ');
+            const { rows: falDirRows } = await client.query(
+                `SELECT id FROM packages WHERE id IN (${falDirPlaceholders}) AND source = 'FALABELLA_DIRECTO'`,
+                packageIds
+            );
+            if (falDirRows.length > 0) {
+                throw new Error(`No se puede dejar sin conductor: ${falDirRows.map(r => r.id).join(', ')} son de Falabella Directo y siempre deben tener un conductor asignado. Reasígnalos a otro conductor en vez de dejarlos disponibles.`);
+            }
+        }
+
         if (!isUnassigning) {
             const { rows: driverRows } = await client.query('SELECT name FROM users WHERE id = $1', [driverId]);
             if (driverRows.length === 0) {
@@ -1294,12 +1308,21 @@ router.post('/:id/assign-driver', authMiddleware, async (req, res) => {
     const { driverId, newDeliveryDate } = req.body;
     try {
         // [MOD] Reassignment logic: check current state
-        const { rows: currentPkgRows } = await db.query('SELECT "driverId", status, "isReassigned" FROM packages WHERE id = $1', [id]);
+        const { rows: currentPkgRows } = await db.query('SELECT "driverId", status, "isReassigned", source FROM packages WHERE id = $1', [id]);
         if (currentPkgRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
-        
+
         const oldDriverId = currentPkgRows[0].driverId;
         const isReassigning = driverId && oldDriverId && driverId !== oldDriverId;
         const isUnassigning = !driverId || driverId === 'none';
+
+        // Un paquete de Falabella Directo siempre debe tener un conductor real a cargo — Falabella
+        // espera coordenadas GPS y un cierre por ese conductor en todo momento, y "disponible sin
+        // conductor" no es un estado que su sistema entienda. Dejarlo sin asignar (aunque sea
+        // momentáneamente) es lo que causó que un pedido real quedara huérfano y sin avisar a
+        // Falabella. Se puede reasignar a otro conductor libremente, solo no dejarlo sin ninguno.
+        if (isUnassigning && currentPkgRows[0].source === 'FALABELLA_DIRECTO') {
+            return res.status(400).json({ message: 'Los paquetes de Falabella Directo no pueden quedar sin conductor asignado. Reasígnalo a otro conductor en vez de dejarlo disponible.' });
+        }
 
         // Force status to ASIGNADO only if driverId is provided, otherwise RETIRADO (Available)
         const targetStatus = driverId ? 'ASIGNADO' : 'RETIRADO';
