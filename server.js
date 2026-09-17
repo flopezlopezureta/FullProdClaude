@@ -1159,10 +1159,12 @@ async function initializeDatabase() {
         console.log('Table "integration_sync_queue" is ready.');
 
         // --- FALABELLA SELLER ORDER EVENTS (webhook onOrderCreated) ---
-        // Registro crudo de los avisos que Falabella envía por webhook cuando nace una orden nueva
-        // en la cuenta de Seller Center de un vendedor (ej. Kanino) — ver routes/falabellaSellerWebhook.js.
-        // El aviso solo trae el orderId; consultar el detalle real (GetOrder/GetOrderItems, con las
-        // credenciales de Seller API de cada vendedor) es un paso siguiente aún no construido.
+        // Registro de los avisos que Falabella envía por webhook cuando nace una orden nueva en
+        // la cuenta de Seller Center de un vendedor (ej. Kanino) — ver routes/falabellaSellerWebhook.js.
+        // El aviso solo trae el orderId; services/falabellaSellerOrderProcessor.js consulta
+        // GetOrder/GetOrderItems (con la credencial de Seller Center que el vendedor ya conectó
+        // en su portal de cliente) y guarda el/los TrackingCode (LPN) resultantes acá, cruzados
+        // contra packages."falabellaDirectLpn" para saber si ese pedido ya llegó escaneado.
         await db.query(`
             CREATE TABLE IF NOT EXISTS falabella_seller_order_events (
                 id SERIAL PRIMARY KEY,
@@ -1173,6 +1175,10 @@ async function initializeDatabase() {
                 "receivedAt" TIMESTAMPTZ DEFAULT NOW()
             );
         `);
+        await db.query(`ALTER TABLE falabella_seller_order_events ADD COLUMN IF NOT EXISTS "trackingCodes" JSONB;`);
+        await db.query(`ALTER TABLE falabella_seller_order_events ADD COLUMN IF NOT EXISTS "matchedPackageIds" JSONB;`);
+        await db.query(`ALTER TABLE falabella_seller_order_events ADD COLUMN IF NOT EXISTS error TEXT;`);
+        await db.query(`ALTER TABLE falabella_seller_order_events ADD COLUMN IF NOT EXISTS "processedAt" TIMESTAMPTZ;`);
         console.log('Table "falabella_seller_order_events" is ready.');
 
         // --- NETWORK TRAFFIC DAILY HISTORY ---
