@@ -341,6 +341,7 @@ async function startServer() {
     const emergencyLookupsRoute = tryRequireRoute('./routes/emergencyLookups.js'); if (emergencyLookupsRoute) app.use('/api/emergency-lookups', emergencyLookupsRoute);
     const appUpdatesRoute = tryRequireRoute('./routes/appUpdates.js'); if (appUpdatesRoute) app.use('/api/app-updates', appUpdatesRoute);
     const falabellaDirectRoute = tryRequireRoute('./routes/falabellaDirect.js'); if (falabellaDirectRoute) app.use('/api/falabella-direct', falabellaDirectRoute);
+    const falabellaSellerWebhookRoute = tryRequireRoute('./routes/falabellaSellerWebhook.js'); if (falabellaSellerWebhookRoute) app.use('/api/falabella-seller-webhook', falabellaSellerWebhookRoute);
     const googleAuthRoute = tryRequireRoute('./routes/googleAuth.js'); if (googleAuthRoute) app.use('/api/auth/google', googleAuthRoute);
     const notificationsRoute = tryRequireRoute('./routes/notifications.js'); if (notificationsRoute) app.use('/api/notifications', notificationsRoute);
     const reportsRoute = tryRequireRoute('./routes/reports.js'); if (reportsRoute) app.use('/api/reports', reportsRoute);
@@ -1156,6 +1157,23 @@ async function initializeDatabase() {
             );
         `);
         console.log('Table "integration_sync_queue" is ready.');
+
+        // --- FALABELLA SELLER ORDER EVENTS (webhook onOrderCreated) ---
+        // Registro crudo de los avisos que Falabella envía por webhook cuando nace una orden nueva
+        // en la cuenta de Seller Center de un vendedor (ej. Kanino) — ver routes/falabellaSellerWebhook.js.
+        // El aviso solo trae el orderId; consultar el detalle real (GetOrder/GetOrderItems, con las
+        // credenciales de Seller API de cada vendedor) es un paso siguiente aún no construido.
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS falabella_seller_order_events (
+                id SERIAL PRIMARY KEY,
+                seller TEXT NOT NULL,
+                "orderId" TEXT,
+                "rawPayload" JSONB,
+                processed BOOLEAN DEFAULT FALSE,
+                "receivedAt" TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+        console.log('Table "falabella_seller_order_events" is ready.');
 
         // --- NETWORK TRAFFIC DAILY HISTORY ---
         // Persisted, per-day aggregate of the in-memory network-metrics ring buffer (which resets
