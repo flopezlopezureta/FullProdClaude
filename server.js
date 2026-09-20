@@ -342,6 +342,7 @@ async function startServer() {
     const appUpdatesRoute = tryRequireRoute('./routes/appUpdates.js'); if (appUpdatesRoute) app.use('/api/app-updates', appUpdatesRoute);
     const falabellaDirectRoute = tryRequireRoute('./routes/falabellaDirect.js'); if (falabellaDirectRoute) app.use('/api/falabella-direct', falabellaDirectRoute);
     const falabellaSellerWebhookRoute = tryRequireRoute('./routes/falabellaSellerWebhook.js'); if (falabellaSellerWebhookRoute) app.use('/api/falabella-seller-webhook', falabellaSellerWebhookRoute);
+    const debugShopifySyncRoute = tryRequireRoute('./routes/debugShopifySync.js'); if (debugShopifySyncRoute) app.use('/api/debug', debugShopifySyncRoute);
     const googleAuthRoute = tryRequireRoute('./routes/googleAuth.js'); if (googleAuthRoute) app.use('/api/auth/google', googleAuthRoute);
     const notificationsRoute = tryRequireRoute('./routes/notifications.js'); if (notificationsRoute) app.use('/api/notifications', notificationsRoute);
     const reportsRoute = tryRequireRoute('./routes/reports.js'); if (reportsRoute) app.use('/api/reports', reportsRoute);
