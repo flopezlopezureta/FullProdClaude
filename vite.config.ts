@@ -20,7 +20,13 @@ export default defineConfig({
         // Never precache or runtime-cache API responses — those are live data (packages,
         // settings, auth) that must go through the existing offline-queue/cached-settings logic
         // in services/api.ts and contexts/AuthContext.tsx, not get silently served stale by the SW.
-        navigateFallbackDenylist: [/^\/api\//],
+        // Standalone static pages (not React SPA routes) must also be denylisted: Workbox's
+        // navigateFallback intercepts every navigation request and serves index.html for it,
+        // and precache matching only hits on an exact URL — shopify-conectado.html is always
+        // loaded with a required ?ref=<uuid> query string, which never matches its query-less
+        // precache entry, so any returning visitor (SW already registered) got the SPA dashboard
+        // shell instead of their Shopify token, with no error of any kind. Confirmed live 2026-09-20.
+        navigateFallbackDenylist: [/^\/api\//, /^\/shopify-conectado\.html/, /^\/privacidad\.html/, /^\/manuals\//],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
         // Marketing/landing-page screenshots — not needed for a driver to work offline, and one
         // of them exceeds Workbox's default 2 MiB precache limit.
