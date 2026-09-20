@@ -2261,11 +2261,19 @@ router.get('/shopify/install', async (req, res) => {
 // Revelado de un solo uso del token capturado por el flujo /shopify/install — lo consume
 // shopify-conectado.html justo después de la redirección. Se borra al leerlo (o solo, a los
 // 15 minutos) para que no quede un token flotando en memoria más de lo necesario.
+//
+// El valor devuelto en accessToken no es necesariamente el access_token crudo: si hay
+// refresh_token disponible, va empaquetado junto con la expiración en un string con prefijo
+// "fe1:" (ver decodeShopifyManualToken más abajo) — así el merchant sigue copiando un solo
+// campo, pero POST /accounts puede reconstruir credenciales con auto-renovación.
 router.get('/shopify/pending-token/:ref', (req, res) => {
     const entry = pendingShopifyTokens.get(req.params.ref);
     if (!entry) return res.status(404).json({ message: 'Este enlace ya se usó o expiró.' });
     pendingShopifyTokens.delete(req.params.ref);
-    res.json({ shop: entry.shop, accessToken: entry.accessToken });
+    const token = entry.refreshToken
+        ? `fe1:${Buffer.from(JSON.stringify({ at: entry.accessToken, rt: entry.refreshToken, exp: entry.expiresAt })).toString('base64')}`
+        : entry.accessToken;
+    res.json({ shop: entry.shop, accessToken: token });
 });
 
 // GET /api/integrations/shopify/auth
@@ -2370,14 +2378,20 @@ router.get('/shopify/callback', async (req, res) => {
         // de forma temporal y se redirige de inmediato (sin clic de por medio, como exige la
         // revisión de la App Store) a una página propia donde el comerciante lo copia y lo pega
         // en su configuración manual.
-        // PENDIENTE: como el token ahora es de tipo "expiring" (ver expiring:1 arriba), el que se
-        // copia acá deja de servir ~1h después de pegarlo — este flujo manual todavía no guarda
-        // ni renueva el refresh_token que también vino en la respuesta. Aceptable por ahora solo
-        // porque su uso principal hoy es la prueba de instalación de la revisión de Shopify, no
-        // conexiones reales de clientes de largo plazo.
+        // El token es "expiring" (ver expiring:1 arriba) — dura ~1h. Se guarda también el
+        // refresh_token (90 días) y la expiración junto al access_token, empaquetados en un solo
+        // string (ver /shopify/pending-token abajo), para que POST /accounts pueda reconstruir
+        // credenciales completas con auto-renovación, igual que el flujo de un clic — sin agregar
+        // un segundo campo al formulario manual.
         if (state === 'install') {
             const ref = crypto.randomUUID();
-            pendingShopifyTokens.set(ref, { shop, accessToken: tokenData.access_token, createdAt: Date.now() });
+            pendingShopifyTokens.set(ref, {
+                shop,
+                accessToken: tokenData.access_token,
+                refreshToken: tokenData.refresh_token,
+                expiresAt: tokenData.expires_in ? Date.now() + (tokenData.expires_in * 1000) : null,
+                createdAt: Date.now()
+            });
             return res.redirect(`${protocol}://${host}/shopify-conectado.html?ref=${ref}`);
         }
 
@@ -3043,9 +3057,33 @@ router.post('/accounts', authMiddleware, async (req, res) => {
 
         // Only Shopify's shape is touched here — this endpoint is shared with Jumpseller/
         // Falabella/WooCommerce, which have different credential fields entirely.
-        const storedCredentials = (type === 'SHOPIFY' && credentials.accessToken)
-            ? { ...credentials, accessToken: encrypt(credentials.accessToken) }
-            : credentials;
+        //
+        // El token pegado a mano puede venir en dos formas: un shpat_... plano (como antes —
+        // sin refresh, deja de funcionar ~1h después por el expiring:1 del intercambio OAuth,
+        // ver /shopify/callback), o el formato empaquetado "fe1:<base64>" que sale de
+        // /shopify/pending-token cuando esa conexión sí trajo refresh_token. Desempaquetarlo acá
+        // le da a la conexión manual la misma auto-renovación que ya tiene el flujo de un clic,
+        // sin agregarle un segundo campo al formulario.
+        let storedCredentials = credentials;
+        if (type === 'SHOPIFY' && credentials.accessToken) {
+            const rawToken = credentials.accessToken;
+            if (rawToken.startsWith('fe1:')) {
+                try {
+                    const decoded = JSON.parse(Buffer.from(rawToken.slice(4), 'base64').toString('utf8'));
+                    storedCredentials = {
+                        ...credentials,
+                        accessToken: encrypt(decoded.at),
+                        ...(decoded.rt ? { refreshToken: encrypt(decoded.rt) } : {}),
+                        ...(decoded.exp ? { expiresAt: decoded.exp } : {})
+                    };
+                } catch (e) {
+                    console.error('[Shopify] Token empaquetado inválido, guardando como plano:', e.message);
+                    storedCredentials = { ...credentials, accessToken: encrypt(rawToken) };
+                }
+            } else {
+                storedCredentials = { ...credentials, accessToken: encrypt(rawToken) };
+            }
+        }
 
         const newAccount = {
             id: `${type.toLowerCase()}-${uuidv4()}`,
