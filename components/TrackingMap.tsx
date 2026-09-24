@@ -1,5 +1,6 @@
 
 import React, { useEffect, useRef } from 'react';
+import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../constants';
 
 declare const L: any;
 
@@ -19,8 +20,8 @@ const TrackingMap: React.FC<TrackingMapProps> = ({ destLat, destLng, driverLat, 
   useEffect(() => {
     if (mapContainerRef.current && !mapRef.current) {
       mapRef.current = L.map(mapContainerRef.current).setView([-33.4489, -70.6693], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      L.tileLayer(MAP_TILE_URL, {
+        attribution: MAP_TILE_ATTRIBUTION
       }).addTo(mapRef.current);
       markerGroupRef.current = L.layerGroup().addTo(mapRef.current);
     }

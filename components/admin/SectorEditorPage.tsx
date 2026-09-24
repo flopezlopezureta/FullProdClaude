@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../../services/api';
 import SearchableSelect from '../SearchableSelect';
 import { IconTrash, IconPencil, IconMapPin, IconCheckCircle, IconAlertTriangle, IconLoader, IconMap } from '../Icon';
+import { MAP_TILE_URL } from '../../constants';
 
 declare const L: any;
 
@@ -82,7 +83,7 @@ const SectorEditorPage: React.FC = () => {
       zoomControl: true,
       attributionControl: false,
     });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+    L.tileLayer(MAP_TILE_URL).addTo(mapRef.current);
 
     // FeatureGroup where drawn polygons land
     drawnLayersRef.current = new L.FeatureGroup().addTo(mapRef.current);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { MAP_TILE_URL } from '../constants';
 
 declare const L: any;
 
@@ -52,7 +53,7 @@ const LiveMap: React.FC<{
     if (containerRef.current && !mapRef.current) {
       mapRef.current = L.map(containerRef.current, { zoomControl: true, attributionControl: false })
         .setView([-33.4489, -70.6693], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+      L.tileLayer(MAP_TILE_URL).addTo(mapRef.current);
       groupRef.current = L.layerGroup().addTo(mapRef.current);
     }
     return () => {

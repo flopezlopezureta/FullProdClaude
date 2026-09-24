@@ -4,6 +4,7 @@ import type { Package } from '../../types';
 import { IconX, IconRoute, IconCheckCircle } from '../Icon';
 import { optimizeRoute } from '../../services/routeOptimizer';
 import { cityCoordinates } from '../../services/api';
+import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../constants';
 
 declare const L: any;
 
@@ -31,8 +32,8 @@ const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({ packages, onC
     useEffect(() => {
         if (mapContainerRef.current && !mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current).setView([-33.45, -70.67], 12);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap contributors'
+            L.tileLayer(MAP_TILE_URL, {
+                attribution: MAP_TILE_ATTRIBUTION
             }).addTo(mapRef.current);
         }
         return () => {

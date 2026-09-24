@@ -90,6 +90,14 @@ export enum LabelFormat {
   Thermal10x8 = 'thermal_10x8',
 }
 
+// CARTO's free basemap CDN, not the OSM Foundation's own rate-limited tile.openstreetmap.org —
+// that one started returning "Access blocked" placeholder tiles across every map in the app
+// (2026-09-23) for exceeding its volunteer-run usage policy (osm.wiki/Blocked). Same underlying
+// OpenStreetMap data, served through infrastructure meant for this traffic level.
+export const MAP_TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+export const MAP_TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+export const MAP_TILE_OPTIONS = { subdomains: 'abcd', maxZoom: 20 };
+
 export const DEFAULT_OPERATOR_PERMISSIONS = {
   canManageDrivers: true,
   canManageClients: true,

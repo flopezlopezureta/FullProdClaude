@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef } from 'react';
-import { PackageStatus } from '../constants';
+import { PackageStatus, MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../constants';
 import type { Package } from '../types';
 import { cityCoordinates } from '../services/api';
 
@@ -34,8 +34,8 @@ const MapView: React.FC<MapViewProps> = ({ packages }) => {
   useEffect(() => {
     if (mapContainerRef.current && !mapRef.current) {
         mapRef.current = L.map(mapContainerRef.current).setView([-33.4489, -70.6693], 5); // Center on Chile
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        L.tileLayer(MAP_TILE_URL, {
+            attribution: MAP_TILE_ATTRIBUTION
         }).addTo(mapRef.current);
         layerGroupRef.current = L.layerGroup().addTo(mapRef.current);
     }

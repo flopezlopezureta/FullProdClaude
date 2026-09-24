@@ -5,6 +5,7 @@ import { IconMapPin, IconPlus, IconPencil, IconTrash } from '../Icon';
 import ZoneSettingsModal from '../modals/ZoneSettingsModal';
 import ConfirmationModal from '../modals/ConfirmationModal';
 import { communeGeoJsonData } from '../../services/communesGeo';
+import { MAP_TILE_URL } from '../../constants';
 
 declare const L: any;
 
@@ -47,7 +48,7 @@ const ZoneSettingsPage: React.FC = () => {
     useEffect(() => {
         if (mapContainerRef.current && !mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current, { center: [-33.45, -70.67], zoom: 9 });
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+            L.tileLayer(MAP_TILE_URL).addTo(mapRef.current);
             zoneLayersRef.current = L.layerGroup().addTo(mapRef.current);
             setTimeout(() => mapRef.current?.invalidateSize(), 100);
         }

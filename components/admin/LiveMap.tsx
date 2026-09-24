@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { getLocalDateString } from '../../utils/dateUtils';
 import { User, Package } from '../../types';
-import { PackageStatus } from '../../constants';
+import { PackageStatus, MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../constants';
 import { api } from '../../services/api';
 import { IconRefresh, IconLoader, IconMapPin, IconBattery, IconWifi, IconCopy, IconPower, IconX, IconSearch } from '../Icon';
 
@@ -92,8 +92,8 @@ const LiveMap: React.FC = () => {
     useEffect(() => {
         if (mapContainerRef.current && !mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current).setView([-33.45, -70.67], 11);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            L.tileLayer(MAP_TILE_URL, {
+                attribution: MAP_TILE_ATTRIBUTION
             }).addTo(mapRef.current);
             markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
             packageClusterRef.current = L.markerClusterGroup({

@@ -4,6 +4,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../../services/api';
+import { MAP_TILE_URL } from '../../constants';
 import jsQR from 'jsqr';
 
 declare const L: any;
@@ -107,7 +108,7 @@ const ZoningScanner: React.FC<ZoningScannerProps> = ({ onBack }) => {
     try {
       mapRef.current = L.map(mapContainerRef.current, { zoomControl: true, attributionControl: false })
         .setView([-33.4489, -70.6693], 11);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+      L.tileLayer(MAP_TILE_URL).addTo(mapRef.current);
     } catch {}
   }, []);
 

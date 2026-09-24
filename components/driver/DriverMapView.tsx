@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useContext } from 'react';
 import type { Package } from '../../types';
-import { PackageStatus } from '../../constants';
+import { PackageStatus, MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../constants';
 import { api } from '../../services/api';
 import { AuthContext } from '../../contexts/AuthContext';
 import { IconRoute } from '../Icon';
@@ -48,8 +48,8 @@ const DriverMapView: React.FC = () => {
     useEffect(() => {
         if (mapContainerRef.current && !mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current).setView([-33.45, -70.67], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            L.tileLayer(MAP_TILE_URL, {
+                attribution: MAP_TILE_ATTRIBUTION
             }).addTo(mapRef.current);
             setTimeout(() => mapRef.current?.invalidateSize(), 100);
         }

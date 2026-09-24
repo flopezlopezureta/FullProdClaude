@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Package } from '../../types';
-import { PackageStatus } from '../../constants';
+import { PackageStatus, MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../constants';
 import { api, cityCoordinates } from '../../services/api';
 import { IconMap, IconRoute, IconLoader, IconMapPin, IconClock, IconSearch } from '../Icon';
 import { optimizeMultiDriverRoute } from '../../services/routeOptimizer';
@@ -103,8 +103,8 @@ const GeolocatePage: React.FC = () => {
     useEffect(() => {
         if (mapContainerRef.current && !mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current).setView([-33.4489, -70.6693], 11);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            L.tileLayer(MAP_TILE_URL, {
+                attribution: MAP_TILE_ATTRIBUTION
             }).addTo(mapRef.current);
             layerGroupRef.current = L.layerGroup().addTo(mapRef.current);
             clusterGroupRef.current = L.markerClusterGroup({
