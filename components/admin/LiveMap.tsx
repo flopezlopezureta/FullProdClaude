@@ -95,7 +95,15 @@ const LiveMap: React.FC = () => {
             L.tileLayer(MAP_TILE_URL, {
                 attribution: MAP_TILE_ATTRIBUTION
             }).addTo(mapRef.current);
-            markersLayerRef.current = L.layerGroup().addTo(mapRef.current);
+            // Agrupados igual que los paquetes: con muchos conductores cerca uno de otro (p.ej.
+            // saliendo de la misma bodega), sus íconos y etiquetas de nombre se superponen y
+            // vuelven el mapa ilegible - el mismo problema que ya se había resuelto para los
+            // paquetes, pero que nunca se aplicó a la capa de conductores.
+            markersLayerRef.current = L.markerClusterGroup({
+                maxClusterRadius: 50,
+                spiderfyOnMaxZoom: true,
+                showCoverageOnHover: false,
+            }).addTo(mapRef.current);
             packageClusterRef.current = L.markerClusterGroup({
                 maxClusterRadius: 60,
                 spiderfyOnMaxZoom: true,
