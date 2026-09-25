@@ -1046,7 +1046,19 @@ async function cleanupOutOfZonePackages() {
                    
                    -- Bloque 2: Paquetes de Mercado Libre que NO pertenecen a las comunas ACTIVAS
                     (
-                      source = 'MERCADO_LIBRE' AND 
+                      source = 'MERCADO_LIBRE' AND
+                      NOT (LOWER("recipientCommune") = ANY($1))
+                    ) OR
+
+                   -- Bloque 3: Paquetes de Shopify que NO pertenecen a las comunas ACTIVAS.
+                   -- La importacion de Shopify (autoImportShopifyPackages en shopifyPollingService.js)
+                   -- nunca tuvo el mismo filtro de zona que Meli - pedidos de comunas deliberadamente
+                   -- no servidas (Buin, Melipilla, Peñaflor, etc.) entraban igual y se quedaban
+                   -- atascados en PENDIENTE para siempre (el mas viejo encontrado, casi 3 meses).
+                   -- Confirmado con el cliente 2026-09-25: esos pedidos ya fueron entregados por otro
+                   -- operador, asi que limpiarlos es correcto, igual que ya se hace con Meli.
+                    (
+                      source = 'SHOPIFY' AND
                       NOT (LOWER("recipientCommune") = ANY($1))
                     )
                 )
