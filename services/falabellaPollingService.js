@@ -149,9 +149,10 @@ async function autoImportFalabellaPackages(activeCommunes = []) {
                                 return [];
                             };
 
-                            const [pendingOrders, readyOrders] = await Promise.all([
+                            const [pendingOrders, readyOrders, canceledOrders] = await Promise.all([
                                 fetchByStatus('pending'),
-                                fetchByStatus('ready_to_ship')
+                                fetchByStatus('ready_to_ship'),
+                                fetchByStatus('canceled')
                             ]);
                             const combinedOrders = [...pendingOrders, ...readyOrders];
 
@@ -239,8 +240,42 @@ async function autoImportFalabellaPackages(activeCommunes = []) {
                                 }
                             }
 
-                            if (combinedOrders.length > 0 || importedThisAccount > 0) {
-                                console.log(`[FalabellaPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${combinedOrders.length}, imported=${importedThisAccount}`);
+                            // Re-sincroniza cancelaciones: a diferencia del bloque de arriba (que solo
+                            // IMPORTA pedidos nuevos y salta silenciosamente cualquiera que ya exista),
+                            // este busca pedidos que Falabella marcó "canceled" y, si ya los tenemos
+                            // como paquete abierto (nunca se tocan los que ya están en un estado
+                            // terminal/con progreso real), los pasa a CANCELADO. Sin esto un pedido
+                            // cancelado en Falabella se quedaba PENDIENTE para siempre en Full Envíos —
+                            // el polling nunca vuelve a mirar un pedido una vez importado.
+                            let canceledThisAccount = 0;
+                            const OPEN_STATUSES_FOR_CANCEL_SYNC = ['PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO', 'RETRASADO'];
+                            for (const order of canceledOrders) {
+                                try {
+                                    const falabellaOrderId = order.OrderId ? order.OrderId.toString() : null;
+                                    if (!falabellaOrderId) continue;
+
+                                    const { rows: matches } = await db.query(
+                                        'SELECT id, status FROM packages WHERE "falabellaOrderId" = $1', [falabellaOrderId]
+                                    );
+                                    if (matches.length === 0) continue;
+
+                                    const pkg = matches[0];
+                                    if (!OPEN_STATUSES_FOR_CANCEL_SYNC.includes(pkg.status)) continue;
+
+                                    await db.query('UPDATE packages SET status = $1, "updatedAt" = $2 WHERE id = $3',
+                                        ['CANCELADO', new Date(), pkg.id]);
+                                    await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                                        [pkg.id, 'Cancelado', 'Falabella', 'Cancelado en Falabella, sincronizado automáticamente.', new Date()]);
+
+                                    canceledThisAccount++;
+                                    console.log(`[FalabellaPolling] Order ${falabellaOrderId} (package ${pkg.id}) cancelado en Falabella — sincronizado a CANCELADO (estaba ${pkg.status}).`);
+                                } catch (cancelErr) {
+                                    console.error(`[FalabellaPolling] Error sincronizando cancelación para client ${clientId}:`, cancelErr.message || cancelErr);
+                                }
+                            }
+
+                            if (combinedOrders.length > 0 || importedThisAccount > 0 || canceledThisAccount > 0) {
+                                console.log(`[FalabellaPolling] Cycle summary for client ${clientId} (${account.nickname}): fetched=${combinedOrders.length}, imported=${importedThisAccount}, canceled_synced=${canceledThisAccount}`);
                             }
                         })(),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_ACCOUNT')), 45000))
