@@ -288,7 +288,12 @@ export const getISODate = (date: Date): string => {
 
 export const api = {
   // Auth
-  login: (credentials: LoginCredentials) => post<{token: string, user: User}>('/auth/login', credentials),
+  login: (credentials: LoginCredentials) => post<{token: string, user: User} | {requires2FA: true, tempToken: string}>('/auth/login', credentials),
+  verifyLogin2FA: (tempToken: string, code: string) => post<{token: string, user: User}>('/auth/login/verify-2fa', { tempToken, code }),
+  get2FAStatus: () => get<{enabled: boolean}>('/auth/2fa/status'),
+  setup2FA: () => post<{secret: string, otpauthUri: string}>('/auth/2fa/setup', {}),
+  verifySetup2FA: (code: string) => post<{enabled: boolean}>('/auth/2fa/verify-setup', { code }),
+  disable2FA: (password: string) => post<{enabled: boolean}>('/auth/2fa/disable', { password }),
   register: (data: RegisterData) => post<User>('/auth/register', data),
   getUserByToken: () => get<User>('/auth/me'),
   requestPasswordRecovery: (email: string) => post<{message: string}>('/auth/recover-password', { email }),
@@ -389,7 +394,7 @@ export const api = {
   fetchFalabellaSyncStatus: (clientId: string) => get<{ accounts: { id: string; nickname: string; lastSync: string | null; lastAttemptAt: string | null; autoImport: boolean; nextExpectedAt: string | null }[] }>(`/integrations/${clientId}/falabella/sync-status`),
   fetchJumpsellerOrders: (clientId: string) => get<any[]>(`/integrations/${clientId}/jumpseller/orders`),
   importScannedMeliOrder: (clientId: string, scannedId: string, flexCode?: string) => post<{message: string, pkg: Package}>(`/integrations/import/meli-scanned`, { clientId, scannedId, flexCode }),
-  importFalabellaDirectScanned: (rawCode: string, driverId: string, labelPhotoBase64?: string) => post<{message: string, pkg: Package, alreadyImported?: boolean}>('/falabella-direct/import-scanned', { rawCode, driverId, labelPhotoBase64 }),
+  importFalabellaDirectScanned: (rawCode: string, driverId: string, labelPhotoBase64?: string) => post<{message: string, pkg: Package, alreadyImported?: boolean, redispatched?: boolean}>('/falabella-direct/import-scanned', { rawCode, driverId, labelPhotoBase64 }),
   checkMeliShipmentStatus: (shipmentId: string) => get<{status: string, substatus: string}>(`/integrations/status/${shipmentId}`),
   syncMeliPackage: (shipmentId: string) => post<Package>(`/integrations/sync-shipment/${shipmentId}`, {}),
   
@@ -496,6 +501,10 @@ export const api = {
     version: { versionCode: number; versionName: string; mandatory: boolean; apkUrl: string; notes: string } | null;
     apk: { exists: boolean; sizeBytes?: number; modifiedAt?: string };
   }>('/app-updates/admin-status'),
+  // Público (no requiere super admin, a diferencia de admin-status) — solo el versionCode
+  // publicado, para poder comparar contra lastKnownAppVersionCode de cada usuario y así saber
+  // si ya está al día sin necesitar permisos de super admin.
+  getAppUpdateVersion: () => get<{ versionCode: number; versionName: string; mandatory: boolean; apkUrl: string; notes: string }>('/app-updates/version'),
   // Activa/desactiva el aviso de actualización para toda la flota de una sola vez, en vez de
   // tener que entrar al perfil de cada conductor.
   forceAppUpdateForAll: (enabled: boolean) =>

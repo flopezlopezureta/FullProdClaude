@@ -134,8 +134,29 @@ export const ScanDispatchPage: React.FC<ScanDispatchPageProps> = ({ onBack }) =>
               // scanner being stuck. No success message afterward (by request): once it
               // resolves, beep and resume scanning immediately instead of holding a toast.
               setScanResult({ type: 'info', message: 'Consultando a Falabella...' });
-              await api.importFalabellaDirectScanned(rawCode, user!.id, photoBase64);
+              const fdResult = await api.importFalabellaDirectScanned(rawCode, user!.id, photoBase64);
               playBeep();
+              // redispatched === false means the backend detected a pure re-scan (same driver,
+              // nothing actually changed) and did nothing — the scanner has no visible confirmation
+              // otherwise, so without this warning it's easy to scan the same label 2-3 times in a
+              // row without noticing (real case: 3 identical "reescaneo" events on one package).
+              // alreadyImported with no redispatched at all means it's already ENTREGADO/DEVUELTO —
+              // also worth stopping on instead of beeping through it as if it dispatched normally.
+              if (fdResult.redispatched === false || (fdResult.alreadyImported && fdResult.redispatched === undefined)) {
+                  setScanResult({ type: 'error', message: fdResult.message });
+                  setTimeout(() => {
+                      setScanResult(null);
+                      if (!isManual) {
+                          setIsScanning(true);
+                          scanLock.current = false;
+                          setLastScannedPhoto(null);
+                      } else {
+                          setIsManualProcessing(false);
+                      }
+                  }, 3000);
+                  if (isManual) setManualCode('');
+                  return;
+              }
               setScannedCount(prev => prev + 1);
               setScanResult(null);
               if (isManual) setManualCode('');
