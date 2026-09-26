@@ -87,6 +87,42 @@ let nextScheduledTime = Date.now() + currentIntervalMs;
 let lastImportCount = 0;
 let timeoutId = null;
 
+// Elimina paquetes "fantasma" de Falabella Seller Center: cuando Falabella despacha un pedido por
+// Directo en vez de por el flujo normal de Seller Center, el pedido de Seller Center se queda
+// PENDIENTE/sin asignar para siempre — nada lo revisa de nuevo una vez importado (mismo motivo por
+// el que hizo falta la re-sincronización de cancelaciones más abajo). Caso real confirmado
+// 2026-09-25 (Kanino, orden 3252915528): Falabella la marca "delivered" en Seller Center Y en
+// Directo, pero el paquete de Seller Center (creatorId Kanino, source FALABELLA) seguía PENDIENTE.
+// Se detecta 100% con datos que ya tenemos en la propia base — el "falabellaTrackingId" guardado al
+// importar (ver más abajo) es el mismo OrderNumber que Directo guarda en
+// "falabellaDirectOrderNumber" — así que no hace falta otra llamada a la API de Falabella. Solo
+// toca paquetes nunca asignados (driverId IS NULL), igual que el resto de la limpieza automática
+// (ver cleanupOutOfZonePackages en meliPollingService.js).
+async function cleanupFulfilledElsewherePackages() {
+    try {
+        const { rows } = await db.query(`
+            DELETE FROM packages fc
+            WHERE fc.source = 'FALABELLA'
+              AND fc."driverId" IS NULL
+              AND fc.status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO', 'RETRASADO')
+              AND fc."falabellaTrackingId" IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM packages fd
+                  WHERE fd.source = 'FALABELLA_DIRECTO'
+                    AND fd."falabellaDirectOrderNumber" = fc."falabellaTrackingId"
+                    AND fd.status = 'ENTREGADO'
+              )
+            RETURNING id, "falabellaOrderId", "falabellaTrackingId", "recipientName"
+        `);
+        if (rows.length > 0) {
+            const detail = rows.map(r => `${r.id} (orden ${r.falabellaOrderId}/${r.falabellaTrackingId}, ${r.recipientName})`).join('; ');
+            console.log(`[FalabellaPolling] Eliminado(s) ${rows.length} paquete(s) de Seller Center ya despachado(s) por Falabella Directo: ${detail}`);
+        }
+    } catch (err) {
+        console.error('[FalabellaPolling] Error limpiando paquetes de Seller Center ya despachados por Directo:', err.message || err);
+    }
+}
+
 async function autoImportFalabellaPackages(activeCommunes = []) {
     console.log('[FalabellaPolling] Starting auto-import cycle...');
     let importedThisCycle = 0;
@@ -292,6 +328,8 @@ async function autoImportFalabellaPackages(activeCommunes = []) {
               console.error(`[FalabellaPolling] Unhandled error processing client ${user.id}:`, userErr.message || userErr);
           }
         });
+
+        await cleanupFulfilledElsewherePackages();
     } catch (err) {
         console.error('[FalabellaPolling] Fatal error in auto-import cycle:', err);
     } finally {
@@ -385,5 +423,6 @@ module.exports = {
     getStatus,
     pollFalabellaPackages,
     autoImportFalabellaPackages,
+    cleanupFulfilledElsewherePackages,
     triggerSync
 };
