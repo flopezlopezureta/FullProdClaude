@@ -113,13 +113,19 @@ const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, o
       {sortedPackages.filter(p => p && p.id).map((pkg, index) => {
         const driver = userMap[pkg.driverId || ''];
         const creator = userMap[pkg.creatorId || ''];
+        // El backend ya manda el nombre correcto en pkg.clientName (p.ej. "Falabella Directo"
+        // para ese origen, en vez de quien escaneó/creó el registro - ver el CASE WHEN en
+        // routes/packages.js). Buscar el creador a mano aqui, sin ese campo, mostraba al
+        // conductor como si fuera el cliente en cualquier paquete que el mismo conductor
+        // hubiera escaneado y creado (creatorId === driverId).
+        const clientName = (pkg as any).clientName || creator?.name;
         return (
-            <PackageListItem 
-                key={pkg.id} 
+            <PackageListItem
+                key={pkg.id}
                 index={index}
-                pkg={pkg} 
+                pkg={pkg}
                 driverName={driver?.name}
-                creatorName={creator?.name}
+                creatorName={clientName}
                 onSelect={onSelectPackage}
                 onAssign={onAssignPackage}
                 onEdit={onEditPackage}

@@ -33,7 +33,10 @@ const ReportContent: React.FC<{
     const formattedStartDate = new Date(startDate.replace(/-/g, '/')).toLocaleDateString('es-CL');
     const formattedEndDate = new Date(endDate.replace(/-/g, '/')).toLocaleDateString('es-CL');
     
-    const findClientName = (creatorId: string | null) => users.find(u => u.id === creatorId)?.name || 'Cliente Particular';
+    // Prefiere pkg.clientName (ya calculado por el backend, p.ej. "Falabella Directo" para ese
+    // origen) sobre buscar a mano por creatorId - un paquete escaneado y creado por el mismo
+    // conductor (creatorId === driverId) mostraba al conductor como si fuera el cliente.
+    const findClientName = (pkg: Package) => (pkg as any).clientName || users.find(u => u.id === pkg.creatorId)?.name || 'Cliente Particular';
     
     const findEventTimestamp = (pkg: Package, status: PackageStatus) => {
         const event = pkg.history.find(e => e.status === status);
@@ -145,7 +148,7 @@ const ReportContent: React.FC<{
                             {reportData.pickedUp.length > 0 ? reportData.pickedUp.map((pkg, index) => (
                                 <tr key={pkg.id} className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                                     <td className="p-3 border-b border-slate-100 font-mono text-[10px] font-bold text-slate-900">{pkg.id}</td>
-                                    <td className="p-3 border-b border-slate-100 font-medium">{findClientName(pkg.creatorId)}</td>
+                                    <td className="p-3 border-b border-slate-100 font-medium">{findClientName(pkg)}</td>
                                     <td className="p-3 border-b border-slate-100 text-right text-slate-500">
                                         {findEventTimestamp(pkg, PackageStatus.PickedUp)?.toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) || 'N/A'}
                                     </td>
