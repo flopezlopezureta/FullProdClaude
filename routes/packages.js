@@ -342,7 +342,7 @@ router.get('/export/csv', authMiddleware, async (req, res) => {
 
         const orderDirection = sortOrder === 'asc' ? 'ASC' : 'DESC';
         const query = `
-            SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName", d.name as "driverName"
+            SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName", d.name as "driverName"
             FROM packages p 
             LEFT JOIN users u ON p."creatorId" = u.id 
             LEFT JOIN users d ON p."driverId" = d.id
@@ -471,8 +471,8 @@ router.get('/', authMiddleware, async (req, res) => {
         const limitClause = limit > 0 ? `LIMIT $${paramIndex++} OFFSET $${paramIndex++}` : '';
         
         const selectFields = excludePhotos === 'true'
-            ? `p.id, p."recipientName", p."recipientPhone", p.status, p."shippingType", p.origin, p.destination, p."recipientAddress", p."recipientCommune", p."recipientCity", p.notes, p."estimatedDelivery", p."createdAt", p."updatedAt", p."assignedAt", p."driverId", p."creatorId", p."destLatitude", p."destLongitude", p."deliveryReceiverName", p."deliveryReceiverId", p.billed, p.source, p."meliOrderId", p."wooOrderId", p."shopifyOrderId", p."jumpsellerOrderId", p."trackingId", p."meliFlexCode", p."isFlexed", p."flexedAt", p."recipientRut", p."recipientEmail", p."sourceAccountId", p."sourceAccountName", p."alertChecked", p."shopifyOrderNumber", p."meliSellerId", p."isReassigned", p."isDuplicate", p."falabellaOrderId", p."falabellaTrackingId", p."meliDeliveredNeedsPhotos", NULL as "flexLabelPhotoBase64", NULL as "deliveryPhotosBase64", CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName"`
-            : `p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName"`;
+            ? `p.id, p."recipientName", p."recipientPhone", p.status, p."shippingType", p.origin, p.destination, p."recipientAddress", p."recipientCommune", p."recipientCity", p.notes, p."estimatedDelivery", p."createdAt", p."updatedAt", p."assignedAt", p."driverId", p."creatorId", p."destLatitude", p."destLongitude", p."deliveryReceiverName", p."deliveryReceiverId", p.billed, p.source, p."meliOrderId", p."wooOrderId", p."shopifyOrderId", p."jumpsellerOrderId", p."trackingId", p."meliFlexCode", p."isFlexed", p."flexedAt", p."recipientRut", p."recipientEmail", p."sourceAccountId", p."sourceAccountName", p."alertChecked", p."shopifyOrderNumber", p."meliSellerId", p."isReassigned", p."isDuplicate", p."falabellaOrderId", p."falabellaTrackingId", p."meliDeliveredNeedsPhotos", NULL as "flexLabelPhotoBase64", NULL as "deliveryPhotosBase64", CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName"`
+            : `p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName"`;
 
         const packageQuery = `
             SELECT ${selectFields}
@@ -525,7 +525,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
             id = id.replace('SCA00-', '');
         }
         const { rows } = await db.query(
-            `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName" 
+            `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName" 
              FROM packages p 
              LEFT JOIN users u ON p."creatorId" = u.id 
              WHERE p.id = $1 OR p."meliOrderId" = $1 OR p."meliFlexCode" = $1 OR p."trackingId" = $1`, 
@@ -577,7 +577,7 @@ router.get('/query/:searchId', authMiddleware, async (req, res) => {
         
         // Búsqueda extendida por ID, ML, Shopify, Tracking ID, etc.
         let { rows } = await db.query(
-            `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName" 
+            `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName" 
              FROM packages p 
              LEFT JOIN users u ON p."creatorId" = u.id 
              WHERE p.id = $1 
@@ -608,7 +608,7 @@ router.get('/query/:searchId', authMiddleware, async (req, res) => {
                 if (success) {
                     console.log(`[Query] SUCCESS! Shipment ${searchId} found and linked as ${success.importedId}.`);
                     const reCheck = await db.query(
-                        `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo' ELSE u.name END as "clientName" 
+                        `SELECT p.*, CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / Kanino' ELSE u.name END as "clientName" 
                          FROM packages p 
                          LEFT JOIN users u ON p."creatorId" = u.id 
                          WHERE p.id = $1`,
