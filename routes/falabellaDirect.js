@@ -114,6 +114,18 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
                 return res.status(400).json({ message: 'Conductor no encontrado.' });
             }
 
+            // Reescaneo puro: mismo conductor, mismo estado EN_TRANSITO ya vigente — no cambia nada
+            // real, así que no hay motivo para otro evento "Redespachado" ni para reenviar
+            // OUT_FOR_DELIVERY_001 a Falabella otra vez. Sin esto, escanear la misma etiqueta varias
+            // veces seguidas (el flujo de Falabella Directo no muestra confirmación en pantalla, solo
+            // un beep — ver ScanDispatchPage.tsx) llenaba el historial de eventos idénticos y le
+            // mandaba el mismo estado a Falabella repetidas veces. Sí se redespacha, como antes, si
+            // cambia el conductor o si el paquete estaba en otro estado (PROBLEMA, REPROGRAMADO,
+            // etc.) — ahí sí es una acción real, no un reescaneo accidental.
+            if (pkg.driverId === driver.id && pkg.status === 'EN_TRANSITO') {
+                return res.status(200).json({ message: `Paquete ya asignado a ${driver.name} (LPN ${lpn}).`, pkg, alreadyImported: true, redispatched: false });
+            }
+
             const { latitude: gpsLat, longitude: gpsLng } = await getDriverLocation(driver.id);
             if (gpsLat === 0 && gpsLng === 0) {
                 return res.status(400).json({ message: `${driver.name} no tiene coordenadas GPS reales registradas. Verifica que tenga la ubicación activada antes de asignarle paquetes de Falabella Directo.` });
