@@ -175,6 +175,7 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             falabellaDirectLastPushedStatus: 'IN_TRANSIT_001',
             falabellaDirectLastPushedAt: now,
             falabellaDirectLabelPhotoBase64: labelPhotoBase64 || null,
+            falabellaDirectSellerId: order?.shipFrom?.sellerId || null,
         };
 
         const columns = Object.keys(newPackage).map(k => `"${k}"`).join(', ');
@@ -260,11 +261,12 @@ router.post('/debug-fix-secret', authMiddleware, express.json(), async (req, res
     }
 });
 
-// TEMPORAL — solo lectura: inspecciona la respuesta cruda de Falabella Directo para un LPN ya
-// conocido (el pedido 3251387429/Kanino), para ver si el payload trae algún dato de vendedor/
-// seller que permita identificar automáticamente de qué cliente viene un pedido de Directo — hoy
-// no se usa ningún campo así, solo receptor/dirección/número de orden. No modifica nada. Borrar
-// junto con el resto del debug de esta ruta una vez revisado.
+// TEMPORAL — solo lectura: inspecciona la respuesta cruda de Falabella Directo para un LPN
+// conocido, para revisar el payload sin depender de la UI. CORRECCIÓN 2026-09-25: sí trae un dato
+// de vendedor — order.shipFrom.sellerId (confirmado en vivo, ej. "SC64F29" para Kanino) — que ya
+// se usa para identificar automáticamente al seller (ver falabellaDirectSellerId más abajo y el
+// CASE en routes/packages.js). No modifica nada. Borrar junto con el resto del debug de esta ruta
+// una vez que ya no haga falta.
 router.get('/debug-inspect-order/:lpn', authMiddleware, async (req, res) => {
     if (!isSuperUser(req.user?.email) && req.user?.role !== 'ADMIN') return res.status(403).json({ message: 'Solo admin.' });
     try {

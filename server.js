@@ -644,7 +644,8 @@ async function initializeDatabase() {
                 'falabellaDirectOrderNumber TEXT',
                 'falabellaDirectLastPushedStatus TEXT',
                 'falabellaDirectLastPushedAt TIMESTAMPTZ',
-                'falabellaDirectLabelPhotoBase64 TEXT'
+                'falabellaDirectLabelPhotoBase64 TEXT',
+                'falabellaDirectSellerId TEXT'
             ];
             for (const spec of pkgCols) {
                 const col = spec.split(' ')[0];
