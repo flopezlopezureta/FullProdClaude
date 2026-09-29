@@ -139,8 +139,29 @@ const ScannerView: React.FC<ScannerViewProps> = ({ initialDriver, allDrivers, on
                   // the scanner being stuck. No success message afterward (by request): once it
                   // resolves, beep and resume scanning immediately instead of holding a toast.
                   setScanResult({ type: 'info', message: 'Consultando a Falabella...' });
-                  await api.importFalabellaDirectScanned(rawCode, currentDriverId, photoBase64);
+                  const fdResult = await api.importFalabellaDirectScanned(rawCode, currentDriverId, photoBase64);
                   playBeep();
+                  // redispatched === false means the backend detected a pure re-scan (same driver,
+                  // nothing actually changed) and did nothing — without this check the scanner beeped
+                  // and bumped "Sesión Actual" exactly as if it were a new package every time, so
+                  // holding the scanner too long over one label (or scanning it again by mistake)
+                  // silently inflated the count instead of warning the auxiliar. alreadyImported with
+                  // no redispatched at all means it's already ENTREGADO/DEVUELTO — same treatment.
+                  if (fdResult.redispatched === false || (fdResult.alreadyImported && fdResult.redispatched === undefined)) {
+                      setScanResult({ type: 'error', message: fdResult.message });
+                      setTimeout(() => {
+                          setScanResult(null);
+                          if (!isManual) {
+                              setIsScanning(true);
+                              scanLock.current = false;
+                              setLastScannedPhoto(null);
+                          } else {
+                              setIsManualProcessing(false);
+                          }
+                      }, 3000);
+                      if (isManual) setManualId('');
+                      return;
+                  }
                   setScannedCount(prev => prev + 1);
                   setScanResult(null);
                   if (isManual) setManualId('');
