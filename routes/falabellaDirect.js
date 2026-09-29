@@ -200,6 +200,34 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             [newPackage.id, 'EN_TRANSITO', 'Centro de Distribución', `Escaneado y asignado a ${driver.name} por ${req.user.name || req.user.id} — Falabella Directo LPN ${lpn}.`, now]
         );
 
+        // Falabella a veces despacha un pedido por Directo en vez del flujo normal de Seller
+        // Center — el pedido de Seller Center (mismo OrderNumber, guardado ahí como
+        // "falabellaTrackingId") se queda huérfano, PENDIENTE y sin asignar para siempre, porque
+        // nada lo vuelve a revisar. Antes se limpiaba en el siguiente ciclo de polling una vez
+        // ENTREGADO (cleanupFulfilledElsewherePackages en falabellaPollingService.js); a pedido de
+        // Fabian (2026-09-29) se elimina apenas se confirma el escaneo físico, no hay que esperar
+        // a que se entregue — evita que ambos coexistan y generen confusión mientras tanto. Mismo
+        // criterio de seguridad: solo toca paquetes de Seller Center nunca asignados a un
+        // conductor.
+        if (newPackage.falabellaDirectOrderNumber) {
+            try {
+                const { rows: ghostRows } = await db.query(
+                    `DELETE FROM packages
+                     WHERE source = 'FALABELLA'
+                       AND "driverId" IS NULL
+                       AND status IN ('PENDIENTE', 'ASIGNADO', 'RETIRADO', 'EN_TRANSITO', 'RETRASADO')
+                       AND "falabellaTrackingId" = $1
+                     RETURNING id, "falabellaOrderId"`,
+                    [newPackage.falabellaDirectOrderNumber]
+                );
+                if (ghostRows.length > 0) {
+                    console.log(`[FalabellaDirect] Eliminado(s) ${ghostRows.length} paquete(s) fantasma de Seller Center al escanear Directo (orden ${newPackage.falabellaDirectOrderNumber}): ${ghostRows.map(r => r.id).join(', ')}`);
+                }
+            } catch (ghostErr) {
+                console.error('[FalabellaDirect] Error limpiando paquete fantasma de Seller Center al escanear:', ghostErr);
+            }
+        }
+
         // Fire-and-forget from the HTTP response's perspective, but internally sequential: Falabella
         // requires IN_TRANSIT_001 to land before OUT_FOR_DELIVERY_001 is accepted, so the second
         // push must wait for the first to actually finish (success or exhausted-into-queue), not
