@@ -1,6 +1,6 @@
 import React, { useMemo, useContext } from 'react';
 import type { Package, User } from '../../types';
-import { PackageStatus, MessagingPlan } from '../../constants';
+import { PackageStatus, PackageSource, MessagingPlan } from '../../constants';
 import { IconX, IconWhatsapp, IconMail, IconCheckCircle, IconAlertTriangle, IconUser } from '../Icon';
 import { AuthContext } from '../../contexts/AuthContext';
 import { getLogicalDateString } from '../../utils/dateUtils';
@@ -39,13 +39,25 @@ const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, pack
     for (const pkg of dailyPackages) {
         if (!pkg.creatorId) continue;
 
-        if (!summaries[pkg.creatorId]) {
+        // Falabella Directo packages have "creatorId" set to whoever scanned the label (usually the
+        // driver themselves, self-assigning), not a real client — grouping by creatorId here would
+        // show the driver's own name as if THEY were the client, and would merge every Falabella
+        // Directo seller scanned today into one group keyed off the driver. Group these by the
+        // already-correct clientName ("Falabella Directo / <seller>") instead, so it shows the real
+        // seller and keeps different sellers separate even if the same driver scanned both.
+        const isFalabellaDirect = pkg.source === PackageSource.FalabellaDirect;
+        const groupKey = isFalabellaDirect ? (pkg.clientName || 'Falabella Directo') : pkg.creatorId;
+
+        if (!summaries[groupKey]) {
             const client = users.find(u => u.id === pkg.creatorId);
-            summaries[pkg.creatorId] = {
-                clientId: pkg.creatorId,
-                clientName: client?.name || 'Cliente Desconocido',
-                clientPhone: client?.phone,
-                clientEmail: client?.email,
+            summaries[groupKey] = {
+                clientId: groupKey,
+                clientName: isFalabellaDirect ? (pkg.clientName || 'Falabella Directo') : (client?.name || 'Cliente Desconocido'),
+                // No real client contact to notify for Falabella Directo — the only phone/email on
+                // file for that creatorId is the driver's own, notifying "the client" would actually
+                // message the driver themselves.
+                clientPhone: isFalabellaDirect ? undefined : client?.phone,
+                clientEmail: isFalabellaDirect ? undefined : client?.email,
                 total: 0,
                 delivered: 0,
                 problems: 0,
@@ -53,7 +65,7 @@ const EndOfDayReportModal: React.FC<EndOfDayReportModalProps> = ({ onClose, pack
             };
         }
 
-        const summary = summaries[pkg.creatorId];
+        const summary = summaries[groupKey];
         summary.total++;
         if (pkg.status === PackageStatus.Delivered) {
             summary.delivered++;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { getLogicalDateString, formatLocalDisplayDate, getLocalDateString } from '../../utils/dateUtils';
 import { storageUtils } from '../../utils/storageUtils';
-import { PackageStatus, MessagingPlan } from '../../constants';
+import { PackageStatus, PackageSource, MessagingPlan } from '../../constants';
 import type { Package, User } from '../../types';
 import { api, ApiError, DeliveryConfirmationData } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
@@ -677,6 +677,10 @@ const DriverDashboard: React.FC = () => {
     // --- WhatsApp/Email notifications logic ---
     if (auth?.systemSettings.messagingPlan && auth.systemSettings.messagingPlan !== MessagingPlan.None) {
         for (const updatedPackage of updatedPackages) {
+            // Falabella Directo packages have "creatorId" set to whoever scanned the label — usually
+            // the driver delivering it, self-assigned — not a real client. Without this guard the
+            // driver would get a "your package was delivered" WhatsApp addressed to their own phone.
+            if (updatedPackage.source === PackageSource.FalabellaDirect) continue;
             const creator = users.find(u => u.id === updatedPackage.creatorId);
             if (creator) {
                 const message = `Hola ${creator.name}, te informamos que tu paquete con ID ${updatedPackage.id} para ${updatedPackage.recipientName} ha sido entregado exitosamente.`;

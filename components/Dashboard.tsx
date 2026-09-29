@@ -1306,6 +1306,7 @@ const Dashboard: React.FC = () => {
               <ShippingLabelModal
                 pkg={printingPackages[0]}
                 creatorName={(() => {
+                  if (printingPackages[0].clientName) return printingPackages[0].clientName;
                   const user = users.find(u => u.id === printingPackages[0].creatorId);
                   return user?.companyName || user?.name || 'Cliente Desconocido';
                 })()}
@@ -1315,6 +1316,7 @@ const Dashboard: React.FC = () => {
               <BatchShippingLabelModal
                 packages={printingPackages}
                 creatorName={(() => {
+                  if (printingPackages[0].clientName) return printingPackages[0].clientName;
                   const user = users.find(u => u.id === printingPackages[0].creatorId);
                   return user?.companyName || user?.name || 'Cliente Desconocido';
                 })()}

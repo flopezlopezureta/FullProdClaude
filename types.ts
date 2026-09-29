@@ -334,6 +334,9 @@ export interface Package {
   meliDeliveredNeedsPhotos?: boolean;
   distance?: number;
   isRoadDistance?: boolean;
+  // Computed by the backend (routes/packages.js) — prefer this over resolving a display name from
+  // creatorId, which for Falabella Directo packages is whoever scanned the label, not the client.
+  clientName?: string;
 }
 
 export interface Notification {

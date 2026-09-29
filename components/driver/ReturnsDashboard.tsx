@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { PackageStatus } from '../../constants';
+import { PackageStatus, PackageSource } from '../../constants';
 import type { Package, User } from '../../types';
 import { api, ApiError, DeliveryConfirmationData } from '../../services/api';
 import PackageList from '../PackageList';
@@ -156,7 +156,10 @@ const ReturnsDashboard: React.FC = () => {
             isFullScreen={true}
             pkg={selectedPackage} 
             onClose={() => setSelectedPackage(null)}
-            creatorForReturn={users.find(u => u.id === selectedPackage.creatorId)}
+            // Falabella Directo's "creatorId" is whoever scanned the label (usually the driver
+            // themselves), not a real client — passing it through would build a "voy en camino a
+            // devolver tu paquete" WhatsApp message addressed to the driver's own phone.
+            creatorForReturn={selectedPackage.source === PackageSource.FalabellaDirect ? undefined : users.find(u => u.id === selectedPackage.creatorId)}
             onStartReturn={(pkg) => {
                 setSelectedPackage(null);
                 handleStartReturn(pkg);
