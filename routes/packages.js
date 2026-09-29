@@ -292,6 +292,10 @@ async function buildPackageQuery(req) {
             whereClauses.push(`p.source = 'MERCADO_LIBRE'`);
         } else if (sourceFilter === 'web') {
             whereClauses.push(`p.source != 'MERCADO_LIBRE'`);
+        } else if (sourceFilter === 'falabella_seller') {
+            whereClauses.push(`p.source = 'FALABELLA'`);
+        } else if (sourceFilter === 'falabella_directo') {
+            whereClauses.push(`p.source = 'FALABELLA_DIRECTO'`);
         }
     }
 

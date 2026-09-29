@@ -27,8 +27,8 @@ interface PackageFiltersProps {
   onEndDateChange: (date: string) => void;
   flexFilter: 'all' | 'flexed' | 'not_flexed';
   onFlexFilterChange: (filter: 'all' | 'flexed' | 'not_flexed') => void;
-  sourceFilter: 'all' | 'ml' | 'web';
-  onSourceFilterChange: (filter: 'all' | 'ml' | 'web') => void;
+  sourceFilter: 'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo';
+  onSourceFilterChange: (filter: 'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo') => void;
   quickFilter: 'all' | 'closed' | 'cancelled' | 'rescheduled';
   onQuickFilterChange: (filter: 'all' | 'closed' | 'cancelled' | 'rescheduled') => void;
   clients: User[];
@@ -285,6 +285,8 @@ const PackageFilters: React.FC<PackageFiltersProps> = ({
             <option value="all">TODOS</option>
             <option value="ml">MERCADO LIBRE</option>
             <option value="web">WEB / MANUAL</option>
+            <option value="falabella_seller">FALABELLA SELLER CENTER</option>
+            <option value="falabella_directo">FALABELLA DIRECTO</option>
           </select>
         </div>
         <div className="flex-shrink-0 w-32">

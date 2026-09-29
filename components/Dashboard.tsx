@@ -141,7 +141,7 @@ const Dashboard: React.FC = () => {
 
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [flexFilter, setFlexFilter] = useState<'all' | 'flexed' | 'not_flexed'>('all');
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'ml' | 'web'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo'>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'closed' | 'cancelled' | 'rescheduled'>('all');
   const [driverFilter, setDriverFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>('');
