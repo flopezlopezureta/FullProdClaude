@@ -50,8 +50,12 @@ export const exportToExcel = async (packages: Package[], filename: string, users
         worksheet.addRow({
             idPaquete: pkg.id,
             pedido: pkg.meliOrderId || pkg.shopifyOrderId || pkg.wooOrderId || pkg.jumpsellerOrderId || pkg.id,
-            sellerName: pkg.creatorId ? (userMap.get(pkg.creatorId) || 'No encontrado') : 'N/A',
-            sellerId: pkg.creatorId ? (clientIdMap.get(pkg.creatorId) || 'N/A') : 'N/A',
+            // pkg.clientName (computed backend-side, routes/packages.js) is authoritative when
+            // present — for Falabella Directo packages, creatorId is whoever scanned the label
+            // (driver or auxiliar), not the real seller, so resolving the name from creatorId here
+            // showed the scanner's name on exports clients actually receive (real report 2026-09-30).
+            sellerName: pkg.clientName || (pkg.creatorId ? (userMap.get(pkg.creatorId) || 'No encontrado') : 'N/A'),
+            sellerId: pkg.clientName ? '' : (pkg.creatorId ? (clientIdMap.get(pkg.creatorId) || 'N/A') : 'N/A'),
             fecha: new Date(
                 (pkg.status === PackageStatus.Delivered || pkg.status === PackageStatus.Returned) 
                 ? pkg.updatedAt 
@@ -155,8 +159,9 @@ export const exportToCSV = (packages: Package[], filename: string, users: User[]
     const rows = packages.map(pkg => [
         pkg.id,
         pkg.meliOrderId || pkg.shopifyOrderId || pkg.wooOrderId || pkg.jumpsellerOrderId || pkg.id,
-        pkg.creatorId ? (userMap.get(pkg.creatorId) || 'No encontrado') : 'N/A',
-        pkg.creatorId ? (clientIdMap.get(pkg.creatorId) || 'N/A') : 'N/A',
+        // Same override as exportToExcel above — pkg.clientName is authoritative when present.
+        pkg.clientName || (pkg.creatorId ? (userMap.get(pkg.creatorId) || 'No encontrado') : 'N/A'),
+        pkg.clientName ? '' : (pkg.creatorId ? (clientIdMap.get(pkg.creatorId) || 'N/A') : 'N/A'),
         new Date(pkg.createdAt).toLocaleString('es-CL'),
         (pkg.status || '').replace('_', ' '),
         pkg.recipientName,
