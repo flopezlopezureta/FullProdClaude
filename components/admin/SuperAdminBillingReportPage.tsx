@@ -179,6 +179,14 @@ const SuperAdminBillingReportPage: React.FC = () => {
         selectedMonthExpenses.reduce((sum, e) => sum + e.monthlyAmount, 0),
     [selectedMonthExpenses]);
 
+    // Fabian pidió verlos separados en vez de una sola lista mezclada: los gastos fijos mensuales
+    // (se repiten solos) son una cosa distinta de los gastos ya realizados que se pagan en cuotas
+    // (tienen un fin determinado).
+    const recurringExpenses = useMemo(() => expenses.filter(e => e.isRecurring), [expenses]);
+    const oneTimeExpenses = useMemo(() => expenses.filter(e => !e.isRecurring), [expenses]);
+    const selectedMonthRecurring = useMemo(() => selectedMonthExpenses.filter(e => e.isRecurring), [selectedMonthExpenses]);
+    const selectedMonthOneTime = useMemo(() => selectedMonthExpenses.filter(e => !e.isRecurring), [selectedMonthExpenses]);
+
     // Fetch clients list and auto-select Go Delivery Interno
     useEffect(() => {
         const fetchClients = async () => {
@@ -441,37 +449,55 @@ const SuperAdminBillingReportPage: React.FC = () => {
                         </div>
 
                         {selectedMonthExpenses.length > 0 && (
-                            <div className="mb-6 border border-[var(--border-secondary)] rounded-lg overflow-hidden">
-                                <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">
-                                    Desglose del {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month) - 1]} {year}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div className="border border-emerald-200 dark:border-emerald-900 rounded-lg overflow-hidden">
+                                    <div className="bg-emerald-50 dark:bg-emerald-950/30 px-4 py-2 text-xs font-black text-emerald-800 dark:text-emerald-400 uppercase tracking-wider">
+                                        Gastos Fijos — {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month) - 1]} {year}
+                                    </div>
+                                    <div className="divide-y divide-[var(--border-primary)]">
+                                        {selectedMonthRecurring.length === 0 ? (
+                                            <p className="px-4 py-3 text-xs text-[var(--text-muted)]">Ninguno este mes.</p>
+                                        ) : selectedMonthRecurring.map(e => (
+                                            <div key={e.id} className="px-4 py-2 flex justify-between items-center text-sm">
+                                                <span className="text-[var(--text-secondary)]">{e.concept}</span>
+                                                <span className="font-bold text-[var(--text-primary)]">{formatCLP(e.monthlyAmount)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                                <div className="divide-y divide-[var(--border-primary)]">
-                                    {selectedMonthExpenses.map(e => (
-                                        <div key={e.id} className="px-4 py-2 flex justify-between items-center text-sm">
-                                            <span className="text-[var(--text-secondary)]">
-                                                {e.concept}
-                                                {e.isRecurring ? (
-                                                    <span className="text-xs text-emerald-600 font-bold ml-2">(fijo mensual)</span>
-                                                ) : e.installments > 1 && (
-                                                    <span className="text-xs text-[var(--text-muted)] ml-2">(cuota {Math.floor((parseInt(year) * 12 + parseInt(month) - 1 - (e.startYear * 12 + e.startMonth - 1))) + 1}/{e.installments})</span>
-                                                )}
-                                            </span>
-                                            <span className="font-bold text-[var(--text-primary)]">{formatCLP(e.monthlyAmount)}</span>
-                                        </div>
-                                    ))}
+                                <div className="border border-[var(--border-secondary)] rounded-lg overflow-hidden">
+                                    <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">
+                                        Gastos en Cuotas — {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month) - 1]} {year}
+                                    </div>
+                                    <div className="divide-y divide-[var(--border-primary)]">
+                                        {selectedMonthOneTime.length === 0 ? (
+                                            <p className="px-4 py-3 text-xs text-[var(--text-muted)]">Ninguno este mes.</p>
+                                        ) : selectedMonthOneTime.map(e => (
+                                            <div key={e.id} className="px-4 py-2 flex justify-between items-center text-sm">
+                                                <span className="text-[var(--text-secondary)]">
+                                                    {e.concept}
+                                                    {e.installments > 1 && <span className="text-xs text-[var(--text-muted)] ml-2">(cuota {Math.floor((parseInt(year) * 12 + parseInt(month) - 1 - (e.startYear * 12 + e.startMonth - 1))) + 1}/{e.installments})</span>}
+                                                </span>
+                                                <span className="font-bold text-[var(--text-primary)]">{formatCLP(e.monthlyAmount)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}
 
-                        <h4 className="text-sm font-bold text-[var(--text-primary)] mb-2 mt-6">Todos los Gastos Registrados</h4>
-                        <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden overflow-x-auto">
+                        {/* Gastos Fijos Mensuales — tabla separada, a pedido de Fabian: no se mezclan
+                            con los gastos realizados en cuotas, son dos cosas conceptualmente
+                            distintas (uno se repite solo, el otro tiene un fin determinado). */}
+                        <h4 className="text-sm font-bold text-emerald-700 dark:text-emerald-400 mb-2 mt-6 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Gastos Fijos Mensuales
+                        </h4>
+                        <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden overflow-x-auto mb-6">
                             <table className="min-w-full divide-y divide-[var(--border-primary)]">
                                 <thead className="bg-[var(--background-muted)]">
                                     <tr>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Concepto</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Tipo</th>
-                                        <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Total</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Monto / Mes</th>
+                                        <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Mensual</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Desde</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Hasta</th>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Notas</th>
@@ -480,26 +506,65 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 </thead>
                                 <tbody className="bg-[var(--background-secondary)] divide-y divide-[var(--border-primary)]">
                                     {isLoadingExpenses ? (
-                                        <tr><td colSpan={8} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
-                                    ) : expenses.length === 0 ? (
-                                        <tr><td colSpan={8} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos registrados todavía.</td></tr>
+                                        <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
+                                    ) : recurringExpenses.length === 0 ? (
+                                        <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos fijos registrados todavía.</td></tr>
                                     ) : (
-                                        expenses.map(e => (
+                                        recurringExpenses.map(e => (
                                             <tr key={e.id}>
                                                 <td className="px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)]">{e.concept}</td>
-                                                <td className="px-4 py-2.5 text-center">
-                                                    {e.isRecurring ? (
-                                                        <span className="inline-block px-2 py-0.5 text-[10px] font-black uppercase rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400">Fijo Mensual</span>
-                                                    ) : (
-                                                        <span className="inline-block px-2 py-0.5 text-[10px] font-black uppercase rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">Realizado{e.installments > 1 ? ` (${e.installments} cuotas)` : ''}</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}{e.isRecurring ? '' : ` ÷ ${e.installments}`}</td>
-                                                <td className="px-4 py-2.5 text-sm text-center font-mono font-bold text-[var(--text-primary)]">{formatCLP(e.isRecurring ? e.totalAmount : e.totalAmount / e.installments)}</td>
+                                                <td className="px-4 py-2.5 text-sm text-right font-mono font-bold text-[var(--text-primary)]">{formatCLP(e.totalAmount)}</td>
                                                 <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{String(e.startMonth).padStart(2, '0')}/{e.startYear}</td>
                                                 <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">
-                                                    {e.isRecurring ? (e.endYear ? `${String(e.endMonth).padStart(2, '0')}/${e.endYear}` : <span className="text-emerald-600 font-semibold">Vigente</span>) : '-'}
+                                                    {e.endYear ? `${String(e.endMonth).padStart(2, '0')}/${e.endYear}` : <span className="text-emerald-600 font-semibold">Vigente</span>}
                                                 </td>
+                                                <td className="px-4 py-2.5 text-xs text-[var(--text-muted)] max-w-[200px] truncate">{e.notes || '-'}</td>
+                                                <td className="px-4 py-2.5">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button onClick={() => openEditExpenseForm(e)} className="p-1.5 text-[var(--text-muted)] hover:text-[var(--brand-primary)] hover:bg-[var(--background-hover)] rounded" title="Editar">
+                                                            <IconPencil className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteExpense(e)} className="p-1.5 text-[var(--text-muted)] hover:text-red-600 hover:bg-[var(--background-hover)] rounded" title="Eliminar">
+                                                            <IconTrash className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h4 className="text-sm font-bold text-[var(--text-primary)] mb-2 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-slate-400"></span> Gastos Realizados (en Cuotas)
+                        </h4>
+                        <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden overflow-x-auto">
+                            <table className="min-w-full divide-y divide-[var(--border-primary)]">
+                                <thead className="bg-[var(--background-muted)]">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Concepto</th>
+                                        <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Total</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Cuotas</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Monto / Mes</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Desde</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Notas</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-[var(--background-secondary)] divide-y divide-[var(--border-primary)]">
+                                    {isLoadingExpenses ? (
+                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
+                                    ) : oneTimeExpenses.length === 0 ? (
+                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos en cuotas registrados todavía.</td></tr>
+                                    ) : (
+                                        oneTimeExpenses.map(e => (
+                                            <tr key={e.id}>
+                                                <td className="px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)]">{e.concept}</td>
+                                                <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{e.installments}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center font-mono font-bold text-[var(--text-primary)]">{formatCLP(e.totalAmount / e.installments)}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{String(e.startMonth).padStart(2, '0')}/{e.startYear}</td>
                                                 <td className="px-4 py-2.5 text-xs text-[var(--text-muted)] max-w-[200px] truncate">{e.notes || '-'}</td>
                                                 <td className="px-4 py-2.5">
                                                     <div className="flex items-center justify-center gap-2">
