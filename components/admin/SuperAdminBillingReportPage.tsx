@@ -1058,32 +1058,6 @@ const SuperAdminBillingReportPage: React.FC = () => {
                             </div>
                         </div>
                     </div>
-
-                    {/* Rentabilidad real: lo facturado a este cliente, menos los gastos propios de Full
-                        Envíos del mismo período (pestaña "Gastos de Full Envíos") — no es exclusivo a
-                        este cliente, es el costo operativo general del proyecto que corresponde a ese
-                        mes, mostrado acá para ver la rentabilidad real de un vistazo. */}
-                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/20 dark:to-emerald-900/10 shadow-md rounded-lg p-6 border border-emerald-200 dark:border-emerald-900">
-                        <h3 className="text-lg font-black text-[var(--text-primary)] mb-4 flex items-center gap-2">
-                            <span>📊 Rentabilidad Real del Período ({month}/{year})</span>
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
-                            <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] p-4 rounded-lg">
-                                <span className="block text-xs font-black text-[var(--text-secondary)] uppercase tracking-wider">Neto Combinado (este cliente)</span>
-                                <span className="block text-xl font-black text-[var(--text-primary)] mt-1">{formatCLP((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet)}</span>
-                            </div>
-                            <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] p-4 rounded-lg">
-                                <span className="block text-xs font-black text-[var(--text-secondary)] uppercase tracking-wider">Gastos Full Envíos del Mes</span>
-                                <span className="block text-xl font-black text-rose-600 mt-1">− {formatCLP(totalExpensesThisMonth)}</span>
-                                <button onClick={() => setActiveTab('expenses')} className="text-[10px] font-bold text-[var(--brand-primary)] hover:underline mt-1">Ver detalle →</button>
-                            </div>
-                            <div className={`p-4 rounded-lg shadow-sm ${((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet - totalExpensesThisMonth) >= 0 ? 'bg-emerald-600' : 'bg-rose-600'} text-white`}>
-                                <span className="block text-xs font-semibold text-white/80 uppercase tracking-wider">Resultado Neto Estimado</span>
-                                <span className="block text-2xl font-black mt-1">{formatCLP((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet - totalExpensesThisMonth)}</span>
-                            </div>
-                        </div>
-                        <p className="text-[11px] text-[var(--text-muted)] mt-3">* Esto usa el neto combinado solo de <strong>{reportData.client.name}</strong> como aproximación — para el total real facturado a todos los clientes vs. los gastos, revisa la pestaña "Gastos de Full Envíos".</p>
-                    </div>
                 </div>
             )}
             </>
