@@ -44,7 +44,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const [globalReportData, setGlobalReportData] = useState<any>(null);
     const [isLoadingGlobalReport, setIsLoadingGlobalReport] = useState(false);
 
-    const [activeTab, setActiveTab] = useState<'client' | 'expenses'>('client');
+    const [activeTab, setActiveTab] = useState<'client' | 'expenses' | 'partners'>('client');
     const [expenses, setExpenses] = useState<any[]>([]);
     const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
     const [editingExpense, setEditingExpense] = useState<any | null>(null);
@@ -53,21 +53,10 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const emptyExpenseForm = { concept: '', totalAmount: '', installments: '1', startYear: String(today.getFullYear()), startMonth: String(today.getMonth() + 1), notes: '', isRecurring: false, hasEndDate: false, endYear: String(today.getFullYear()), endMonth: String(today.getMonth() + 1) };
     const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
 
-    // Calculadora de retencion de boleta de honorarios — herramienta aparte, NO crea un gasto.
-    // Es solo de referencia: dado el monto bruto de la boleta de UN socio, muestra cuanto retiene
-    // el SII y cuanto recibe liquido. El gasto en si (si corresponde registrarlo) se agrega por
-    // separado, a mano, como cualquier otro gasto.
-    const [isBoletaCalcOpen, setIsBoletaCalcOpen] = useState(false);
-    const [boletaGrossAmount, setBoletaGrossAmount] = useState('');
-    const [boletaRetentionPct, setBoletaRetentionPct] = useState('15.25');
-
-    const boletaBreakdown = useMemo(() => {
-        const gross = parseFloat(boletaGrossAmount) || 0;
-        const pct = parseFloat(boletaRetentionPct) || 0;
-        const retention = gross * (pct / 100);
-        const net = gross - retention;
-        return { gross, pct, retention, net };
-    }, [boletaGrossAmount, boletaRetentionPct]);
+    // Reparto de utilidades entre socios — N° de socios y % retención, aplicados sobre el
+    // Resultado Neto Estimado (useMemo definido más abajo, junto a totalExpensesThisMonth).
+    const [partnerCount, setPartnerCount] = useState('2');
+    const [partnerRetentionPct, setPartnerRetentionPct] = useState('15.25');
 
     // Conceptos sugeridos — Fabian puede escribir cualquier otro texto, esto es solo para no
     // tener que tipear los mismos nombres cada mes.
@@ -212,6 +201,31 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const totalExpensesThisMonth = useMemo(() =>
         selectedMonthExpenses.reduce((sum, e) => sum + e.monthlyAmount, 0),
     [selectedMonthExpenses]);
+
+    // Resultado Neto Estimado = lo facturado a todos los clientes menos los gastos de Full Envíos
+    // del mismo período — esta es "la utilidad" que despues se reparte entre los socios en la
+    // pestaña de Reparto de Utilidades. Vive acá (no solo dentro de la tarjeta de Gastos) para que
+    // ambas pestañas usen exactamente el mismo número, calculado una sola vez.
+    const netoCombinadoGlobal = useMemo(() =>
+        globalReportData ? (globalReportData.summary.totalCostClpNet || 0) + (globalReportData.licenseBilling?.costClpNet || 0) : 0,
+    [globalReportData]);
+
+    const resultadoNetoEstimado = useMemo(() =>
+        netoCombinadoGlobal - totalExpensesThisMonth,
+    [netoCombinadoGlobal, totalExpensesThisMonth]);
+
+    // Boleta de honorarios por socio: el Resultado Neto Estimado de arriba ES el monto a dividir
+    // ("Monto a dividir" del cálculo de Fabian) — se reparte entre N socios y a cada parte se le
+    // aplica la retención del SII. Es solo de referencia, no crea ni modifica ningún gasto.
+    const partnerBreakdown = useMemo(() => {
+        const totalToDivide = resultadoNetoEstimado;
+        const count = Math.max(1, parseInt(partnerCount) || 1);
+        const pct = parseFloat(partnerRetentionPct) || 0;
+        const gross = totalToDivide / count;
+        const retention = gross * (pct / 100);
+        const net = gross - retention;
+        return { totalToDivide, count, pct, gross, retention, net };
+    }, [resultadoNetoEstimado, partnerCount, partnerRetentionPct]);
 
     // Fabian pidió verlos separados en vez de una sola lista mezclada: los gastos fijos mensuales
     // (se repiten solos) son una cosa distinta de los gastos ya realizados que se pagan en cuotas
@@ -463,6 +477,12 @@ const SuperAdminBillingReportPage: React.FC = () => {
                 >
                     <IconFileInvoice className="w-4 h-4" /> Gastos de Full Envíos
                 </button>
+                <button
+                    onClick={() => setActiveTab('partners')}
+                    className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'partners' ? 'border-[var(--brand-primary)] text-[var(--brand-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+                >
+                    <IconUsers className="w-4 h-4" /> Reparto de Utilidades
+                </button>
             </div>
 
             {activeTab === 'expenses' && (
@@ -474,9 +494,6 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 <p className="text-xs text-[var(--text-muted)] mt-1">Costos propios del proyecto (infraestructura, desarrollo, soporte) — se descuentan del valor neto facturado para ver la rentabilidad real.</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setIsBoletaCalcOpen(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-[var(--brand-primary)] bg-[var(--background-secondary)] border border-[var(--brand-primary)] rounded-md hover:bg-[var(--background-hover)] shadow-sm">
-                                    <IconFileInvoice className="w-4 h-4" /> Calcular Retención de Boleta
-                                </button>
                                 <button onClick={openNewExpenseForm} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)] shadow-sm">
                                     <IconPlus className="w-4 h-4" /> Agregar Gasto
                                 </button>
@@ -520,26 +537,22 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 <p className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando facturación total...</p>
                             ) : !globalReportData ? (
                                 <p className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">No fue posible calcular el total facturado (no se encontró el cliente "Go Delivery Interno").</p>
-                            ) : (() => {
-                                const netoCombinadoGlobal = (globalReportData.summary.totalCostClpNet || 0) + (globalReportData.licenseBilling?.costClpNet || 0);
-                                const resultadoNetoGlobal = netoCombinadoGlobal - totalExpensesThisMonth;
-                                return (
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[var(--border-primary)]">
-                                        <div className="bg-[var(--background-secondary)] p-4 text-center">
-                                            <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Total Facturado (Neto)</p>
-                                            <p className="text-xl font-black text-[var(--text-primary)] mt-1">{formatCLP(netoCombinadoGlobal)}</p>
-                                        </div>
-                                        <div className="bg-[var(--background-secondary)] p-4 text-center">
-                                            <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Gastos Full Envíos del Mes</p>
-                                            <p className="text-xl font-black text-rose-600 mt-1">− {formatCLP(totalExpensesThisMonth)}</p>
-                                        </div>
-                                        <div className={`p-4 text-center text-white ${resultadoNetoGlobal >= 0 ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-                                            <p className="text-xs font-semibold uppercase tracking-wider opacity-90">Resultado Neto Estimado</p>
-                                            <p className="text-xl font-black mt-1">{formatCLP(resultadoNetoGlobal)}</p>
-                                        </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[var(--border-primary)]">
+                                    <div className="bg-[var(--background-secondary)] p-4 text-center">
+                                        <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Total Facturado (Neto)</p>
+                                        <p className="text-xl font-black text-[var(--text-primary)] mt-1">{formatCLP(netoCombinadoGlobal)}</p>
                                     </div>
-                                );
-                            })()}
+                                    <div className="bg-[var(--background-secondary)] p-4 text-center">
+                                        <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Gastos Full Envíos del Mes</p>
+                                        <p className="text-xl font-black text-rose-600 mt-1">− {formatCLP(totalExpensesThisMonth)}</p>
+                                    </div>
+                                    <div className={`p-4 text-center text-white ${resultadoNetoEstimado >= 0 ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                                        <p className="text-xs font-semibold uppercase tracking-wider opacity-90">Resultado Neto Estimado</p>
+                                        <p className="text-xl font-black mt-1">{formatCLP(resultadoNetoEstimado)}</p>
+                                    </div>
+                                </div>
+                            )}
                             <p className="px-4 py-2 text-[11px] text-[var(--text-muted)] bg-[var(--background-secondary)]">* "Total Facturado" suma los despachos netos de todos los clientes más el exceso de licencias SaaS del período, igual que en la pestaña Reporte por Cliente.</p>
                         </div>
 
@@ -690,6 +703,108 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'partners' && (
+                <div className="space-y-6">
+                    <div className="bg-[var(--background-secondary)] shadow-md rounded-lg p-6">
+                        <div className="mb-4">
+                            <h3 className="text-lg font-bold text-[var(--text-primary)]">Reparto de Utilidades entre Socios</h3>
+                            <p className="text-xs text-[var(--text-muted)] mt-1">Toma el Resultado Neto Estimado del período (facturado menos gastos, pestaña "Gastos de Full Envíos") y lo reparte entre los socios, cada uno con su propia boleta de honorarios y retención SII. Es solo de referencia — no crea ni modifica ningún gasto.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="bg-[var(--background-muted)] border border-[var(--border-secondary)] rounded-lg p-4">
+                                <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-wider mb-1">Período</label>
+                                <div className="flex gap-2">
+                                    <select value={month} onChange={e => setMonth(e.target.value)} className={`${inputClasses} !py-1.5 text-sm`}>
+                                        {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
+                                            <option key={i} value={i + 1}>{m}</option>
+                                        ))}
+                                    </select>
+                                    <select value={year} onChange={e => setYear(e.target.value)} className={`${inputClasses} !py-1.5 text-sm`}>
+                                        <option value="2024">2024</option>
+                                        <option value="2025">2025</option>
+                                        <option value="2026">2026</option>
+                                        <option value="2027">2027</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="md:col-span-2 bg-indigo-600 text-white rounded-lg p-4 flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs font-semibold text-indigo-100 uppercase tracking-wider">Utilidad del Período (Resultado Neto Estimado)</p>
+                                    {isLoadingGlobalReport ? (
+                                        <p className="text-sm mt-1">Calculando...</p>
+                                    ) : (
+                                        <p className="text-2xl font-black mt-1">{formatCLP(resultadoNetoEstimado)}</p>
+                                    )}
+                                </div>
+                                <IconUsers className="w-10 h-10 text-indigo-200" />
+                            </div>
+                        </div>
+
+                        {!isLoadingGlobalReport && resultadoNetoEstimado <= 0 ? (
+                            <p className="text-sm text-[var(--text-muted)] bg-[var(--background-muted)] border border-[var(--border-primary)] rounded-md p-4 text-center">No hay utilidad positiva este período para repartir (el resultado neto estimado es {formatCLP(resultadoNetoEstimado)}).</p>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                    <div>
+                                        <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">N° de Socios</label>
+                                        <input
+                                            type="number" min="1" value={partnerCount}
+                                            onChange={e => setPartnerCount(e.target.value)}
+                                            className={inputClasses}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">% Retención SII</label>
+                                        <input
+                                            type="number" min="0" step="0.01" value={partnerRetentionPct}
+                                            onChange={e => setPartnerRetentionPct(e.target.value)}
+                                            className={inputClasses}
+                                        />
+                                        <p className="text-[10px] text-[var(--text-muted)] mt-1">Cambia cada año según el SII (15,25% para boletas emitidas en 2026).</p>
+                                    </div>
+                                </div>
+
+                                <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden mb-4">
+                                    <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">Detalle del Cálculo</div>
+                                    <div className="p-4 text-sm space-y-2">
+                                        <p className="text-[var(--text-secondary)]">
+                                            <span className="font-bold text-[var(--text-primary)]">1. Monto a dividir:</span> {formatCLP(partnerBreakdown.totalToDivide)} / {partnerBreakdown.count} = <span className="font-black text-[var(--text-primary)]">{formatCLP(partnerBreakdown.gross)}</span> CLP (Monto Bruto de la boleta)
+                                        </p>
+                                        <p className="text-[var(--text-secondary)]">
+                                            <span className="font-bold text-[var(--text-primary)]">2. Retención del SII ({year}):</span> {partnerBreakdown.pct}%
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden mb-4">
+                                    <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">Resumen de la Boleta de Honorarios (por socio)</div>
+                                    <div className="divide-y divide-[var(--border-primary)]">
+                                        <div className="px-4 py-2.5 flex justify-between items-center text-sm">
+                                            <span className="text-[var(--text-secondary)]">Monto Bruto de la boleta:</span>
+                                            <span className="font-bold text-[var(--text-primary)]">{formatCLP(partnerBreakdown.gross)}</span>
+                                        </div>
+                                        <div className="px-4 py-2.5 flex justify-between items-center text-sm">
+                                            <span className="text-[var(--text-secondary)]">Retención de impuesto ({partnerBreakdown.pct}%):</span>
+                                            <span className="font-bold text-rose-600">− {formatCLP(partnerBreakdown.retention)}</span>
+                                        </div>
+                                        <div className="px-4 py-3 flex justify-between items-center text-sm bg-emerald-50 dark:bg-emerald-950/20">
+                                            <span className="font-bold text-[var(--text-primary)]">Monto Líquido final a recibir en cuenta:</span>
+                                            <span className="font-black text-emerald-600 text-base">{formatCLP(partnerBreakdown.net)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden">
+                                    <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">¿Cómo hacerla en la plataforma del SII?</div>
+                                    <p className="p-4 text-sm text-[var(--text-secondary)]">Al momento de emitir la boleta de honorarios electrónica en el sitio del SII, el socio debe seleccionar la opción <strong className="text-[var(--text-primary)]">"El emisor de la boleta se hará cargo de la retención del impuesto"</strong> e ingresar como Monto Bruto la cifra de <strong className="text-[var(--text-primary)]">{formatCLP(partnerBreakdown.gross)}</strong>. El sistema descontará automáticamente los {formatCLP(partnerBreakdown.retention)} correspondientes a la retención legal.</p>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
@@ -1344,59 +1459,6 @@ const SuperAdminBillingReportPage: React.FC = () => {
             </div>
         )}
 
-        {/* Calculadora de Retención de Boleta de Honorarios — herramienta aparte, de solo consulta.
-            NO crea ni modifica ningún gasto; es para saber cuánto retiene el SII y cuánto recibe
-            en la cuenta UN socio por su boleta, antes/sin registrar nada. */}
-        {isBoletaCalcOpen && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setIsBoletaCalcOpen(false)}>
-                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-lg font-bold text-[var(--text-primary)] flex items-center gap-2">
-                            <IconFileInvoice className="w-5 h-5 text-[var(--brand-primary)]" /> Retención de Boleta de Honorarios
-                        </h3>
-                        <button onClick={() => setIsBoletaCalcOpen(false)} className="p-1.5 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-5 h-5" /></button>
-                    </div>
-                    <p className="text-xs text-[var(--text-muted)] mb-4">Calcula cuánto retiene el SII y cuánto recibe en su cuenta un socio por su boleta — solo de referencia, no registra ningún gasto.</p>
-
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Monto Bruto de la Boleta (CLP)</label>
-                            <input
-                                type="number" min="0" value={boletaGrossAmount}
-                                onChange={e => setBoletaGrossAmount(e.target.value)}
-                                placeholder="0" className={inputClasses}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">% Retención SII</label>
-                            <input
-                                type="number" min="0" step="0.01" value={boletaRetentionPct}
-                                onChange={e => setBoletaRetentionPct(e.target.value)}
-                                className={inputClasses}
-                            />
-                            <p className="text-[10px] text-[var(--text-muted)] mt-1">Cambia cada año según el SII (15,25% para boletas emitidas en 2026).</p>
-                        </div>
-
-                        {boletaBreakdown.gross > 0 && (
-                            <>
-                                <div className="bg-[var(--background-muted)] border border-[var(--border-primary)] rounded-md p-3 text-sm space-y-1">
-                                    <p className="text-xs font-black text-[var(--text-muted)] uppercase tracking-wider mb-2">Resumen de la Boleta de Honorarios</p>
-                                    <div className="flex justify-between"><span className="text-[var(--text-secondary)]">Monto Bruto de la boleta:</span><span className="font-bold text-[var(--text-primary)]">{formatCLP(boletaBreakdown.gross)}</span></div>
-                                    <div className="flex justify-between"><span className="text-[var(--text-secondary)]">Retención ({boletaBreakdown.pct}%):</span><span className="font-bold text-rose-600">− {formatCLP(boletaBreakdown.retention)}</span></div>
-                                    <div className="flex justify-between border-t border-[var(--border-primary)] pt-1 mt-1"><span className="text-[var(--text-primary)] font-bold">Monto Líquido a recibir:</span><span className="font-black text-emerald-600">{formatCLP(boletaBreakdown.net)}</span></div>
-                                </div>
-                                <p className="text-[11px] text-[var(--text-muted)]">Al emitir la boleta electrónica en el sitio del SII, selecciona "El emisor de la boleta se hará cargo de la retención del impuesto" e ingresa <strong>{formatCLP(boletaBreakdown.gross)}</strong> como Monto Bruto — el sistema descuenta automáticamente los {formatCLP(boletaBreakdown.retention)} de retención.</p>
-                            </>
-                        )}
-                    </div>
-                    <div className="flex justify-end mt-6">
-                        <button onClick={() => setIsBoletaCalcOpen(false)} className="px-6 py-2 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)]">
-                            Cerrar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
         </>
     );
 };
