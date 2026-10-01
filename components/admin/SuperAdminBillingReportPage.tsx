@@ -168,6 +168,17 @@ const SuperAdminBillingReportPage: React.FC = () => {
         return Number(expense.totalAmount) / expense.installments;
     };
 
+    // Para un gasto en cuotas, indica a cual cuota corresponde el mes/año dados (ej. "3/6"),
+    // relativo al selector de periodo de arriba — no a la fecha de hoy.
+    const getInstallmentLabel = (expense: any, targetYear: number, targetMonth: number): { label: string; status: 'pending' | 'active' | 'done' } => {
+        const startIndex = expense.startYear * 12 + (expense.startMonth - 1);
+        const targetIndex = targetYear * 12 + (targetMonth - 1);
+        const offset = targetIndex - startIndex;
+        if (offset < 0) return { label: `—/${expense.installments}`, status: 'pending' };
+        if (offset >= expense.installments) return { label: `${expense.installments}/${expense.installments}`, status: 'done' };
+        return { label: `${offset + 1}/${expense.installments}`, status: 'active' };
+    };
+
     const selectedMonthExpenses = useMemo(() => {
         const y = parseInt(year), m = parseInt(month);
         return expenses
@@ -545,7 +556,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                     <tr>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Concepto</th>
                                         <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Total</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Cuotas</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Cuota ({['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month) - 1]} {year})</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Monto / Mes</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Desde</th>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Notas</th>
@@ -562,7 +573,20 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                             <tr key={e.id}>
                                                 <td className="px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)]">{e.concept}</td>
                                                 <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}</td>
-                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{e.installments}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center">
+                                                    {(() => {
+                                                        const inst = getInstallmentLabel(e, parseInt(year), parseInt(month));
+                                                        return (
+                                                            <span className={
+                                                                inst.status === 'active' ? 'font-bold text-[var(--text-primary)]' :
+                                                                inst.status === 'done' ? 'text-[var(--text-muted)]' :
+                                                                'text-[var(--text-muted)] italic'
+                                                            } title={inst.status === 'pending' ? 'Aún no comienza en el período seleccionado' : inst.status === 'done' ? 'Cuotas ya completadas' : 'Cuota correspondiente al período seleccionado'}>
+                                                                {inst.label}
+                                                            </span>
+                                                        );
+                                                    })()}
+                                                </td>
                                                 <td className="px-4 py-2.5 text-sm text-center font-mono font-bold text-[var(--text-primary)]">{formatCLP(e.totalAmount / e.installments)}</td>
                                                 <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{String(e.startMonth).padStart(2, '0')}/{e.startYear}</td>
                                                 <td className="px-4 py-2.5 text-xs text-[var(--text-muted)] max-w-[200px] truncate">{e.notes || '-'}</td>
