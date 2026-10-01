@@ -53,6 +53,24 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const emptyExpenseForm = { concept: '', totalAmount: '', installments: '1', startYear: String(today.getFullYear()), startMonth: String(today.getMonth() + 1), notes: '', isRecurring: false, hasEndDate: false, endYear: String(today.getFullYear()), endMonth: String(today.getMonth() + 1) };
     const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
 
+    // Calculadora de division de utilidades entre socios: cada socio debe emitir su propia boleta
+    // de honorarios por su mitad del retiro, con su propia retencion SII — crea un gasto separado
+    // por socio (no uno solo), porque en la realidad son boletas y pagos distintos.
+    const [isPartnerSplitMode, setIsPartnerSplitMode] = useState(false);
+    const [partnerSplitTotal, setPartnerSplitTotal] = useState('');
+    const [partnerSplitCount, setPartnerSplitCount] = useState('2');
+    const [partnerSplitRetentionPct, setPartnerSplitRetentionPct] = useState('15.25');
+
+    const partnerSplitBreakdown = useMemo(() => {
+        const total = parseFloat(partnerSplitTotal) || 0;
+        const count = Math.max(1, parseInt(partnerSplitCount) || 1);
+        const pct = parseFloat(partnerSplitRetentionPct) || 0;
+        const gross = total / count;
+        const retention = gross * (pct / 100);
+        const net = gross - retention;
+        return { total, count, pct, gross, retention, net };
+    }, [partnerSplitTotal, partnerSplitCount, partnerSplitRetentionPct]);
+
     // Conceptos sugeridos — Fabian puede escribir cualquier otro texto, esto es solo para no
     // tener que tipear los mismos nombres cada mes.
     const EXPENSE_CONCEPT_SUGGESTIONS = [
@@ -76,9 +94,17 @@ const SuperAdminBillingReportPage: React.FC = () => {
 
     useEffect(() => { fetchExpenses(); }, []);
 
+    const resetPartnerSplit = () => {
+        setIsPartnerSplitMode(false);
+        setPartnerSplitTotal('');
+        setPartnerSplitCount('2');
+        setPartnerSplitRetentionPct('15.25');
+    };
+
     const openNewExpenseForm = () => {
         setEditingExpense(null);
         setExpenseForm({ ...emptyExpenseForm, startYear: year, startMonth: month });
+        resetPartnerSplit();
         setIsExpenseFormOpen(true);
     };
 
@@ -96,10 +122,14 @@ const SuperAdminBillingReportPage: React.FC = () => {
             endYear: String(expense.endYear || today.getFullYear()),
             endMonth: String(expense.endMonth || today.getMonth() + 1)
         });
+        resetPartnerSplit();
         setIsExpenseFormOpen(true);
     };
 
     const handleSaveExpense = async () => {
+        if (isPartnerSplitMode && !editingExpense) {
+            return handleSavePartnerSplit();
+        }
         const totalAmount = parseFloat(expenseForm.totalAmount);
         const installments = parseInt(expenseForm.installments) || 1;
         if (!expenseForm.concept.trim() || isNaN(totalAmount) || totalAmount <= 0) {
@@ -132,6 +162,49 @@ const SuperAdminBillingReportPage: React.FC = () => {
             fetchExpenses();
         } catch (error: any) {
             showToast(error.message || 'Error al guardar el gasto.', 'error');
+        } finally {
+            setIsSavingExpense(false);
+        }
+    };
+
+    // Crea un gasto separado por cada socio — en la realidad son boletas de honorarios distintas,
+    // cada una con su propia retencion SII, asi que se registran como gastos independientes en vez
+    // de uno solo combinado.
+    const handleSavePartnerSplit = async () => {
+        const { total, count, gross, retention, net, pct } = partnerSplitBreakdown;
+        if (isNaN(total) || total <= 0) {
+            showToast('Ingresa el monto total a dividir (mayor a 0).', 'error');
+            return;
+        }
+        const baseConcept = expenseForm.concept.trim() || 'Boleta de Honorarios';
+        setIsSavingExpense(true);
+        try {
+            for (let i = 1; i <= count; i++) {
+                const autoNote = `División de utilidad ${formatCLP(total)} entre ${count} socios. Bruto: ${formatCLP(gross)} | Retención SII ${pct}%: ${formatCLP(retention)} | Líquido a recibir: ${formatCLP(net)}.`;
+                const payload = {
+                    concept: `${baseConcept} - Socio ${i}`,
+                    totalAmount: Math.round(gross),
+                    installments: 1,
+                    startYear: parseInt(expenseForm.startYear),
+                    startMonth: parseInt(expenseForm.startMonth),
+                    notes: expenseForm.notes.trim() ? `${expenseForm.notes.trim()} — ${autoNote}` : autoNote,
+                    isRecurring: false,
+                    endYear: null,
+                    endMonth: null
+                };
+                const response = await fetch('/api/billing/expenses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `Error al guardar el gasto del Socio ${i}.`);
+            }
+            showToast(`${count} gastos agregados (uno por socio).`, 'success');
+            setIsExpenseFormOpen(false);
+            fetchExpenses();
+        } catch (error: any) {
+            showToast(error.message || 'Error al guardar la división entre socios.', 'error');
         } finally {
             setIsSavingExpense(false);
         }
@@ -1197,7 +1270,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
         {/* Modal: Agregar / Editar Gasto de Full Envíos */}
         {isExpenseFormOpen && (
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setIsExpenseFormOpen(false)}>
-                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-bold text-[var(--text-primary)]">{editingExpense ? 'Editar Gasto' : 'Agregar Gasto'}</h3>
                         <button onClick={() => setIsExpenseFormOpen(false)} className="p-1.5 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-5 h-5" /></button>
@@ -1216,37 +1289,97 @@ const SuperAdminBillingReportPage: React.FC = () => {
                             </datalist>
                         </div>
 
-                        <label className="flex items-center gap-2 bg-[var(--background-muted)] border border-[var(--border-secondary)] rounded-md p-3 cursor-pointer">
-                            <input
-                                type="checkbox" checked={expenseForm.isRecurring}
-                                onChange={e => setExpenseForm({ ...expenseForm, isRecurring: e.target.checked })}
-                                className="h-4 w-4 rounded"
-                            />
-                            <span className="text-sm font-bold text-[var(--text-primary)]">Es un gasto fijo mensual</span>
-                            <span className="text-xs text-[var(--text-muted)]">(se repite automáticamente todos los meses, no es algo que se pagó una sola vez)</span>
-                        </label>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">{expenseForm.isRecurring ? 'Monto Mensual (CLP)' : 'Monto Total (CLP)'}</label>
+                        {!editingExpense && (
+                            <label className="flex items-center gap-2 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-900 rounded-md p-3 cursor-pointer">
                                 <input
-                                    type="number" min="0" value={expenseForm.totalAmount}
-                                    onChange={e => setExpenseForm({ ...expenseForm, totalAmount: e.target.value })}
-                                    placeholder="0" className={inputClasses}
+                                    type="checkbox" checked={isPartnerSplitMode}
+                                    onChange={e => {
+                                        setIsPartnerSplitMode(e.target.checked);
+                                        if (e.target.checked && !expenseForm.concept.trim()) {
+                                            setExpenseForm({ ...expenseForm, concept: 'Boleta de Honorarios' });
+                                        }
+                                    }}
+                                    className="h-4 w-4 rounded"
                                 />
-                            </div>
-                            {!expenseForm.isRecurring && (
+                                <span className="text-sm font-bold text-[var(--text-primary)]">📄 Dividir utilidad entre socios</span>
+                                <span className="text-xs text-[var(--text-muted)]">(cada socio emite su propia boleta de honorarios por su parte, con su retención SII)</span>
+                            </label>
+                        )}
+
+                        {isPartnerSplitMode ? (
+                            <div className="space-y-3 bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-900 rounded-md p-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Monto Total a Dividir (Utilidad)</label>
+                                        <input
+                                            type="number" min="0" value={partnerSplitTotal}
+                                            onChange={e => setPartnerSplitTotal(e.target.value)}
+                                            placeholder="0" className={inputClasses}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">N° de Socios</label>
+                                        <input
+                                            type="number" min="1" value={partnerSplitCount}
+                                            onChange={e => setPartnerSplitCount(e.target.value)}
+                                            className={inputClasses}
+                                        />
+                                    </div>
+                                </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Cuotas (meses)</label>
+                                    <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">% Retención SII</label>
                                     <input
-                                        type="number" min="1" value={expenseForm.installments}
-                                        onChange={e => setExpenseForm({ ...expenseForm, installments: e.target.value })}
+                                        type="number" min="0" step="0.01" value={partnerSplitRetentionPct}
+                                        onChange={e => setPartnerSplitRetentionPct(e.target.value)}
                                         className={inputClasses}
                                     />
-                                    <p className="text-[10px] text-[var(--text-muted)] mt-1">1 = se carga todo en un mes. Más de 1 = se reparte en partes iguales.</p>
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-1">Cambia cada año según el SII (15,25% para boletas emitidas en 2026).</p>
                                 </div>
-                            )}
-                        </div>
+                                {partnerSplitBreakdown.total > 0 && (
+                                    <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] rounded-md p-3 text-sm space-y-1">
+                                        <p className="text-xs font-black text-[var(--text-muted)] uppercase tracking-wider mb-2">Por cada uno de los {partnerSplitBreakdown.count} socios</p>
+                                        <div className="flex justify-between"><span className="text-[var(--text-secondary)]">Monto Bruto de la boleta:</span><span className="font-bold text-[var(--text-primary)]">{formatCLP(partnerSplitBreakdown.gross)}</span></div>
+                                        <div className="flex justify-between"><span className="text-[var(--text-secondary)]">Retención ({partnerSplitBreakdown.pct}%):</span><span className="font-bold text-rose-600">− {formatCLP(partnerSplitBreakdown.retention)}</span></div>
+                                        <div className="flex justify-between border-t border-[var(--border-primary)] pt-1 mt-1"><span className="text-[var(--text-primary)] font-bold">Monto Líquido a recibir:</span><span className="font-black text-emerald-600">{formatCLP(partnerSplitBreakdown.net)}</span></div>
+                                    </div>
+                                )}
+                                <p className="text-[10px] text-[var(--text-muted)]">Al guardar se crean {partnerSplitBreakdown.count} gastos separados (uno por socio), cada uno por el Monto Bruto de su boleta — la retención no es un costo adicional para Full Envíos, es parte de la boleta de cada socio.</p>
+                            </div>
+                        ) : (
+                            <>
+                                <label className="flex items-center gap-2 bg-[var(--background-muted)] border border-[var(--border-secondary)] rounded-md p-3 cursor-pointer">
+                                    <input
+                                        type="checkbox" checked={expenseForm.isRecurring}
+                                        onChange={e => setExpenseForm({ ...expenseForm, isRecurring: e.target.checked })}
+                                        className="h-4 w-4 rounded"
+                                    />
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">Es un gasto fijo mensual</span>
+                                    <span className="text-xs text-[var(--text-muted)]">(se repite automáticamente todos los meses, no es algo que se pagó una sola vez)</span>
+                                </label>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">{expenseForm.isRecurring ? 'Monto Mensual (CLP)' : 'Monto Total (CLP)'}</label>
+                                        <input
+                                            type="number" min="0" value={expenseForm.totalAmount}
+                                            onChange={e => setExpenseForm({ ...expenseForm, totalAmount: e.target.value })}
+                                            placeholder="0" className={inputClasses}
+                                        />
+                                    </div>
+                                    {!expenseForm.isRecurring && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Cuotas (meses)</label>
+                                            <input
+                                                type="number" min="1" value={expenseForm.installments}
+                                                onChange={e => setExpenseForm({ ...expenseForm, installments: e.target.value })}
+                                                className={inputClasses}
+                                            />
+                                            <p className="text-[10px] text-[var(--text-muted)] mt-1">1 = se carga todo en un mes. Más de 1 = se reparte en partes iguales.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
                         <div>
                             <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Mes / Año de Inicio</label>
                             <div className="flex gap-2">
@@ -1316,7 +1449,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                             Cancelar
                         </button>
                         <button onClick={handleSaveExpense} disabled={isSavingExpense} className="px-6 py-2 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)] disabled:opacity-50">
-                            {isSavingExpense ? 'Guardando...' : (editingExpense ? 'Guardar Cambios' : 'Agregar Gasto')}
+                            {isSavingExpense ? 'Guardando...' : (isPartnerSplitMode && !editingExpense ? `Agregar ${partnerSplitBreakdown.count} Gastos (uno por socio)` : (editingExpense ? 'Guardar Cambios' : 'Agregar Gasto'))}
                         </button>
                     </div>
                 </div>
