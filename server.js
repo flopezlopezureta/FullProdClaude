@@ -1484,6 +1484,26 @@ async function initializeDatabase() {
         `);
         console.log('Table "meli_emergency_lookups" is ready.');
 
+        // Gastos operativos propios de Full Envíos (servidor, Cloudflare, IA, electricidad, etc.),
+        // cargados a mano por el superadmin para poder ver la rentabilidad real del proyecto en el
+        // Reporte de Cobro UF, no solo lo facturado a los clientes. "installments" permite prorratear
+        // un costo grande (ej. comprar un servidor nuevo) en varios meses en vez de cargarlo entero
+        // al mes en que se pagó — se reparte en partes iguales desde (startYear, startMonth).
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS fullenvios_expenses (
+                id SERIAL PRIMARY KEY,
+                concept TEXT NOT NULL,
+                "totalAmount" NUMERIC NOT NULL,
+                installments INTEGER NOT NULL DEFAULT 1,
+                "startYear" INTEGER NOT NULL,
+                "startMonth" INTEGER NOT NULL,
+                notes TEXT,
+                "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('Table "fullenvios_expenses" is ready.');
+
         await db.query(`
             CREATE TABLE IF NOT EXISTS daily_closures (
                 id SERIAL PRIMARY KEY,

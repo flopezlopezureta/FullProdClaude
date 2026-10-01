@@ -446,4 +446,88 @@ router.get('/superadmin-monthly-report', authMiddleware, async (req, res) => {
     }
 });
 
+// Mismo chequeo que superadmin-monthly-report arriba (el JWT solo trae id+role, no email, así que
+// hay que resolverlo contra la BD) — factorizado acá porque los 4 endpoints de gastos lo repiten.
+async function requireSuperAdmin(req, res) {
+    const { rows } = await db.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+    if (rows.length === 0 || rows[0].email !== 'admin') {
+        res.status(403).json({ message: 'Acceso denegado. Exclusivo para el Administrador Principal.' });
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Gastos operativos propios de Full Envíos (servidor, Cloudflare, IA, electricidad, etc.) para ver
+ * la rentabilidad real del proyecto en el Reporte de Cobro UF, además de lo facturado a clientes.
+ * Exclusivo para el Administrador Principal, igual que el resto de este reporte.
+ */
+router.get('/expenses', authMiddleware, async (req, res) => {
+    if (!(await requireSuperAdmin(req, res))) return;
+    try {
+        const { rows } = await db.query('SELECT * FROM fullenvios_expenses ORDER BY "startYear" DESC, "startMonth" DESC, "createdAt" DESC');
+        res.json(rows);
+    } catch (err) {
+        console.error('Error fetching Full Envíos expenses:', err);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+router.post('/expenses', authMiddleware, async (req, res) => {
+    if (!(await requireSuperAdmin(req, res))) return;
+    const { concept, totalAmount, installments, startYear, startMonth, notes } = req.body;
+    if (!concept || !totalAmount || !startYear || !startMonth) {
+        return res.status(400).json({ message: 'Faltan campos requeridos (concepto, monto, año y mes de inicio).' });
+    }
+    if (parseFloat(totalAmount) <= 0 || parseInt(installments || 1) < 1) {
+        return res.status(400).json({ message: 'El monto debe ser mayor a 0 y las cuotas al menos 1.' });
+    }
+    try {
+        const { rows } = await db.query(
+            `INSERT INTO fullenvios_expenses (concept, "totalAmount", installments, "startYear", "startMonth", notes)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [concept, totalAmount, installments || 1, startYear, startMonth, notes || null]
+        );
+        res.status(201).json(rows[0]);
+    } catch (err) {
+        console.error('Error creating Full Envíos expense:', err);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+router.put('/expenses/:id', authMiddleware, async (req, res) => {
+    if (!(await requireSuperAdmin(req, res))) return;
+    const { concept, totalAmount, installments, startYear, startMonth, notes } = req.body;
+    if (!concept || !totalAmount || !startYear || !startMonth) {
+        return res.status(400).json({ message: 'Faltan campos requeridos (concepto, monto, año y mes de inicio).' });
+    }
+    if (parseFloat(totalAmount) <= 0 || parseInt(installments || 1) < 1) {
+        return res.status(400).json({ message: 'El monto debe ser mayor a 0 y las cuotas al menos 1.' });
+    }
+    try {
+        const { rows } = await db.query(
+            `UPDATE fullenvios_expenses SET concept = $1, "totalAmount" = $2, installments = $3, "startYear" = $4, "startMonth" = $5, notes = $6, "updatedAt" = NOW()
+             WHERE id = $7 RETURNING *`,
+            [concept, totalAmount, installments || 1, startYear, startMonth, notes || null, req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ message: 'Gasto no encontrado.' });
+        res.json(rows[0]);
+    } catch (err) {
+        console.error('Error updating Full Envíos expense:', err);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+router.delete('/expenses/:id', authMiddleware, async (req, res) => {
+    if (!(await requireSuperAdmin(req, res))) return;
+    try {
+        const { rows } = await db.query('DELETE FROM fullenvios_expenses WHERE id = $1 RETURNING id', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Gasto no encontrado.' });
+        res.json({ message: 'Gasto eliminado.' });
+    } catch (err) {
+        console.error('Error deleting Full Envíos expense:', err);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
 module.exports = router;

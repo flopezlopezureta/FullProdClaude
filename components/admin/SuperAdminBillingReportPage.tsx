@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { api } from '../../services/api';
 import { AuthContext } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { IconPrinter, IconCalendar, IconPackage, IconDollarSign, IconFileSpreadsheet, IconTrendingUp, IconLock, IconCube, IconUsers } from '../Icon';
+import { IconPrinter, IconCalendar, IconPackage, IconDollarSign, IconFileSpreadsheet, IconTrendingUp, IconLock, IconCube, IconUsers, IconPlus, IconTrash, IconPencil, IconX, IconFileInvoice } from '../Icon';
 import { exportSuperAdminBillingToExcel } from '../../services/exportService';
 
 const KpiCard: React.FC<{ icon: React.ReactNode, title: string, value: string | number, subtext?: string, colorClass: string }> = ({ icon, title, value, subtext, colorClass }) => (
@@ -36,6 +36,129 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const [reportData, setReportData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+
+    const [activeTab, setActiveTab] = useState<'client' | 'expenses'>('client');
+    const [expenses, setExpenses] = useState<any[]>([]);
+    const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
+    const [editingExpense, setEditingExpense] = useState<any | null>(null);
+    const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
+    const [isSavingExpense, setIsSavingExpense] = useState(false);
+    const emptyExpenseForm = { concept: '', totalAmount: '', installments: '1', startYear: String(today.getFullYear()), startMonth: String(today.getMonth() + 1), notes: '' };
+    const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
+
+    // Conceptos sugeridos — Fabian puede escribir cualquier otro texto, esto es solo para no
+    // tener que tipear los mismos nombres cada mes.
+    const EXPENSE_CONCEPT_SUGGESTIONS = [
+        'Costo IA', 'Cloudflare', 'Servidor', 'Memoria (RAM)', 'UPS', 'Energía Eléctrica',
+        'Desarrollo', 'Soporte', 'Traslados', 'Internet / Conectividad', 'Respaldo (Backup)',
+        'Mantención de Hardware', 'Seguro de Equipos', 'Dominio / Hosting', 'Otros'
+    ];
+
+    const fetchExpenses = async () => {
+        setIsLoadingExpenses(true);
+        try {
+            const response = await fetch('/api/billing/expenses', { headers: { 'Authorization': `Bearer ${token}` } });
+            const data = await response.json();
+            if (response.ok) setExpenses(data);
+        } catch (error) {
+            console.error('Failed to fetch Full Envíos expenses', error);
+        } finally {
+            setIsLoadingExpenses(false);
+        }
+    };
+
+    useEffect(() => { fetchExpenses(); }, []);
+
+    const openNewExpenseForm = () => {
+        setEditingExpense(null);
+        setExpenseForm({ ...emptyExpenseForm, startYear: year, startMonth: month });
+        setIsExpenseFormOpen(true);
+    };
+
+    const openEditExpenseForm = (expense: any) => {
+        setEditingExpense(expense);
+        setExpenseForm({
+            concept: expense.concept,
+            totalAmount: String(expense.totalAmount),
+            installments: String(expense.installments),
+            startYear: String(expense.startYear),
+            startMonth: String(expense.startMonth),
+            notes: expense.notes || ''
+        });
+        setIsExpenseFormOpen(true);
+    };
+
+    const handleSaveExpense = async () => {
+        const totalAmount = parseFloat(expenseForm.totalAmount);
+        const installments = parseInt(expenseForm.installments) || 1;
+        if (!expenseForm.concept.trim() || isNaN(totalAmount) || totalAmount <= 0) {
+            showToast('Ingresa un concepto y un monto válido (mayor a 0).', 'error');
+            return;
+        }
+        setIsSavingExpense(true);
+        try {
+            const payload = {
+                concept: expenseForm.concept.trim(),
+                totalAmount,
+                installments,
+                startYear: parseInt(expenseForm.startYear),
+                startMonth: parseInt(expenseForm.startMonth),
+                notes: expenseForm.notes.trim() || null
+            };
+            const url = editingExpense ? `/api/billing/expenses/${editingExpense.id}` : '/api/billing/expenses';
+            const response = await fetch(url, {
+                method: editingExpense ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'Error al guardar el gasto.');
+            showToast(editingExpense ? 'Gasto actualizado.' : 'Gasto agregado.', 'success');
+            setIsExpenseFormOpen(false);
+            fetchExpenses();
+        } catch (error: any) {
+            showToast(error.message || 'Error al guardar el gasto.', 'error');
+        } finally {
+            setIsSavingExpense(false);
+        }
+    };
+
+    const handleDeleteExpense = async (expense: any) => {
+        if (!window.confirm(`¿Eliminar el gasto "${expense.concept}" (${expense.startMonth}/${expense.startYear})? Esta acción no se puede deshacer.`)) return;
+        try {
+            const response = await fetch(`/api/billing/expenses/${expense.id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error('Error al eliminar el gasto.');
+            showToast('Gasto eliminado.', 'success');
+            fetchExpenses();
+        } catch (error: any) {
+            showToast(error.message || 'Error al eliminar el gasto.', 'error');
+        }
+    };
+
+    // Un gasto en N cuotas reparte totalAmount/N por mes, empezando en (startYear, startMonth) y
+    // cubriendo N meses consecutivos. Esto calcula cuánto de CADA gasto cae en el período
+    // actualmente seleccionado arriba (year/month), para sumarlos en el resumen del mes.
+    const getMonthlyAmount = (expense: any, targetYear: number, targetMonth: number): number => {
+        const startIndex = expense.startYear * 12 + (expense.startMonth - 1);
+        const targetIndex = targetYear * 12 + (targetMonth - 1);
+        const offset = targetIndex - startIndex;
+        if (offset < 0 || offset >= expense.installments) return 0;
+        return Number(expense.totalAmount) / expense.installments;
+    };
+
+    const selectedMonthExpenses = useMemo(() => {
+        const y = parseInt(year), m = parseInt(month);
+        return expenses
+            .map(e => ({ ...e, monthlyAmount: getMonthlyAmount(e, y, m) }))
+            .filter(e => e.monthlyAmount > 0);
+    }, [expenses, year, month]);
+
+    const totalExpensesThisMonth = useMemo(() =>
+        selectedMonthExpenses.reduce((sum, e) => sum + e.monthlyAmount, 0),
+    [selectedMonthExpenses]);
 
     // Fetch clients list and auto-select Go Delivery Interno
     useEffect(() => {
@@ -243,6 +366,130 @@ const SuperAdminBillingReportPage: React.FC = () => {
                 </span>
             </div>
 
+            {/* Selector de pestaña: Reporte por Cliente vs. Gastos propios de Full Envíos */}
+            <div className="flex gap-2 border-b border-[var(--border-primary)]">
+                <button
+                    onClick={() => setActiveTab('client')}
+                    className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'client' ? 'border-[var(--brand-primary)] text-[var(--brand-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+                >
+                    <IconFileSpreadsheet className="w-4 h-4" /> Reporte por Cliente
+                </button>
+                <button
+                    onClick={() => setActiveTab('expenses')}
+                    className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'expenses' ? 'border-[var(--brand-primary)] text-[var(--brand-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+                >
+                    <IconFileInvoice className="w-4 h-4" /> Gastos de Full Envíos
+                </button>
+            </div>
+
+            {activeTab === 'expenses' && (
+                <div className="space-y-6">
+                    <div className="bg-[var(--background-secondary)] shadow-md rounded-lg p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-[var(--text-primary)]">Gastos Operativos de Full Envíos</h3>
+                                <p className="text-xs text-[var(--text-muted)] mt-1">Costos propios del proyecto (infraestructura, desarrollo, soporte) — se descuentan del valor neto facturado para ver la rentabilidad real.</p>
+                            </div>
+                            <button onClick={openNewExpenseForm} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)] shadow-sm">
+                                <IconPlus className="w-4 h-4" /> Agregar Gasto
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="bg-[var(--background-muted)] border border-[var(--border-secondary)] rounded-lg p-4">
+                                <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-wider mb-1">Período a Revisar</label>
+                                <div className="flex gap-2">
+                                    <select value={month} onChange={e => setMonth(e.target.value)} className={`${inputClasses} !py-1.5 text-sm`}>
+                                        {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
+                                            <option key={i} value={i + 1}>{m}</option>
+                                        ))}
+                                    </select>
+                                    <select value={year} onChange={e => setYear(e.target.value)} className={`${inputClasses} !py-1.5 text-sm`}>
+                                        <option value="2024">2024</option>
+                                        <option value="2025">2025</option>
+                                        <option value="2026">2026</option>
+                                        <option value="2027">2027</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="md:col-span-2 bg-indigo-600 text-white rounded-lg p-4 flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs font-semibold text-indigo-100 uppercase tracking-wider">Total Gastos del Período Seleccionado</p>
+                                    <p className="text-2xl font-black mt-1">{formatCLP(totalExpensesThisMonth)}</p>
+                                </div>
+                                <IconDollarSign className="w-10 h-10 text-indigo-200" />
+                            </div>
+                        </div>
+
+                        {selectedMonthExpenses.length > 0 && (
+                            <div className="mb-6 border border-[var(--border-secondary)] rounded-lg overflow-hidden">
+                                <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">
+                                    Desglose del {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][parseInt(month) - 1]} {year}
+                                </div>
+                                <div className="divide-y divide-[var(--border-primary)]">
+                                    {selectedMonthExpenses.map(e => (
+                                        <div key={e.id} className="px-4 py-2 flex justify-between items-center text-sm">
+                                            <span className="text-[var(--text-secondary)]">
+                                                {e.concept}
+                                                {e.installments > 1 && <span className="text-xs text-[var(--text-muted)] ml-2">(cuota {Math.floor((parseInt(year) * 12 + parseInt(month) - 1 - (e.startYear * 12 + e.startMonth - 1))) + 1}/{e.installments})</span>}
+                                            </span>
+                                            <span className="font-bold text-[var(--text-primary)]">{formatCLP(e.monthlyAmount)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <h4 className="text-sm font-bold text-[var(--text-primary)] mb-2 mt-6">Todos los Gastos Registrados</h4>
+                        <div className="border border-[var(--border-primary)] rounded-lg overflow-hidden overflow-x-auto">
+                            <table className="min-w-full divide-y divide-[var(--border-primary)]">
+                                <thead className="bg-[var(--background-muted)]">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Concepto</th>
+                                        <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Total</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Cuotas</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Monto / Mes</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Desde</th>
+                                        <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Notas</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-[var(--background-secondary)] divide-y divide-[var(--border-primary)]">
+                                    {isLoadingExpenses ? (
+                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
+                                    ) : expenses.length === 0 ? (
+                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos registrados todavía.</td></tr>
+                                    ) : (
+                                        expenses.map(e => (
+                                            <tr key={e.id}>
+                                                <td className="px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)]">{e.concept}</td>
+                                                <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{e.installments}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center font-mono text-[var(--text-secondary)]">{formatCLP(e.totalAmount / e.installments)}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{String(e.startMonth).padStart(2, '0')}/{e.startYear}</td>
+                                                <td className="px-4 py-2.5 text-xs text-[var(--text-muted)] max-w-[200px] truncate">{e.notes || '-'}</td>
+                                                <td className="px-4 py-2.5">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button onClick={() => openEditExpenseForm(e)} className="p-1.5 text-[var(--text-muted)] hover:text-[var(--brand-primary)] hover:bg-[var(--background-hover)] rounded" title="Editar">
+                                                            <IconPencil className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteExpense(e)} className="p-1.5 text-[var(--text-muted)] hover:text-red-600 hover:bg-[var(--background-hover)] rounded" title="Eliminar">
+                                                            <IconTrash className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'client' && (
+            <>
             {/* Control de Licencias SaaS */}
             <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] shadow-md rounded-lg p-6 space-y-6">
                 <div className="flex justify-between items-center border-b border-[var(--border-primary)] pb-3">
@@ -626,7 +873,35 @@ const SuperAdminBillingReportPage: React.FC = () => {
                             </div>
                         </div>
                     </div>
+
+                    {/* Rentabilidad real: lo facturado a este cliente, menos los gastos propios de Full
+                        Envíos del mismo período (pestaña "Gastos de Full Envíos") — no es exclusivo a
+                        este cliente, es el costo operativo general del proyecto que corresponde a ese
+                        mes, mostrado acá para ver la rentabilidad real de un vistazo. */}
+                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/20 dark:to-emerald-900/10 shadow-md rounded-lg p-6 border border-emerald-200 dark:border-emerald-900">
+                        <h3 className="text-lg font-black text-[var(--text-primary)] mb-4 flex items-center gap-2">
+                            <span>📊 Rentabilidad Real del Período ({month}/{year})</span>
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+                            <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] p-4 rounded-lg">
+                                <span className="block text-xs font-black text-[var(--text-secondary)] uppercase tracking-wider">Neto Combinado (este cliente)</span>
+                                <span className="block text-xl font-black text-[var(--text-primary)] mt-1">{formatCLP((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet)}</span>
+                            </div>
+                            <div className="bg-[var(--background-secondary)] border border-[var(--border-primary)] p-4 rounded-lg">
+                                <span className="block text-xs font-black text-[var(--text-secondary)] uppercase tracking-wider">Gastos Full Envíos del Mes</span>
+                                <span className="block text-xl font-black text-rose-600 mt-1">− {formatCLP(totalExpensesThisMonth)}</span>
+                                <button onClick={() => setActiveTab('expenses')} className="text-[10px] font-bold text-[var(--brand-primary)] hover:underline mt-1">Ver detalle →</button>
+                            </div>
+                            <div className={`p-4 rounded-lg shadow-sm ${((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet - totalExpensesThisMonth) >= 0 ? 'bg-emerald-600' : 'bg-rose-600'} text-white`}>
+                                <span className="block text-xs font-semibold text-white/80 uppercase tracking-wider">Resultado Neto Estimado</span>
+                                <span className="block text-2xl font-black mt-1">{formatCLP((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet - totalExpensesThisMonth)}</span>
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-[var(--text-muted)] mt-3">* Los gastos de Full Envíos son del proyecto completo, no exclusivos de este cliente — se muestran acá como referencia rápida de rentabilidad, usando el neto combinado de este cliente como aproximación de ingreso del período.</p>
+                    </div>
                 </div>
+            )}
+            </>
             )}
         </div>
 
@@ -757,6 +1032,87 @@ const SuperAdminBillingReportPage: React.FC = () => {
                         </tr>
                     </tfoot>
                 </table>
+            </div>
+        )}
+
+        {/* Modal: Agregar / Editar Gasto de Full Envíos */}
+        {isExpenseFormOpen && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setIsExpenseFormOpen(false)}>
+                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-[var(--text-primary)]">{editingExpense ? 'Editar Gasto' : 'Agregar Gasto'}</h3>
+                        <button onClick={() => setIsExpenseFormOpen(false)} className="p-1.5 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-5 h-5" /></button>
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Concepto</label>
+                            <input
+                                type="text" list="expense-concept-suggestions" value={expenseForm.concept}
+                                onChange={e => setExpenseForm({ ...expenseForm, concept: e.target.value })}
+                                placeholder="Ej: Cloudflare, Servidor, Costo IA..."
+                                className={inputClasses}
+                            />
+                            <datalist id="expense-concept-suggestions">
+                                {EXPENSE_CONCEPT_SUGGESTIONS.map(c => <option key={c} value={c} />)}
+                            </datalist>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Monto Total (CLP)</label>
+                                <input
+                                    type="number" min="0" value={expenseForm.totalAmount}
+                                    onChange={e => setExpenseForm({ ...expenseForm, totalAmount: e.target.value })}
+                                    placeholder="0" className={inputClasses}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Cuotas (meses)</label>
+                                <input
+                                    type="number" min="1" value={expenseForm.installments}
+                                    onChange={e => setExpenseForm({ ...expenseForm, installments: e.target.value })}
+                                    className={inputClasses}
+                                />
+                                <p className="text-[10px] text-[var(--text-muted)] mt-1">1 = se carga todo en un mes. Más de 1 = se reparte en partes iguales.</p>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Mes / Año de Inicio</label>
+                            <div className="flex gap-2">
+                                <select value={expenseForm.startMonth} onChange={e => setExpenseForm({ ...expenseForm, startMonth: e.target.value })} className={inputClasses}>
+                                    {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
+                                        <option key={i} value={i + 1}>{m}</option>
+                                    ))}
+                                </select>
+                                <select value={expenseForm.startYear} onChange={e => setExpenseForm({ ...expenseForm, startYear: e.target.value })} className={inputClasses}>
+                                    <option value="2024">2024</option>
+                                    <option value="2025">2025</option>
+                                    <option value="2026">2026</option>
+                                    <option value="2027">2027</option>
+                                </select>
+                            </div>
+                            {parseInt(expenseForm.installments) > 1 && expenseForm.totalAmount && (
+                                <p className="text-xs text-[var(--brand-primary)] font-semibold mt-1">
+                                    {formatCLP(parseFloat(expenseForm.totalAmount) / parseInt(expenseForm.installments))} / mes, por {expenseForm.installments} meses
+                                </p>
+                            )}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Notas (opcional)</label>
+                            <textarea
+                                value={expenseForm.notes} onChange={e => setExpenseForm({ ...expenseForm, notes: e.target.value })}
+                                rows={2} className={inputClasses}
+                            />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={() => setIsExpenseFormOpen(false)} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)]">
+                            Cancelar
+                        </button>
+                        <button onClick={handleSaveExpense} disabled={isSavingExpense} className="px-6 py-2 text-sm font-bold text-white bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)] disabled:opacity-50">
+                            {isSavingExpense ? 'Guardando...' : (editingExpense ? 'Guardar Cambios' : 'Agregar Gasto')}
+                        </button>
+                    </div>
+                </div>
             </div>
         )}
         </>
