@@ -1497,11 +1497,28 @@ async function initializeDatabase() {
                 installments INTEGER NOT NULL DEFAULT 1,
                 "startYear" INTEGER NOT NULL,
                 "startMonth" INTEGER NOT NULL,
+                "isRecurring" BOOLEAN NOT NULL DEFAULT false,
+                "endYear" INTEGER,
+                "endMonth" INTEGER,
                 notes TEXT,
                 "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
         `);
+        // "isRecurring" (gasto fijo mensual, ej. Cloudflare o electricidad) se agregó después de la
+        // primera versión de esta tabla — si ya existía sin estas columnas (CREATE TABLE IF NOT
+        // EXISTS de arriba no las agrega retroactivamente), esto las suma. Un gasto recurrente
+        // ignora "installments" (no tiene sentido prorratear algo que se repite indefinido) y usa
+        // "totalAmount" directamente como el monto de cada mes; "endYear"/"endMonth" son opcionales
+        // — null significa que sigue vigente sin fecha de término.
+        const expenseCols = [
+            { name: 'isRecurring', def: 'BOOLEAN NOT NULL DEFAULT false' },
+            { name: 'endYear', def: 'INTEGER' },
+            { name: 'endMonth', def: 'INTEGER' },
+        ];
+        for (const col of expenseCols) {
+            await db.query(`ALTER TABLE fullenvios_expenses ADD COLUMN IF NOT EXISTS "${col.name}" ${col.def}`);
+        }
         console.log('Table "fullenvios_expenses" is ready.');
 
         await db.query(`

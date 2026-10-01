@@ -43,7 +43,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const [editingExpense, setEditingExpense] = useState<any | null>(null);
     const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
     const [isSavingExpense, setIsSavingExpense] = useState(false);
-    const emptyExpenseForm = { concept: '', totalAmount: '', installments: '1', startYear: String(today.getFullYear()), startMonth: String(today.getMonth() + 1), notes: '' };
+    const emptyExpenseForm = { concept: '', totalAmount: '', installments: '1', startYear: String(today.getFullYear()), startMonth: String(today.getMonth() + 1), notes: '', isRecurring: false, hasEndDate: false, endYear: String(today.getFullYear()), endMonth: String(today.getMonth() + 1) };
     const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
 
     // Conceptos sugeridos — Fabian puede escribir cualquier otro texto, esto es solo para no
@@ -51,7 +51,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const EXPENSE_CONCEPT_SUGGESTIONS = [
         'Costo IA', 'Cloudflare', 'Servidor', 'Memoria (RAM)', 'UPS', 'Energía Eléctrica',
         'Desarrollo', 'Soporte', 'Traslados', 'Internet / Conectividad', 'Respaldo (Backup)',
-        'Mantención de Hardware', 'Seguro de Equipos', 'Dominio / Hosting', 'Otros'
+        'Mantención de Hardware', 'Seguro de Equipos', 'Dominio / Hosting', 'Boleta de Honorarios', 'Otros'
     ];
 
     const fetchExpenses = async () => {
@@ -83,7 +83,11 @@ const SuperAdminBillingReportPage: React.FC = () => {
             installments: String(expense.installments),
             startYear: String(expense.startYear),
             startMonth: String(expense.startMonth),
-            notes: expense.notes || ''
+            notes: expense.notes || '',
+            isRecurring: !!expense.isRecurring,
+            hasEndDate: !!expense.endYear,
+            endYear: String(expense.endYear || today.getFullYear()),
+            endMonth: String(expense.endMonth || today.getMonth() + 1)
         });
         setIsExpenseFormOpen(true);
     };
@@ -103,7 +107,10 @@ const SuperAdminBillingReportPage: React.FC = () => {
                 installments,
                 startYear: parseInt(expenseForm.startYear),
                 startMonth: parseInt(expenseForm.startMonth),
-                notes: expenseForm.notes.trim() || null
+                notes: expenseForm.notes.trim() || null,
+                isRecurring: expenseForm.isRecurring,
+                endYear: (expenseForm.isRecurring && expenseForm.hasEndDate) ? parseInt(expenseForm.endYear) : null,
+                endMonth: (expenseForm.isRecurring && expenseForm.hasEndDate) ? parseInt(expenseForm.endMonth) : null
             };
             const url = editingExpense ? `/api/billing/expenses/${editingExpense.id}` : '/api/billing/expenses';
             const response = await fetch(url, {
@@ -138,14 +145,26 @@ const SuperAdminBillingReportPage: React.FC = () => {
         }
     };
 
-    // Un gasto en N cuotas reparte totalAmount/N por mes, empezando en (startYear, startMonth) y
-    // cubriendo N meses consecutivos. Esto calcula cuánto de CADA gasto cae en el período
-    // actualmente seleccionado arriba (year/month), para sumarlos en el resumen del mes.
+    // Dos modos: (1) gasto realizado en N cuotas — reparte totalAmount/N por mes, empezando en
+    // (startYear, startMonth) y cubriendo exactamente N meses, después deja de aparecer; (2) gasto
+    // fijo mensual (isRecurring) — totalAmount ES el monto de cada mes (no se reparte), y aparece
+    // automáticamente en todos los meses desde startYear/startMonth en adelante, sin fecha de
+    // término salvo que se haya puesto endYear/endMonth explícitamente.
     const getMonthlyAmount = (expense: any, targetYear: number, targetMonth: number): number => {
         const startIndex = expense.startYear * 12 + (expense.startMonth - 1);
         const targetIndex = targetYear * 12 + (targetMonth - 1);
         const offset = targetIndex - startIndex;
-        if (offset < 0 || offset >= expense.installments) return 0;
+        if (offset < 0) return 0;
+
+        if (expense.isRecurring) {
+            if (expense.endYear && expense.endMonth) {
+                const endIndex = expense.endYear * 12 + (expense.endMonth - 1);
+                if (targetIndex > endIndex) return 0;
+            }
+            return Number(expense.totalAmount);
+        }
+
+        if (offset >= expense.installments) return 0;
         return Number(expense.totalAmount) / expense.installments;
     };
 
@@ -431,7 +450,11 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                         <div key={e.id} className="px-4 py-2 flex justify-between items-center text-sm">
                                             <span className="text-[var(--text-secondary)]">
                                                 {e.concept}
-                                                {e.installments > 1 && <span className="text-xs text-[var(--text-muted)] ml-2">(cuota {Math.floor((parseInt(year) * 12 + parseInt(month) - 1 - (e.startYear * 12 + e.startMonth - 1))) + 1}/{e.installments})</span>}
+                                                {e.isRecurring ? (
+                                                    <span className="text-xs text-emerald-600 font-bold ml-2">(fijo mensual)</span>
+                                                ) : e.installments > 1 && (
+                                                    <span className="text-xs text-[var(--text-muted)] ml-2">(cuota {Math.floor((parseInt(year) * 12 + parseInt(month) - 1 - (e.startYear * 12 + e.startMonth - 1))) + 1}/{e.installments})</span>
+                                                )}
                                             </span>
                                             <span className="font-bold text-[var(--text-primary)]">{formatCLP(e.monthlyAmount)}</span>
                                         </div>
@@ -446,27 +469,37 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 <thead className="bg-[var(--background-muted)]">
                                     <tr>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Concepto</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Tipo</th>
                                         <th className="px-4 py-2 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Monto Total</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Cuotas</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Monto / Mes</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Desde</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Hasta</th>
                                         <th className="px-4 py-2 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Notas</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-[var(--text-muted)] uppercase">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody className="bg-[var(--background-secondary)] divide-y divide-[var(--border-primary)]">
                                     {isLoadingExpenses ? (
-                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
+                                        <tr><td colSpan={8} className="px-4 py-6 text-center text-[var(--text-muted)]">Cargando gastos...</td></tr>
                                     ) : expenses.length === 0 ? (
-                                        <tr><td colSpan={7} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos registrados todavía.</td></tr>
+                                        <tr><td colSpan={8} className="px-4 py-6 text-center text-[var(--text-muted)]">No hay gastos registrados todavía.</td></tr>
                                     ) : (
                                         expenses.map(e => (
                                             <tr key={e.id}>
                                                 <td className="px-4 py-2.5 text-sm font-semibold text-[var(--text-primary)]">{e.concept}</td>
-                                                <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}</td>
-                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{e.installments}</td>
-                                                <td className="px-4 py-2.5 text-sm text-center font-mono text-[var(--text-secondary)]">{formatCLP(e.totalAmount / e.installments)}</td>
+                                                <td className="px-4 py-2.5 text-center">
+                                                    {e.isRecurring ? (
+                                                        <span className="inline-block px-2 py-0.5 text-[10px] font-black uppercase rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400">Fijo Mensual</span>
+                                                    ) : (
+                                                        <span className="inline-block px-2 py-0.5 text-[10px] font-black uppercase rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">Realizado{e.installments > 1 ? ` (${e.installments} cuotas)` : ''}</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-sm text-right text-[var(--text-secondary)]">{formatCLP(e.totalAmount)}{e.isRecurring ? '' : ` ÷ ${e.installments}`}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center font-mono font-bold text-[var(--text-primary)]">{formatCLP(e.isRecurring ? e.totalAmount : e.totalAmount / e.installments)}</td>
                                                 <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">{String(e.startMonth).padStart(2, '0')}/{e.startYear}</td>
+                                                <td className="px-4 py-2.5 text-sm text-center text-[var(--text-secondary)]">
+                                                    {e.isRecurring ? (e.endYear ? `${String(e.endMonth).padStart(2, '0')}/${e.endYear}` : <span className="text-emerald-600 font-semibold">Vigente</span>) : '-'}
+                                                </td>
                                                 <td className="px-4 py-2.5 text-xs text-[var(--text-muted)] max-w-[200px] truncate">{e.notes || '-'}</td>
                                                 <td className="px-4 py-2.5">
                                                     <div className="flex items-center justify-center gap-2">
@@ -1056,24 +1089,37 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 {EXPENSE_CONCEPT_SUGGESTIONS.map(c => <option key={c} value={c} />)}
                             </datalist>
                         </div>
+
+                        <label className="flex items-center gap-2 bg-[var(--background-muted)] border border-[var(--border-secondary)] rounded-md p-3 cursor-pointer">
+                            <input
+                                type="checkbox" checked={expenseForm.isRecurring}
+                                onChange={e => setExpenseForm({ ...expenseForm, isRecurring: e.target.checked })}
+                                className="h-4 w-4 rounded"
+                            />
+                            <span className="text-sm font-bold text-[var(--text-primary)]">Es un gasto fijo mensual</span>
+                            <span className="text-xs text-[var(--text-muted)]">(se repite automáticamente todos los meses, no es algo que se pagó una sola vez)</span>
+                        </label>
+
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Monto Total (CLP)</label>
+                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">{expenseForm.isRecurring ? 'Monto Mensual (CLP)' : 'Monto Total (CLP)'}</label>
                                 <input
                                     type="number" min="0" value={expenseForm.totalAmount}
                                     onChange={e => setExpenseForm({ ...expenseForm, totalAmount: e.target.value })}
                                     placeholder="0" className={inputClasses}
                                 />
                             </div>
-                            <div>
-                                <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Cuotas (meses)</label>
-                                <input
-                                    type="number" min="1" value={expenseForm.installments}
-                                    onChange={e => setExpenseForm({ ...expenseForm, installments: e.target.value })}
-                                    className={inputClasses}
-                                />
-                                <p className="text-[10px] text-[var(--text-muted)] mt-1">1 = se carga todo en un mes. Más de 1 = se reparte en partes iguales.</p>
-                            </div>
+                            {!expenseForm.isRecurring && (
+                                <div>
+                                    <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Cuotas (meses)</label>
+                                    <input
+                                        type="number" min="1" value={expenseForm.installments}
+                                        onChange={e => setExpenseForm({ ...expenseForm, installments: e.target.value })}
+                                        className={inputClasses}
+                                    />
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-1">1 = se carga todo en un mes. Más de 1 = se reparte en partes iguales.</p>
+                                </div>
+                            )}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Mes / Año de Inicio</label>
@@ -1090,12 +1136,47 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                     <option value="2027">2027</option>
                                 </select>
                             </div>
-                            {parseInt(expenseForm.installments) > 1 && expenseForm.totalAmount && (
+                            {!expenseForm.isRecurring && parseInt(expenseForm.installments) > 1 && expenseForm.totalAmount && (
                                 <p className="text-xs text-[var(--brand-primary)] font-semibold mt-1">
                                     {formatCLP(parseFloat(expenseForm.totalAmount) / parseInt(expenseForm.installments))} / mes, por {expenseForm.installments} meses
                                 </p>
                             )}
+                            {expenseForm.isRecurring && expenseForm.totalAmount && (
+                                <p className="text-xs text-emerald-600 font-semibold mt-1">
+                                    {formatCLP(parseFloat(expenseForm.totalAmount))} / mes, todos los meses desde esta fecha{expenseForm.hasEndDate ? '' : ' en adelante'}
+                                </p>
+                            )}
                         </div>
+
+                        {expenseForm.isRecurring && (
+                            <div>
+                                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                                    <input
+                                        type="checkbox" checked={expenseForm.hasEndDate}
+                                        onChange={e => setExpenseForm({ ...expenseForm, hasEndDate: e.target.checked })}
+                                        className="h-4 w-4 rounded"
+                                    />
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">Tiene fecha de término</span>
+                                </label>
+                                {expenseForm.hasEndDate ? (
+                                    <div className="flex gap-2">
+                                        <select value={expenseForm.endMonth} onChange={e => setExpenseForm({ ...expenseForm, endMonth: e.target.value })} className={inputClasses}>
+                                            {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
+                                                <option key={i} value={i + 1}>{m}</option>
+                                            ))}
+                                        </select>
+                                        <select value={expenseForm.endYear} onChange={e => setExpenseForm({ ...expenseForm, endYear: e.target.value })} className={inputClasses}>
+                                            <option value="2024">2024</option>
+                                            <option value="2025">2025</option>
+                                            <option value="2026">2026</option>
+                                            <option value="2027">2027</option>
+                                        </select>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-[var(--text-muted)]">Sin fecha de término — sigue apareciendo todos los meses hasta que lo edites o elimines.</p>
+                                )}
+                            </div>
+                        )}
                         <div>
                             <label className="block text-sm font-bold text-[var(--text-primary)] mb-1">Notas (opcional)</label>
                             <textarea
