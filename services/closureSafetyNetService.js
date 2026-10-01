@@ -22,6 +22,7 @@ async function reconcileMissingClosures() {
              JOIN packages p ON p."driverId" = u.id AND p."assignedAt" >= $1 AND p."assignedAt" < $2
              WHERE u.role IN ('DRIVER', 'CONDUCTOR', 'CHOFER')
                AND u.status != 'ELIMINADO'
+               AND u.name NOT ILIKE '%bodega%'
                AND NOT EXISTS (
                    SELECT 1 FROM daily_closures dc WHERE dc."driverId" = u.id AND dc.date = $3
                )
