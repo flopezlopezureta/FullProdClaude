@@ -460,6 +460,14 @@ async function startServer() {
         require('./services/dataRetentionService').start(24 * 60 * 60 * 1000);
         console.log('Background Service: Data Retention anonymization scheduled (24h interval).');
 
+        // Red de seguridad para el cierre diario de conductores: el cierre normal depende de que la
+        // app del conductor siga viva un instante después de su última entrega, lo que no siempre
+        // pasa (cerrar/minimizar el teléfono apenas terminan es comportamiento normal, no un error
+        // del conductor). Este proceso completa cualquier cierre que haya quedado sin registrar,
+        // sin depender de nada del lado del conductor.
+        require('./services/closureSafetyNetService').start(10 * 60 * 1000);
+        console.log('Background Service: Closure Safety Net scheduled (10min interval).');
+
       } catch (initErr) {
         console.error('Failed to initialize database during startup:', initErr);
       }
