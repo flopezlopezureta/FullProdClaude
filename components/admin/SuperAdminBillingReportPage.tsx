@@ -37,6 +37,13 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
 
+    // Total facturado real (todos los clientes) para comparar contra los gastos en la pestaña
+    // de Gastos — independiente de cual cliente este seleccionado en la pestaña de Reporte por
+    // Cliente, para que no cambie segun lo que se haya estado revisando ahi.
+    const [goDeliveryClientId, setGoDeliveryClientId] = useState<string>('');
+    const [globalReportData, setGlobalReportData] = useState<any>(null);
+    const [isLoadingGlobalReport, setIsLoadingGlobalReport] = useState(false);
+
     const [activeTab, setActiveTab] = useState<'client' | 'expenses'>('client');
     const [expenses, setExpenses] = useState<any[]>([]);
     const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
@@ -211,6 +218,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                 );
                 if (goDelivery) {
                     setSelectedClientId(goDelivery.id);
+                    setGoDeliveryClientId(goDelivery.id);
                 }
             } catch (error) {
                 console.error("Failed to fetch clients", error);
@@ -300,6 +308,27 @@ const SuperAdminBillingReportPage: React.FC = () => {
     useEffect(() => {
         fetchReport();
     }, [selectedClientId, year, month]);
+
+    const fetchGlobalReport = async () => {
+        if (!goDeliveryClientId || !year || !month) return;
+        setIsLoadingGlobalReport(true);
+        try {
+            const response = await fetch(`/api/billing/superadmin-monthly-report?clientId=${goDeliveryClientId}&year=${year}&month=${month}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            setGlobalReportData(response.ok ? data : null);
+        } catch (error) {
+            console.error("Failed to fetch global monthly report", error);
+            setGlobalReportData(null);
+        } finally {
+            setIsLoadingGlobalReport(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchGlobalReport();
+    }, [goDeliveryClientId, year, month]);
 
     const handleApplyUfOverride = () => {
         fetchReport();
@@ -457,6 +486,40 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 </div>
                                 <IconDollarSign className="w-10 h-10 text-indigo-200" />
                             </div>
+                        </div>
+
+                        {/* Facturado real (todos los clientes, via el cliente "Go Delivery Interno" que
+                            el backend trata como agregado global) vs. gastos del mismo período — para
+                            que Fabian vea aqui mismo cuanto le queda, sin tener que ir a la otra pestaña. */}
+                        <div className="mb-6 rounded-lg border border-[var(--border-primary)] overflow-hidden">
+                            <div className="bg-[var(--background-muted)] px-4 py-2 text-xs font-black text-[var(--text-muted)] uppercase tracking-wider">
+                                Rentabilidad Real del Período — Todos los Clientes
+                            </div>
+                            {isLoadingGlobalReport ? (
+                                <p className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando facturación total...</p>
+                            ) : !globalReportData ? (
+                                <p className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">No fue posible calcular el total facturado (no se encontró el cliente "Go Delivery Interno").</p>
+                            ) : (() => {
+                                const netoCombinadoGlobal = (globalReportData.summary.totalCostClpNet || 0) + (globalReportData.licenseBilling?.costClpNet || 0);
+                                const resultadoNetoGlobal = netoCombinadoGlobal - totalExpensesThisMonth;
+                                return (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[var(--border-primary)]">
+                                        <div className="bg-[var(--background-secondary)] p-4 text-center">
+                                            <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Total Facturado (Neto)</p>
+                                            <p className="text-xl font-black text-[var(--text-primary)] mt-1">{formatCLP(netoCombinadoGlobal)}</p>
+                                        </div>
+                                        <div className="bg-[var(--background-secondary)] p-4 text-center">
+                                            <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Gastos Full Envíos del Mes</p>
+                                            <p className="text-xl font-black text-rose-600 mt-1">− {formatCLP(totalExpensesThisMonth)}</p>
+                                        </div>
+                                        <div className={`p-4 text-center text-white ${resultadoNetoGlobal >= 0 ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                                            <p className="text-xs font-semibold uppercase tracking-wider opacity-90">Resultado Neto Estimado</p>
+                                            <p className="text-xl font-black mt-1">{formatCLP(resultadoNetoGlobal)}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                            <p className="px-4 py-2 text-[11px] text-[var(--text-muted)] bg-[var(--background-secondary)]">* "Total Facturado" suma los despachos netos de todos los clientes más el exceso de licencias SaaS del período, igual que en la pestaña Reporte por Cliente.</p>
                         </div>
 
                         {selectedMonthExpenses.length > 0 && (
@@ -1019,7 +1082,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 <span className="block text-2xl font-black mt-1">{formatCLP((reportData.summary.totalCostClpNet || 0) + licenseCostClpNet - totalExpensesThisMonth)}</span>
                             </div>
                         </div>
-                        <p className="text-[11px] text-[var(--text-muted)] mt-3">* Los gastos de Full Envíos son del proyecto completo, no exclusivos de este cliente — se muestran acá como referencia rápida de rentabilidad, usando el neto combinado de este cliente como aproximación de ingreso del período.</p>
+                        <p className="text-[11px] text-[var(--text-muted)] mt-3">* Esto usa el neto combinado solo de <strong>{reportData.client.name}</strong> como aproximación — para el total real facturado a todos los clientes vs. los gastos, revisa la pestaña "Gastos de Full Envíos".</p>
                     </div>
                 </div>
             )}
