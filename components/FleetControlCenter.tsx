@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo, useRef } from 'react';
 import { api } from '../services/api';
 import { AuthContext } from '../contexts/AuthContext';
 import { getLocalDateString } from '../utils/dateUtils';
@@ -11,6 +11,11 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
+import {
+  downloadChronometryPoster, CLOSURE_PROFILE_LABELS, PROFILE_STYLES, paceColor,
+  type ClosureProfile, type PosterRow
+} from '../utils/chronometryPoster';
+import DriverPerformanceStatsPanel from './admin/DriverPerformanceStatsPanel';
 
 const CLOSURE_STATUS_STYLES: { [key: string]: string } = {
   ENTREGADO: 'bg-emerald-100 text-emerald-700',
@@ -30,11 +35,26 @@ const getSortPriority = (status: string) => {
   return 2;
 };
 
-type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA';
+type ControlViewMode = 'CLOSURES' | 'CADENCE' | 'CHRONOMETRY' | 'SLA' | 'PERFORMANCE';
+
+// Orden de la pestaña Cronometría. "Tiempo por entrega" = minutos promedio entre una entrega y la
+// siguiente; "demora de cierre" = minutos entre el cierre detectado de Mercado Libre y el cierre
+// en la app (ver services/driverMetrics.js).
+type ChronoSort = 'START' | 'BEST_PACE' | 'WORST_PACE' | 'WORST_CLOSE' | 'BEST_CLOSE';
+const CHRONO_SORT_LABELS: Record<ChronoSort, string> = {
+  START: 'Hora de inicio (orden original)',
+  BEST_PACE: 'Mejor tiempo por entrega',
+  WORST_PACE: 'Peor tiempo por entrega',
+  WORST_CLOSE: 'Mayor demora de cierre en la app (vs ML)',
+  BEST_CLOSE: 'Menor demora de cierre en la app (vs ML)',
+};
+const MIN_ML_FOR_CLOSE_RANKING = 5;
 
 export const FleetControlCenter: React.FC = () => {
   const auth = useContext(AuthContext);
   const tz = auth?.systemSettings?.timezone || 'America/Santiago';
+  // El informe de rendimiento evalúa conductores uno a uno: solo para administradores (el backend también lo exige).
+  const isAdmin = String(auth?.user?.role || '').toUpperCase() === 'ADMIN';
 
   const [selectedDate, setSelectedDate] = useState<string>(getLocalDateString());
   const [viewMode, setViewMode] = useState<ControlViewMode>('CLOSURES');
@@ -45,7 +65,14 @@ export const FleetControlCenter: React.FC = () => {
     closures: any[];
     cadence: any[];
     chronometry: any[];
-  }>({ date: '', closures: [], cadence: [], chronometry: [] });
+    chronometryCommunes: { commune: string; count: number }[];
+  }>({ date: '', closures: [], cadence: [], chronometry: [], chronometryCommunes: [] });
+  const [chronoSort, setChronoSort] = useState<ChronoSort>('START');
+  const [selectedCommunes, setSelectedCommunes] = useState<string[]>([]);
+  const [isCommuneMenuOpen, setIsCommuneMenuOpen] = useState(false);
+  const [communeSearch, setCommuneSearch] = useState('');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const communeMenuRef = useRef<HTMLDivElement>(null);
   const [notifyingDriverId, setNotifyingDriverId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('ALL');
@@ -106,7 +133,8 @@ export const FleetControlCenter: React.FC = () => {
     const dateToFetch = targetDate || selectedDate;
     try {
       setIsLoading(true);
-      const res = await api.getFleetControlCenter(dateToFetch);
+      // El filtro de comunas solo acota el ritmo de la pestaña Cronometría; las otras vistas lo ignoran.
+      const res = await api.getFleetControlCenter(dateToFetch, selectedCommunes);
       setData(res);
     } catch (err) {
       console.error('Error fetching fleet control center:', err);
@@ -119,7 +147,16 @@ export const FleetControlCenter: React.FC = () => {
     fetchData(selectedDate);
     const interval = setInterval(() => fetchData(selectedDate), 20000); // Refresh every 20s
     return () => clearInterval(interval);
-  }, [selectedDate]);
+  }, [selectedDate, selectedCommunes.join('|')]);
+
+  // Cierra el selector de comunas al hacer clic fuera.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (communeMenuRef.current && !communeMenuRef.current.contains(e.target as Node)) setIsCommuneMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
 
   const handleNotifyClosure = async (driverId: string, driverName: string) => {
     try {
@@ -141,6 +178,76 @@ export const FleetControlCenter: React.FC = () => {
   const totalDrivers = filteredClosures.length;
   const closedInAppCount = filteredClosures.filter(c => c.hasClosedInApp).length;
   const pendingClosureCount = filteredClosures.filter(c => !c.hasClosedInApp && c.totalPackages > 0).length;
+
+  // Ordena la cronometría y asigna posición solo a quienes son comparables: para "tiempo por
+  // entrega" se excluye a quien cierra todo junto al final del día (su hora en la app no es la hora
+  // real de entrega: saldría como el más rápido) y a quien tiene muy pocas entregas.
+  const sortedChronometry = useMemo(() => {
+    const rows = filteredChronometry.map((c: any) => ({ ...c, position: null as number | null }));
+    if (chronoSort === 'START') return rows;
+    const isPace = chronoSort === 'BEST_PACE' || chronoSort === 'WORST_PACE';
+    const eligible = (c: any) => isPace
+      ? c.paceReliable && c.avgMinutesPerDelivery != null
+      : c.mlCount >= MIN_ML_FOR_CLOSE_RANKING && c.avgMlDelayMin != null;
+    const ranked = rows.filter(eligible);
+    const rest = rows.filter((c: any) => !eligible(c));
+    ranked.sort((a: any, b: any) => {
+      if (isPace) {
+        return chronoSort === 'BEST_PACE'
+          ? a.avgMinutesPerDelivery - b.avgMinutesPerDelivery
+          : b.avgMinutesPerDelivery - a.avgMinutesPerDelivery;
+      }
+      const dir = chronoSort === 'WORST_CLOSE' ? -1 : 1;
+      return dir * (a.avgMlDelayMin - b.avgMlDelayMin) || dir * ((a.lateShare ?? 0) - (b.lateShare ?? 0)) || b.mlCount - a.mlCount;
+    });
+    ranked.forEach((c: any, i: number) => { c.position = i + 1; });
+    return [...ranked, ...rest];
+  }, [filteredChronometry, chronoSort]);
+
+  const hasRanking = chronoSort !== 'START';
+  const communesLabel = selectedCommunes.length === 0 ? 'Todas las comunas' : selectedCommunes.join(', ');
+
+  const handleDownloadChronoPdf = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      const rows: PosterRow[] = sortedChronometry.map((c: any) => ({
+        position: c.position,
+        driverName: c.driverName,
+        firstActivity: c.firstActivity,
+        lastActivity: c.lastActivity,
+        totalHoursActive: c.totalHoursActive != null ? Number(c.totalHoursActive) : null,
+        deliveredCount: c.deliveredCount,
+        avgMinutesPerDelivery: c.avgMinutesPerDelivery != null ? Number(c.avgMinutesPerDelivery) : null,
+        paceReliable: !!c.paceReliable,
+        mlCount: c.mlCount,
+        avgMlDelayMin: c.avgMlDelayMin,
+        lateShare: c.lateShare,
+        closureProfile: c.closureProfile as ClosureProfile,
+        burstNote: c.closureProfile === 'END_OF_DAY' && c.maxBurst ? `${c.maxBurst} cierres en 10 min hacia las ${c.burstAt}` : undefined,
+      }));
+      const longDate = new Date(`${selectedDate}T12:00:00`).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      const dateLabel = longDate.charAt(0).toUpperCase() + longDate.slice(1);
+      const communeSlug = selectedCommunes.length ? `_${selectedCommunes.join('-').replace(/\s+/g, '').slice(0, 40)}` : '';
+      await downloadChronometryPoster({
+        dateLabel,
+        communesLabel,
+        sortLabel: `Orden: ${CHRONO_SORT_LABELS[chronoSort]}`,
+        rows,
+        hasRanking,
+        medals: chronoSort === 'BEST_PACE',
+        generatedAt: new Date().toLocaleString('es-CL', { timeZone: tz }),
+        fileName: `Cronometria_Jornada_${selectedDate}${communeSlug}.pdf`,
+      });
+    } catch (err: any) {
+      alert(err?.message || 'No se pudo generar el PDF.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const filteredCommuneOptions = data.chronometryCommunes.filter(o => o.commune.toLowerCase().includes(communeSearch.trim().toLowerCase()));
+  const toggleCommune = (name: string) =>
+    setSelectedCommunes(prev => prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name]);
 
   return (
     <div className="mb-6 overflow-hidden bg-white border border-slate-200 rounded-2xl shadow-sm transition-all hover:shadow-md">
@@ -229,8 +336,21 @@ export const FleetControlCenter: React.FC = () => {
               >
                 📊 4. SLA & Rendimiento
               </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setViewMode('PERFORMANCE')}
+                  className={`px-4 py-2 text-xs font-black rounded-lg transition-all uppercase tracking-wider ${
+                    viewMode === 'PERFORMANCE'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  📈 5. Informe de Rendimiento
+                </button>
+              )}
             </div>
 
+            {viewMode !== 'PERFORMANCE' && (
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
                 <span className="text-[10px] font-black text-slate-500 uppercase">📅 Fecha:</span>
@@ -262,7 +382,11 @@ export const FleetControlCenter: React.FC = () => {
                 <span className="text-emerald-700">Cerraron: {closedInAppCount}</span>
               </div>
             </div>
+            )}
           </div>
+
+          {/* VISTA 5: INFORME DE RENDIMIENTO POR CONDUCTOR (solo administradores) */}
+          {viewMode === 'PERFORMANCE' && isAdmin && <DriverPerformanceStatsPanel />}
 
           {/* VISTA 1: AUDITORÍA DE CIERRES */}
           {viewMode === 'CLOSURES' && (
@@ -411,9 +535,9 @@ export const FleetControlCenter: React.FC = () => {
                       />
                       <Bar dataKey="avgMinutesBetweenDeliveries" name="Minutos Promedio" radius={[6, 6, 0, 0]}>
                         {filteredCadence.map((entry, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            fill={entry.avgMinutesBetweenDeliveries > 30 ? '#ef4444' : entry.avgMinutesBetweenDeliveries > 18 ? '#f59e0b' : '#10b981'} 
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={entry.closureProfile === 'END_OF_DAY' ? '#94a3b8' : entry.avgMinutesBetweenDeliveries > 30 ? '#ef4444' : entry.avgMinutesBetweenDeliveries > 18 ? '#f59e0b' : '#10b981'}
                           />
                         ))}
                       </Bar>
@@ -445,10 +569,19 @@ export const FleetControlCenter: React.FC = () => {
                         <tr key={c.driverId} className="hover:bg-slate-50 transition-colors">
                           <td className="px-5 py-3 font-bold text-slate-900 uppercase">{c.driverName}</td>
                           <td className="px-5 py-3 text-center font-bold text-slate-700">{c.deliveredCount} entregas</td>
-                          <td className="px-5 py-3 text-center font-black text-indigo-700">{c.avgMinutesBetweenDeliveries} min/paquete</td>
+                          <td className={`px-5 py-3 text-center font-black ${c.closureProfile === 'END_OF_DAY' ? 'text-slate-400' : 'text-indigo-700'}`}>
+                            {c.avgMinutesBetweenDeliveries} min/paquete
+                          </td>
                           <td className="px-5 py-3 text-center font-bold text-slate-600">{c.maxMinutesGap} min</td>
                           <td className="px-5 py-3 text-right">
-                            {c.idleAlertsCount > 0 ? (
+                            {c.closureProfile === 'END_OF_DAY' ? (
+                              <span
+                                className="px-2.5 py-1 text-[10px] font-black bg-slate-100 text-slate-600 rounded-md uppercase"
+                                title="Cerró todas sus entregas juntas al final del día: la hora de la app no es la hora real de entrega, así que este ritmo no es comparable."
+                              >
+                                ⚠ Cierre masivo · ritmo no medible
+                              </span>
+                            ) : c.idleAlertsCount > 0 ? (
                               <span className="px-2.5 py-1 text-[10px] font-black bg-red-100 text-red-700 rounded-md uppercase">
                                 🚨 {c.idleAlertsCount} paradas largas
                               </span>
@@ -470,37 +603,168 @@ export const FleetControlCenter: React.FC = () => {
           {/* VISTA 3: CRONOMETRÍA DE JORNADA */}
           {viewMode === 'CHRONOMETRY' && (
             <div className="space-y-4">
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+              {/* Controles: orden, comunas y descarga del PDF para el mural */}
+              <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                  <span className="text-[10px] font-black text-slate-500 uppercase">↕ Ordenar:</span>
+                  <select
+                    value={chronoSort}
+                    onChange={(e) => setChronoSort(e.target.value as ChronoSort)}
+                    className="bg-transparent text-xs font-bold text-slate-900 border-none outline-none focus:ring-0 cursor-pointer"
+                  >
+                    {(Object.keys(CHRONO_SORT_LABELS) as ChronoSort[]).map(k => (
+                      <option key={k} value={k}>{CHRONO_SORT_LABELS[k]}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="relative" ref={communeMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsCommuneMenuOpen(o => !o)}
+                    className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-900 hover:bg-slate-200 max-w-[320px]"
+                  >
+                    <span className="text-[10px] font-black text-slate-500 uppercase">📍 Comunas:</span>
+                    <span className="truncate">
+                      {selectedCommunes.length === 0 ? 'Todas' : selectedCommunes.length <= 2 ? selectedCommunes.join(', ') : `${selectedCommunes.length} seleccionadas`}
+                    </span>
+                    <IconChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                  </button>
+                  {isCommuneMenuOpen && (
+                    <div className="absolute z-30 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-xl p-2">
+                      <input
+                        type="text"
+                        value={communeSearch}
+                        onChange={(e) => setCommuneSearch(e.target.value)}
+                        placeholder="Buscar comuna..."
+                        className="w-full px-3 py-1.5 mb-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                      />
+                      <div className="flex items-center justify-between px-1 pb-1.5 text-[10px] font-black uppercase text-slate-500">
+                        <button type="button" onClick={() => setSelectedCommunes([])} className="text-indigo-600 hover:underline">Todas las comunas</button>
+                        <span>{selectedCommunes.length} seleccionada{selectedCommunes.length === 1 ? '' : 's'}</span>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto">
+                        {filteredCommuneOptions.length === 0 ? (
+                          <p className="px-2 py-3 text-xs text-slate-400 text-center">Sin comunas con entregas ese día</p>
+                        ) : filteredCommuneOptions.map(o => (
+                          <label key={o.commune} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs font-bold text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={selectedCommunes.includes(o.commune)}
+                              onChange={() => toggleCommune(o.commune)}
+                              className="h-3.5 w-3.5 rounded"
+                            />
+                            <span className="flex-1 truncate">{o.commune}</span>
+                            <span className="text-[10px] font-black text-slate-400">{o.count}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadChronoPdf}
+                  disabled={isGeneratingPdf || sortedChronometry.length === 0}
+                  title="Descarga en PDF lo que ves en pantalla (orden, comunas y conductor seleccionados)"
+                  className="ml-auto flex items-center gap-2 px-4 py-2 text-xs font-black text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 disabled:opacity-50 uppercase tracking-wider"
+                >
+                  {isGeneratingPdf ? 'Generando PDF...' : '⬇ Descargar PDF'}
+                </button>
+              </div>
+
+              {(hasRanking || selectedCommunes.length > 0) && (
+                <p className="text-[11px] font-bold text-slate-500 px-1">
+                  {selectedCommunes.length > 0 && <>El filtro por comuna acota el ritmo de entrega (primera/última entrega, horas, entregas y min por entrega a esas comunas); el cierre vs Mercado Libre se evalúa con toda la jornada del conductor. </>}
+                  {hasRanking && <>Solo reciben posición quienes son comparables: con al menos 3 entregas{chronoSort.endsWith('CLOSE') ? ' con cierre en Mercado Libre (mín. 5)' : ' y que cierran sus entregas en el momento (quien cierra todo junto al final del día no tiene hora real de entrega)'}.</>}
+                </p>
+              )}
+
+              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-sm">
                 <table className="w-full text-left">
                   <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider">
                     <tr>
-                      <th className="px-5 py-3">Conductor</th>
-                      <th className="px-5 py-3 text-center">Hora Primera Entrega (Inicio)</th>
-                      <th className="px-5 py-3 text-center">Hora Última Entrega (Fin)</th>
-                      <th className="px-5 py-3 text-center">Horas en Ruta Activa</th>
-                      <th className="px-5 py-3 text-right">Entregas Totales</th>
+                      {hasRanking && <th className="px-3 py-3 text-center">#</th>}
+                      <th className="px-4 py-3">Conductor</th>
+                      <th className="px-3 py-3 text-center">Primera entrega</th>
+                      <th className="px-3 py-3 text-center">Última entrega</th>
+                      <th className="px-3 py-3 text-center">Horas en ruta</th>
+                      <th className="px-3 py-3 text-center">Entregas</th>
+                      <th className="px-3 py-3 text-center" title="Minutos promedio entre una entrega y la siguiente">Min / entrega</th>
+                      <th className="px-3 py-3 text-center" title="Entregas con cierre detectado en Mercado Libre">Entregas ML</th>
+                      <th className="px-3 py-3 text-center" title="Minutos entre el cierre detectado de ML y el cierre en la app (mínimo garantizado)">Demora cierre app</th>
+                      <th className="px-3 py-3 text-center" title="Entregas cerradas en la app más de 30 min después de ML">Cierres tardíos</th>
+                      <th className="px-4 py-3">Perfil de cierre</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {filteredChronometry.length === 0 ? (
+                    {sortedChronometry.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-5 py-6 text-center text-slate-400 font-bold uppercase">
+                        <td colSpan={hasRanking ? 11 : 10} className="px-5 py-6 text-center text-slate-400 font-bold uppercase">
                           No hay registros de jornada para el día seleccionado
                         </td>
                       </tr>
                     ) : (
-                      filteredChronometry.map((chrono) => {
-                        // firstActivity/lastActivity now arrive pre-formatted as "HH:MM" (system timezone) from the backend, or null if the driver has no deliveries yet.
+                      sortedChronometry.map((chrono: any) => {
+                        // firstActivity/lastActivity llegan ya formateadas "HH:MM" (zona horaria del sistema) desde el backend.
                         const first = chrono.firstActivity || '--:--';
                         const last = chrono.lastActivity || '--:--';
                         const hours = chrono.totalHoursActive != null ? `${chrono.totalHoursActive} hrs` : '--';
+                        const profile = chrono.closureProfile as ClosureProfile;
+                        const ps = PROFILE_STYLES[profile];
+                        const paceOk = chrono.paceReliable && chrono.avgMinutesPerDelivery != null;
                         return (
                           <tr key={chrono.driverId} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-5 py-3 font-bold text-slate-900 uppercase">{chrono.driverName}</td>
-                            <td className="px-5 py-3 text-center font-bold text-emerald-700">{first}</td>
-                            <td className="px-5 py-3 text-center font-bold text-blue-700">{last}</td>
-                            <td className="px-5 py-3 text-center font-black text-slate-800">{hours}</td>
-                            <td className="px-5 py-3 text-right font-black text-slate-900">{chrono.deliveredCount} entregas</td>
+                            {hasRanking && (
+                              <td className="px-3 py-3 text-center">
+                                {chrono.position != null ? (
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-black text-white ${
+                                    chronoSort === 'BEST_PACE' && chrono.position === 1 ? 'bg-amber-500'
+                                    : chronoSort === 'BEST_PACE' && chrono.position === 2 ? 'bg-slate-400'
+                                    : chronoSort === 'BEST_PACE' && chrono.position === 3 ? 'bg-amber-700'
+                                    : 'bg-slate-800'
+                                  }`}>{chrono.position}</span>
+                                ) : <span className="text-slate-300">·</span>}
+                              </td>
+                            )}
+                            <td className="px-4 py-3 font-bold text-slate-900 uppercase whitespace-nowrap">{chrono.driverName}</td>
+                            <td className="px-3 py-3 text-center font-bold text-emerald-700">{first}</td>
+                            <td className="px-3 py-3 text-center font-bold text-blue-700">{last}</td>
+                            <td className="px-3 py-3 text-center font-black text-slate-800">{hours}</td>
+                            <td className="px-3 py-3 text-center font-black text-slate-900">
+                              {chrono.deliveredCount}
+                              {chrono.totalDeliveredDay !== chrono.deliveredCount && (
+                                <span className="block text-[9px] font-bold text-slate-400">de {chrono.totalDeliveredDay} del día</span>
+                              )}
+                            </td>
+                            <td
+                              className="px-3 py-3 text-center font-black"
+                              style={{ color: paceOk ? paceColor(Number(chrono.avgMinutesPerDelivery)) : '#94a3b8' }}
+                              title={paceOk ? undefined : 'No comparable: muy pocas entregas, o cerró todas sus entregas juntas al final del día (la hora de la app no es la hora real de entrega)'}
+                            >
+                              {paceOk ? Number(chrono.avgMinutesPerDelivery).toFixed(1) : '—'}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold text-slate-600">{chrono.mlCount || '—'}</td>
+                            <td className="px-3 py-3 text-center font-bold text-slate-800">
+                              {chrono.mlCount > 0 && chrono.avgMlDelayMin != null ? `${chrono.avgMlDelayMin} min` : '—'}
+                              {chrono.maxMlDelayMin > 30 && <span className="block text-[9px] font-bold text-red-500">máx. {chrono.maxMlDelayMin} min</span>}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold text-slate-800">
+                              {chrono.lateShare != null ? `${Math.round(chrono.lateShare * 100)}%` : '—'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className="inline-block px-2.5 py-1 text-[10px] font-black rounded-full whitespace-nowrap"
+                                style={{ background: ps.bg, color: ps.fg }}
+                                title={profile === 'END_OF_DAY' && chrono.maxBurst ? `${chrono.maxBurst} cierres en la app en 10 min, hacia las ${chrono.burstAt}` : undefined}
+                              >
+                                {CLOSURE_PROFILE_LABELS[profile]}
+                              </span>
+                              {profile === 'END_OF_DAY' && chrono.maxBurst > 0 && (
+                                <span className="block text-[9px] font-bold text-red-600 mt-0.5">{chrono.maxBurst} cierres en 10 min · {chrono.burstAt}</span>
+                              )}
+                            </td>
                           </tr>
                         );
                       })
@@ -508,6 +772,9 @@ export const FleetControlCenter: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              <p className="text-[10px] font-bold text-slate-400 px-1">
+                Min / entrega = minutos promedio entre una entrega y la siguiente, con la hora real en que el conductor cierra cada entrega en la app. Demora de cierre = minutos entre el cierre detectado de Mercado Libre y el cierre en la app; la hora de ML es la de detección del sistema, por lo que la demora real es igual o mayor.
+              </p>
             </div>
           )}
 

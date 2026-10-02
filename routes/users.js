@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const timeService = require('../services/timeService');
+const driverMetrics = require('../services/driverMetrics');
+const driverPerformanceReport = require('../services/driverPerformanceReport');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -535,72 +537,59 @@ router.get('/fleet-control-center', authMiddleware, adminOrRetirosOnly, async (r
             ORDER BY "deliveryRate" DESC, "pending" DESC, u.name ASC
         `;
 
-        // 2. Cadencia y Tiempos entre Entregas
-        const cadenceQuery = `
-            WITH delivery_times AS (
-                SELECT 
-                    p."driverId",
-                    p."updatedAt",
-                    LAG(p."updatedAt") OVER (PARTITION BY p."driverId" ORDER BY p."updatedAt") as prev_delivery
-                FROM packages p
-                WHERE p.status = 'ENTREGADO'
-                AND p."updatedAt" >= $1 AND p."updatedAt" <= $2
-            )
-            SELECT 
-                u.id as "driverId",
-                u.name as "driverName",
-                COUNT(dt."updatedAt")::int as "deliveredCount",
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60)::numeric, 1), 0) as "avgMinutesBetweenDeliveries",
-                COALESCE(MAX(ROUND(EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60)::numeric), 0) as "maxMinutesGap",
-                COALESCE(COUNT(dt."updatedAt") FILTER (WHERE EXTRACT(EPOCH FROM (dt."updatedAt" - dt.prev_delivery))/60 > 45), 0)::int as "idleAlertsCount"
-            FROM users u
-            LEFT JOIN delivery_times dt ON u.id = dt."driverId" AND dt.prev_delivery IS NOT NULL
-            WHERE u.role = 'DRIVER'
-            GROUP BY u.id, u.name
-            HAVING COUNT(dt."updatedAt") > 0
-            ORDER BY "avgMinutesBetweenDeliveries" ASC
-        `;
+        // 2. Cadencia (pestaña 2) y 3. Cronometría de Jornada (pestaña 3)
+        // Se calculan en services/driverMetrics.js a partir de la hora REAL de cada entrega (evento
+        // ENTREGADO), no de packages."updatedAt": otros procesos vuelven a tocar el paquete después
+        // de entregado y eso inflaba la "última entrega" entre 7 y 27 minutos. Ahí mismo se cruza el
+        // cierre en la app con el cierre detectado de Mercado Libre (perfil de cierre por conductor).
+        // Las horas ya salen formateadas "HH:MM" en la zona horaria del sistema.
+        const communesFilter = String(req.query.communes || '')
+            .split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);
 
-        // 3. Cronometría de Jornada (Horarios de inicio, fin y duración)
-        // NOTE: firstActivity/lastActivity are computed only over packages with status = 'ENTREGADO'
-        // (the actual delivery timestamp), not any package touched today. Formatted server-side as
-        // 'HH24:MI' text in the system timezone to avoid the double "AT TIME ZONE" bug that produced
-        // 00:00:00 (packages."updatedAt" is timestamptz, so it only needs a single AT TIME ZONE
-        // conversion) and to avoid the browser re-interpreting the timestamp in its own locale/zone.
-        const chronometryQuery = `
-            SELECT
-                u.id as "driverId",
-                u.name as "driverName",
-                TO_CHAR((MIN(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) AT TIME ZONE $3, 'HH24:MI') as "firstActivity",
-                TO_CHAR((MAX(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) AT TIME ZONE $3, 'HH24:MI') as "lastActivity",
-                ROUND(EXTRACT(EPOCH FROM (
-                    (MAX(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO')) - (MIN(p."updatedAt") FILTER (WHERE p.status = 'ENTREGADO'))
-                ))/3600::numeric, 2) as "totalHoursActive",
-                COUNT(p.id) FILTER (WHERE p.status = 'ENTREGADO')::int as "deliveredCount"
-            FROM users u
-            JOIN packages p ON p."driverId" = u.id
-            WHERE u.role = 'DRIVER'
-            AND p."updatedAt" >= $1 AND p."updatedAt" <= $2
-            GROUP BY u.id, u.name
-            ORDER BY "firstActivity" ASC NULLS LAST
-        `;
-
-        const [closuresRes, cadenceRes, chronometryRes] = await Promise.all([
+        const [closuresRes, deliveries] = await Promise.all([
             db.query(closureQuery, [targetDate, start, nextDayStart]),
-            db.query(cadenceQuery, [start, nextDayStart]),
-            db.query(chronometryQuery, [start, nextDayStart, systemTZ])
+            driverMetrics.fetchDeliveries(start, nextDayStart, systemTZ)
         ]);
+        const views = driverMetrics.buildFleetDayViews(deliveries, { tz: systemTZ, communes: communesFilter });
 
         res.json({
             date: targetDate,
             closures: closuresRes.rows,
-            cadence: cadenceRes.rows,
-            chronometry: chronometryRes.rows
+            cadence: views.cadence,
+            chronometry: views.chronometry,
+            chronometryCommunes: views.communes
         });
 
     } catch (err) {
         console.error('Error fetching fleet control center data:', err);
         res.status(500).json({ message: 'Error al cargar el Centro de Control Multimodal.' });
+    }
+});
+
+// GET /api/users/driver-performance - Informe de rendimiento por conductor (uno, varios o todos)
+// Query: startDate, endDate (YYYY-MM-DD, días lógicos, inclusive; máx. 93 días), driverIds (coma-separados, vacío = todos).
+// Solo ADMIN: es una evaluación individual de conductores.
+router.get('/driver-performance', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+        const { startDate, endDate } = req.query;
+        if (!isoDate.test(String(startDate || '')) || !isoDate.test(String(endDate || ''))) {
+            return res.status(400).json({ message: 'Se requieren startDate y endDate con formato YYYY-MM-DD.' });
+        }
+        const dayCount = Math.round((new Date(`${endDate}T12:00:00Z`) - new Date(`${startDate}T12:00:00Z`)) / 86400000) + 1;
+        if (dayCount < 1) return res.status(400).json({ message: 'La fecha de inicio debe ser anterior o igual a la de término.' });
+        if (dayCount > 93) return res.status(400).json({ message: 'El período máximo del informe es de 93 días.' });
+
+        const driverIds = String(req.query.driverIds || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 300);
+        const tz = await timeService.getSystemTimezone();
+        const { start } = await timeService.getLogicalRange(startDate, startDate);
+        const { nextDayStart } = await timeService.getLogicalRange(endDate, endDate);
+
+        const report = await driverPerformanceReport.buildPerformanceReport({ startDate, endDate, start, end: nextDayStart, tz, driverIds });
+        res.json(report);
+    } catch (err) {
+        console.error('Error generating driver performance report:', err);
+        res.status(500).json({ message: 'Error al generar el informe de rendimiento.' });
     }
 });
 

@@ -13,6 +13,7 @@ import {
   Notification
 } from '../types';
 import { PackageStatus, ShippingType, Role } from '../constants';
+import type { PerformanceReport } from '../utils/performanceTypes';
 
 const API_URL = '/api';
 
@@ -483,12 +484,21 @@ export const api = {
   testWhatsapp: (phone: string, apikey: string) => post<{message: string}>('/settings/test-whatsapp', { phone, apikey }),
 
   // Fleet Control Center (Multimodal)
-  getFleetControlCenter: (date?: string) => get<{
-    date: string;
-    closures: any[];
-    cadence: any[];
-    chronometry: any[];
-  }>(`/users/fleet-control-center${date ? `?date=${date}` : ''}`),
+  getFleetControlCenter: (date?: string, communes?: string[]) => {
+    const params = new URLSearchParams();
+    if (date) params.set('date', date);
+    if (communes && communes.length) params.set('communes', communes.join(','));
+    const qs = params.toString();
+    return get<{
+      date: string;
+      closures: any[];
+      cadence: any[];
+      chronometry: any[];
+      chronometryCommunes: { commune: string; count: number }[];
+    }>(`/users/fleet-control-center${qs ? `?${qs}` : ''}`);
+  },
+  getDriverPerformance: (startDate: string, endDate: string, driverIds: string[]) =>
+    get<PerformanceReport>(`/users/driver-performance?startDate=${startDate}&endDate=${endDate}${driverIds.length ? `&driverIds=${encodeURIComponent(driverIds.join(','))}` : ''}`),
   notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
 
   // Cierre de Jornada del Conductor (Auditoría de Cierres del Centro de Control)
