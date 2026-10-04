@@ -4,6 +4,7 @@ import { DeliveryConfirmationData } from '../../services/api';
 import { IconX, IconUser, IconId, IconCamera, IconAlertTriangle, IconCheckCircle, IconPhoto } from '../Icon';
 import { AuthContext } from '../../contexts/AuthContext';
 import imageCompression from 'browser-image-compression';
+import { formatRut, rutErrorMessage } from '../../utils/rut';
 
 interface ReturnConfirmationModalProps {
   pkg: Package;
@@ -103,23 +104,6 @@ const CameraView: React.FC<{ onCapture: (dataUrl: string) => void, onCancel: () 
     );
 };
 
-const validateRut = (rutCompleto: string): boolean => {
-    rutCompleto = rutCompleto.replace(/\./g, '').replace('-', '');
-    if (!/^[0-9]+[0-9kK]{1}$/.test(rutCompleto)) return false;
-    const rut = rutCompleto.slice(0, -1);
-    const dv = rutCompleto.slice(-1).toUpperCase();
-    let suma = 0;
-    let multiplo = 2;
-    for (let i = rut.length - 1; i >= 0; i--) {
-        suma += parseInt(rut.charAt(i), 10) * multiplo;
-        multiplo = multiplo < 7 ? multiplo + 1 : 2;
-    }
-    const dvEsperado = 11 - (suma % 11);
-    const dvCalculado = (dvEsperado === 11) ? '0' : (dvEsperado === 10) ? 'K' : dvEsperado.toString();
-    return dv === dvCalculado;
-};
-
-
 const ReturnConfirmationModal: React.FC<ReturnConfirmationModalProps> = ({ pkg, onClose, onConfirm }) => {
   const [receiverName, setReceiverName] = useState('');
   const [receiverId, setReceiverId] = useState('');
@@ -127,7 +111,7 @@ const ReturnConfirmationModal: React.FC<ReturnConfirmationModalProps> = ({ pkg, 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rutError, setRutError] = useState<string | null>(null);
+  const [rutFocused, setRutFocused] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [isRestored, setIsRestored] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -167,38 +151,15 @@ const ReturnConfirmationModal: React.FC<ReturnConfirmationModalProps> = ({ pkg, 
   const requiredPhotos = auth?.systemSettings.requiredPhotos || 1;
   const photosRemaining = requiredPhotos - photosBase64.length;
 
-  const formatRut = (rut: string) => {
-    rut = rut.replace(/[^0-9kK]/g, '');
-    let result = '';
-    let i = rut.length - 1;
-    if (i >= 0) {
-      result = '-' + rut[i];
-      i--;
-    }
-    let count = 0;
-    for (; i >= 0; i--) {
-      result = rut[i] + result;
-      count++;
-      if (count === 3 && i > 0) {
-        result = '.' + result;
-        count = 0;
-      }
-    }
-    return result.toUpperCase();
-  };
+  // La validez del RUT se calcula en cada render a partir de lo escrito, no solo al salir del campo
+  // (ver DeliveryConfirmationModal.tsx): un borrador restaurado o un "Confirmar" sin salir del campo
+  // no deben dejar pasar un RUT inválido. El mensaje no se muestra mientras se escribe un RUT incompleto.
+  const rutProblemText = rutErrorMessage(receiverId);
+  const rutDigitsTyped = receiverId.replace(/[^0-9kK]/g, '').length;
+  const rutError = rutProblemText && (!rutFocused || rutDigitsTyped >= 9) ? rutProblemText : null;
 
   const handleRutChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setReceiverId(formatRut(e.target.value));
-    if (rutError) setRutError(null);
-  };
-
-  const handleRutBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const rut = e.target.value;
-    if (rut.trim() !== '' && !validateRut(rut)) {
-        setRutError('El RUT ingresado no es válido.');
-    } else {
-        setRutError(null);
-    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -248,7 +209,7 @@ const ReturnConfirmationModal: React.FC<ReturnConfirmationModalProps> = ({ pkg, 
       setPhotosBase64(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
-  const isFormValid = receiverName.trim() !== '' && receiverId.trim() !== '' && photosBase64.length >= requiredPhotos && !rutError;
+  const isFormValid = receiverName.trim() !== '' && receiverId.trim() !== '' && photosBase64.length >= requiredPhotos && !rutProblemText;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -305,8 +266,9 @@ const ReturnConfirmationModal: React.FC<ReturnConfirmationModalProps> = ({ pkg, 
                         type="tel"
                         value={receiverId} 
                         onChange={handleRutChange}
-                        onBlur={handleRutBlur}
-                        placeholder="RUT de quien recibe" 
+                        onFocus={() => setRutFocused(true)}
+                        onBlur={() => setRutFocused(false)}
+                        placeholder="RUT de quien recibe"
                         required 
                         className={`w-full pl-10 pr-3 py-2 border rounded-md bg-[var(--background-secondary)] text-[var(--text-primary)] ${rutError ? 'border-red-500' : 'border-[var(--border-secondary)]'}`}
                         aria-invalid={!!rutError}

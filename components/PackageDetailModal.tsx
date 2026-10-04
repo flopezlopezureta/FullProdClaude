@@ -8,6 +8,7 @@ import { AuthContext } from '../contexts/AuthContext';
 import { IconX, IconCalendar, IconMapPin, IconPhone, IconWhatsapp, IconAlertTriangle, IconCheckCircle, IconSun, IconZap, IconMoon, IconQrcode, IconChevronLeft, IconTruck, IconArrowUturnLeft, IconRefresh, IconCopy, IconPencil, IconClock, IconHistory, IconPlus, IconPhoto, IconTrash } from './Icon';
 import QRCodeModal from './client/QRCodeModal';
 import imageCompression from 'browser-image-compression';
+import { formatRut, rutErrorMessage } from '../utils/rut';
 
 interface PackageDetailModalProps {
   pkg: Package;
@@ -99,6 +100,12 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
     }
     if (!adminReceiverName.trim()) {
         alert("El nombre del receptor es obligatorio.");
+        return;
+    }
+    // El RUT es opcional en el cierre administrativo, pero si se escribe tiene que ser un RUT chileno válido.
+    const adminRutError = rutErrorMessage(adminReceiverId);
+    if (adminRutError) {
+        alert(adminRutError);
         return;
     }
 
@@ -604,10 +611,14 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
                             <input 
                                 type="text"
                                 value={adminReceiverId}
-                                onChange={(e) => setAdminReceiverId(e.target.value)}
+                                onChange={(e) => setAdminReceiverId(formatRut(e.target.value))}
                                 placeholder="12.345.678-k"
-                                className="w-full px-3 py-2 text-sm bg-white border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                                aria-invalid={!!rutErrorMessage(adminReceiverId)}
+                                className={`w-full px-3 py-2 text-sm bg-white border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none ${rutErrorMessage(adminReceiverId) && adminReceiverId.replace(/[^0-9kK]/g, '').length >= 9 ? 'border-red-500' : 'border-indigo-200'}`}
                             />
+                            {rutErrorMessage(adminReceiverId) && adminReceiverId.replace(/[^0-9kK]/g, '').length >= 9 && (
+                                <p className="text-xs text-red-600 mt-1 ml-1">{rutErrorMessage(adminReceiverId)}</p>
+                            )}
                         </div>
 
                         <div>

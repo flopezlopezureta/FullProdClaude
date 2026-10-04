@@ -13,6 +13,7 @@ const jumpsellerPollingService = require('../services/jumpsellerPollingService')
 const { geocodeAddress, triggerBackgroundGeocoding } = require('../services/geocodingService');
 const gisService = require('../services/gisService');
 const { buildSellerNameSql } = require('../services/falabellaDirectSellers');
+const rutValidator = require('../services/rutValidator');
 const falabellaDirectClientNameSql = `CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / ' || ${buildSellerNameSql()} ELSE u.name END as "clientName"`;
 
 // [EMERGENCIA] Ruta para normalizar todas las comunas y ciudades del historial
@@ -2126,8 +2127,22 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
             // deliveryProof.recipientId is empty or contains characters outside
             // ^[a-zA-Z0-9 _\-.]+$ (confirmed against their real API) — enforced here too, not
             // just in the UI, since this field is optional for every other source.
-            if (!receiverId || !/^[a-zA-Z0-9 _\-.]+$/.test(String(receiverId).trim())) {
-                return res.status(400).json({ message: 'Falabella Directo exige el RUT de quien recibe (solo letras, números, espacios, guiones y puntos) para confirmar la entrega.' });
+            if (!receiverId || !String(receiverId).trim()) {
+                return res.status(400).json({ message: 'Falabella Directo exige el RUT de quien recibe para confirmar la entrega.' });
+            }
+            // Además de venir escrito tiene que ser un RUT chileno real (módulo 11 + número plausible).
+            // Antes solo se miraban los caracteres, y entraron entregas con 00.000.000-0, 1-9,
+            // 11.111.111-1 e incluso un teléfono escrito como RUT: se las llevó Falabella tal cual.
+            // Un RUT válido solo trae dígitos, K, puntos, guion y espacios, así que también cumple
+            // el patrón ^[a-zA-Z0-9 _\-.]+$ que exige su API.
+            const rutIssue = rutValidator.rutProblem(receiverId);
+            if (rutIssue) {
+                const detail = rutIssue === 'IMPLAUSIBLE'
+                    ? 'Ese RUT no corresponde a una persona real. Pide a quien recibe su RUT verdadero.'
+                    : rutIssue === 'CHECK_DIGIT'
+                        ? 'El RUT ingresado no es válido: revisa los números y el dígito verificador (el que va después del guion).'
+                        : 'El RUT ingresado no es válido. Debe llevar el número completo y el dígito verificador después del guion.';
+                return res.status(400).json({ message: `Falabella Directo exige el RUT real de quien recibe. ${detail}` });
             }
             // Falabella Directo requires real GPS coordinates with delivery evidence — a driver
             // with no live-tracked location on file would otherwise silently send (0,0). Blocks
