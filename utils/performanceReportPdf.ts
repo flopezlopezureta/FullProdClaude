@@ -6,7 +6,7 @@ import { SOURCE_LABELS } from './performanceTypes';
 import { renderPagesToPdf, esc } from './pdfPages';
 import {
   C, PROFILE_COLORS, dailyChartConfig, hourlyChartConfig, statusChartConfig, paceChartConfig,
-  closureChartConfig, horizontalBarConfig, driversBarConfig, chartToDataUrl,
+  closureChartConfig, horizontalBarConfig, driversBarConfig, chartToDataUrl, rateAxisMin,
 } from './performanceCharts';
 import { CLOSURE_PROFILE_LABELS, PROFILE_STYLES } from './chronometryPoster';
 
@@ -234,38 +234,51 @@ const topList = (title: string, items: { name: string; value: string; tone?: Ton
     ? items.map((it, i) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;padding:2.5px 0;border-bottom:1px dashed #e2e8f0"><span><b style="color:#94a3b8;margin-right:5px">${i + 1}.</b>${esc(it.name)}</span><b style="color:${it.tone ? TONE_COLOR[it.tone] : '#0f172a'}">${it.value}</b></div>`).join('')
     : `<div style="font-size:11px;color:#94a3b8">${empty}</div>`, 'flex:1');
 
-function comparativePages(r: PerformanceReport, drivers: DriverPerformance[]): { title: string; build: () => string }[] {
+const noData = (h: number) => `<div style="height:${h}px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#94a3b8;text-align:center;padding:0 24px">Sin datos suficientes en el período para este gráfico</div>`;
+
+/**
+ * Páginas comparativas. `drivers` es el conjunto que se muestra (toda la flota, o la selección que se
+ * eligió en pantalla); los promedios y totales de las tarjetas siguen siendo los de TODA la flota del
+ * informe, y por eso se rotulan "flota" cuando el conjunto es una selección.
+ */
+function comparativePages(r: PerformanceReport, drivers: DriverPerformance[], selectionNote?: string): { title: string; build: () => string }[] {
   const f = r.fleet.averages;
   const ft = r.fleet.totals;
   const title = 'Comparativa de conductores';
+  const isSubset = drivers.length !== r.drivers.length;
+  const fl = (label: string) => (isSubset ? `${label} · flota` : label);
   const withDel = drivers.filter(d => d.totals.assigned >= 5);
+  // En un informe de un solo día no existen "2 días comparables": con un mínimo fijo de 2 el gráfico de
+  // ritmo salía vacío para cualquier período corto.
+  const minPaceDays = Math.min(2, Math.max(1, r.period.days));
 
   const cover = () => `
-    ${band('Informe comparativo · Flota', 'Rendimiento de conductores', periodText(r), `${drivers.length} conductor${drivers.length === 1 ? '' : 'es'} · ${r.period.days} días`)}
+    ${band(isSubset ? 'Informe comparativo · Selección' : 'Informe comparativo · Flota', 'Rendimiento de conductores', periodText(r), isSubset ? `${drivers.length} de ${r.drivers.length} conductores · ${r.period.days} día${r.period.days === 1 ? '' : 's'}` : `${drivers.length} conductor${drivers.length === 1 ? '' : 'es'} · ${r.period.days} día${r.period.days === 1 ? '' : 's'}`)}
+    ${isSubset && selectionNote ? `<div style="margin-top:8px;padding:5px 12px;border-radius:8px;background:#eef2ff;border:1px solid #c7d2fe;font-size:11px;font-weight:800;color:#3730a3">Criterio de selección: ${esc(selectionNote)}</div>` : ''}
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
-      ${kpi('Conductores', n0(drivers.length), `${r.period.days} días de período`)}
-      ${kpi('Paquetes asignados', n0(ft.assigned), `${n0(ft.delivered)} entregados`)}
+      ${kpi(isSubset ? 'Conductores seleccionados' : 'Conductores', isSubset ? `${n0(drivers.length)} de ${n0(r.drivers.length)}` : n0(drivers.length), `${r.period.days} día${r.period.days === 1 ? '' : 's'} de período`)}
+      ${kpi(fl('Paquetes asignados'), n0(ft.assigned), `${n0(ft.delivered)} entregados`)}
       ${kpi('Efectividad de la flota', pctTxt(f.deliveryRate), `${n0(ft.pending)} pendientes · ${n0(ft.cancelled)} cancelados`)}
-      ${kpi('Incidencias', pctTxt(f.incidentRate), `${n0(ft.problemPackages)} paquetes con problema`)}
-      ${kpi('Min por entrega (prom.)', n1(f.avgMinutesPerDelivery), `${n1(f.avgHoursActive, 2)} hrs en ruta por día`)}
-      ${kpi('Entregas por día (prom.)', n1(f.avgDeliveriesPerDay), 'Por conductor')}
-      ${kpi('Demora cierre en app', f.avgMlDelayMin == null ? '—' : `${n0(f.avgMlDelayMin)} min`, `Sobre ${n0(ft.mlDeliveries)} entregas de ML`)}
-      ${kpi('Cierres tardíos', share(f.lateShare), `Más de ${r.meta.lateCloseMinutes} min después de ML`)}
+      ${kpi(fl('Incidencias'), pctTxt(f.incidentRate), `${n0(ft.problemPackages)} paquetes con problema`)}
+      ${kpi(fl('Min por entrega (prom.)'), n1(f.avgMinutesPerDelivery), `${n1(f.avgHoursActive, 2)} hrs en ruta por día`)}
+      ${kpi(fl('Entregas por día (prom.)'), n1(f.avgDeliveriesPerDay), 'Por conductor')}
+      ${kpi(fl('Demora cierre en app'), f.avgMlDelayMin == null ? '—' : `${n0(f.avgMlDelayMin)} min`, `Sobre ${n0(ft.mlDeliveries)} entregas de ML`)}
+      ${kpi(fl('Cierres tardíos'), share(f.lateShare), `Más de ${r.meta.lateCloseMinutes} min después de ML`)}
     </div>
     <div style="display:flex;gap:12px;margin-top:12px">
-      ${box('Entregados por conductor', img(chartToDataUrl(driversBarConfig(drivers, d => d.totals.delivered, 'Entregados', C.indigo), 520, 330), 520, 330), 'flex:1')}
-      ${box('% de efectividad por conductor', img(chartToDataUrl(driversBarConfig(withDel, d => d.totals.deliveryRate, '% Efectividad', C.emerald, { min: 90, max: 100, suffix: '%' }), 520, 330), 520, 330), 'flex:1')}
+      ${box('Entregados por conductor', drivers.length ? img(chartToDataUrl(driversBarConfig(drivers, d => d.totals.delivered, 'Entregados', C.indigo), 520, 330), 520, 330) : noData(330), 'flex:1')}
+      ${box('% de efectividad por conductor', withDel.length ? img(chartToDataUrl(driversBarConfig(withDel, d => d.totals.deliveryRate, '% Efectividad', C.emerald, { min: rateAxisMin(withDel.map(d => d.totals.deliveryRate)), max: 100, suffix: '%' }), 520, 330), 520, 330) : noData(330), 'flex:1')}
     </div>`;
 
   const lists = () => {
-    const paced = drivers.filter(d => d.pace.avgMinutesPerDelivery != null && d.pace.reliableDays >= 2);
+    const paced = drivers.filter(d => d.pace.avgMinutesPerDelivery != null && d.pace.reliableDays >= minPaceDays);
     const closers = drivers.filter(d => d.closure.mlDeliveries >= r.meta.minMlForProfile && d.closure.avgMlDelayMin != null);
     const bulk = drivers.filter(d => d.closure.daysEndOfDay > 0).sort((a, b) => b.closure.daysEndOfDay - a.closure.daysEndOfDay);
     return `
       ${strip(title, `${periodText(r)} · destacados`)}
       <div style="display:flex;gap:12px;margin-top:10px">
-        ${box('Min por entrega por conductor', img(chartToDataUrl(driversBarConfig(paced, d => d.pace.avgMinutesPerDelivery, 'Min por entrega', C.sky, { order: 'asc' }), 520, 300), 520, 300), 'flex:1')}
-        ${box('Demora de cierre en la app (min)', img(chartToDataUrl(driversBarConfig(closers, d => d.closure.avgMlDelayMin, 'Min de demora', C.amber), 520, 300), 520, 300), 'flex:1')}
+        ${box('Min por entrega por conductor', paced.length ? img(chartToDataUrl(driversBarConfig(paced, d => d.pace.avgMinutesPerDelivery, 'Min por entrega', C.sky, { order: 'asc' }), 520, 300), 520, 300) : noData(300), 'flex:1')}
+        ${box('Demora de cierre en la app (min)', closers.length ? img(chartToDataUrl(driversBarConfig(closers, d => d.closure.avgMlDelayMin, 'Min de demora', C.amber), 520, 300), 520, 300) : noData(300), 'flex:1')}
       </div>
       <div style="display:flex;gap:12px;margin-top:10px">
         ${topList('Mayor efectividad', [...withDel].sort((a, b) => (b.totals.deliveryRate ?? 0) - (a.totals.deliveryRate ?? 0) || b.totals.delivered - a.totals.delivered).slice(0, 5).map(d => ({ name: d.driverName, value: pctTxt(d.totals.deliveryRate), tone: 'good' as Tone })))}
@@ -332,6 +345,10 @@ export interface PerformancePdfOptions {
   drivers: DriverPerformance[];
   /** Antepone la comparativa de todos los conductores del informe (varios conductores). */
   comparative: boolean;
+  /** Si se indica, la comparativa muestra solo a estos conductores (la selección hecha en pantalla). */
+  comparativeDrivers?: DriverPerformance[];
+  /** Criterio de la selección, para rotularlo en la portada de la comparativa (ej. "Efectividad menor a 95%"). */
+  selectionNote?: string;
   /** Agrega el detalle diario de cada conductor (recomendado para un solo conductor). */
   includeDaily: boolean;
   generatedAt: string;
@@ -342,7 +359,7 @@ export interface PerformancePdfOptions {
 export async function downloadPerformancePdf(opts: PerformancePdfOptions): Promise<void> {
   const { report, drivers } = opts;
   const plan: { title: string; build: () => string }[] = [];
-  if (opts.comparative) plan.push(...comparativePages(report, report.drivers));
+  if (opts.comparative) plan.push(...comparativePages(report, opts.comparativeDrivers ?? report.drivers, opts.selectionNote));
   drivers.forEach(d => {
     plan.push({ title: `${d.driverName} · Rendimiento`, build: () => driverSheetA(d, report) });
     plan.push({ title: `${d.driverName} · Rendimiento`, build: () => driverSheetB(d, report) });

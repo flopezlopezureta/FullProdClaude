@@ -134,6 +134,17 @@ export function horizontalBarConfig(items: { label: string; value: number }[], c
   };
 }
 
+/**
+ * Piso del eje del gráfico de % de efectividad: 90 cuando todos andan cerca del 100%, pero baja (de a 5)
+ * si algún conductor está más abajo. Con el piso fijo en 90, un conductor con 80% quedaba sin barra, es
+ * decir, justo los que más interesa ver desaparecían del gráfico.
+ */
+export function rateAxisMin(rates: (number | null | undefined)[]): number {
+  const vals = rates.filter((r): r is number => r != null);
+  if (!vals.length) return 90;
+  return Math.max(0, Math.min(90, Math.floor(Math.min(...vals) / 5) * 5));
+}
+
 /** Barras por conductor ordenadas (para la comparación de toda la flota). */
 export function driversBarConfig(
   drivers: DriverPerformance[],

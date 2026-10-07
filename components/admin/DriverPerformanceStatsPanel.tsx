@@ -8,7 +8,7 @@ import type { PerformanceReport, DriverPerformance } from '../../utils/performan
 import { SOURCE_LABELS } from '../../utils/performanceTypes';
 import {
   C, PROFILE_COLORS, dailyChartConfig, hourlyChartConfig, statusChartConfig, paceChartConfig,
-  closureChartConfig, horizontalBarConfig, driversBarConfig,
+  closureChartConfig, horizontalBarConfig, driversBarConfig, rateAxisMin,
 } from '../../utils/performanceCharts';
 import { downloadPerformancePdf, dmy, vs, TONE_COLOR, type Tone } from '../../utils/performanceReportPdf';
 import { CLOSURE_PROFILE_LABELS, PROFILE_STYLES } from '../../utils/chronometryPoster';
@@ -43,6 +43,13 @@ const Card: React.FC<{ title: string; children: React.ReactNode; className?: str
     <h4 className="text-[11px] font-black text-slate-700 uppercase tracking-wider mb-3">{title}</h4>
     {children}
   </div>
+);
+
+/** Gráfico, o un aviso cuando no hay datos (antes quedaba un eje vacío de 0 a 1 que parecía un error). */
+const ChartOrEmpty: React.FC<{ count: number; config: any; height: number; empty: string }> = ({ count, config, height, empty }) => (
+  count > 0
+    ? <ChartCanvas config={config} height={height} />
+    : <div className="flex items-center justify-center px-6" style={{ height }}><p className="text-xs font-bold text-slate-400 text-center">{empty}</p></div>
 );
 
 const StatLine: React.FC<{ label: string; value: React.ReactNode; tone?: Tone }> = ({ label, value, tone }) => (
@@ -103,6 +110,14 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
   const [pdfProgress, setPdfProgress] = useState<{ done: number; total: number } | null>(null);
   const [includeSheets, setIncludeSheets] = useState(true);
 
+  // Selección de conductores dentro de la tabla del informe (para filtrar la vista y para el PDF).
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const [onlyPicked, setOnlyPicked] = useState(false);
+  const [rateOp, setRateOp] = useState<'lt' | 'gte'>('lt');
+  const [rateLimit, setRateLimit] = useState('95');
+  // Criterio con el que se armó la selección (null = elegida a mano); se rotula en el PDF.
+  const [pickRule, setPickRule] = useState<{ op: 'lt' | 'gte'; limit: number } | null>(null);
+
   useEffect(() => {
     api.getUsers().then(users => {
       setRoster(users
@@ -121,6 +136,7 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
   const generate = async () => {
     if (startDate > endDate) { setError('La fecha de inicio debe ser anterior o igual a la de término.'); return; }
     setIsLoading(true); setError(null); setDetailId(null);
+    setPickedIds([]); setOnlyPicked(false); setPickRule(null); // otro informe = otros conductores
     try {
       setReport(await api.getDriverPerformance(startDate, endDate, selectedIds));
     } catch (e: any) {
@@ -159,6 +175,42 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
     else { setSortKey(key); setSortDir(key === 'name' || key === 'pace' || key === 'incident' || key === 'delay' || key === 'late' || key === 'bulk' || key === 'sys' ? 'asc' : 'desc'); }
   };
 
+  // --- Selección en la tabla ---
+  const pickedSet = useMemo(() => new Set(pickedIds), [pickedIds]);
+  // Con "Mostrar solo los seleccionados" la tabla y los gráficos muestran únicamente a la selección.
+  const showOnlyPicked = onlyPicked && pickedIds.length > 0;
+  const visibleDrivers = useMemo(
+    () => (showOnlyPicked ? sortedDrivers.filter(d => pickedSet.has(d.driverId)) : sortedDrivers),
+    [sortedDrivers, pickedSet, showOnlyPicked]
+  );
+  const limitNum = Number(String(rateLimit).replace(',', '.'));
+  const limitValid = rateLimit.trim() !== '' && Number.isFinite(limitNum) && limitNum >= 0 && limitNum <= 100;
+  // Se compara con el % tal como se ve en pantalla (un decimal): un 94,97% se muestra "95,0%" y no debe
+  // quedar dentro de "menor a 95".
+  const matchesRate = (d: DriverPerformance) => {
+    const r = d.totals.deliveryRate;
+    if (r == null || !limitValid) return false;
+    const shown = Math.round(r * 10) / 10;
+    return rateOp === 'lt' ? shown < limitNum : shown >= limitNum;
+  };
+  const matchCount = sortedDrivers.filter(matchesRate).length;
+  const allVisiblePicked = visibleDrivers.length > 0 && visibleDrivers.every(d => pickedSet.has(d.driverId));
+  const someVisiblePicked = visibleDrivers.some(d => pickedSet.has(d.driverId));
+
+  const togglePick = (id: string) => { setPickedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])); setPickRule(null); };
+  const toggleAllVisible = () => {
+    const ids = visibleDrivers.map(d => d.driverId);
+    setPickedIds(prev => (allVisiblePicked ? prev.filter(id => !ids.includes(id)) : Array.from(new Set([...prev, ...ids]))));
+    setPickRule(null);
+  };
+  const selectByRate = () => {
+    if (!limitValid) return;
+    setPickedIds(sortedDrivers.filter(matchesRate).map(d => d.driverId));
+    setPickRule({ op: rateOp, limit: limitNum });
+    setOnlyPicked(true);
+  };
+  const clearPicks = () => { setPickedIds([]); setPickRule(null); setOnlyPicked(false); };
+
   const runPdf = async (opts: Parameters<typeof downloadPerformancePdf>[0]) => {
     setPdfProgress({ done: 0, total: 1 });
     try {
@@ -178,6 +230,18 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
     report, drivers: includeSheets ? sortedDrivers : [], comparative: true, includeDaily: false, generatedAt: generatedAt(),
     fileName: `Rendimiento_Conductores_${report.period.startDate}_${report.period.endDate}.pdf`,
   });
+  const pickedDrivers = sortedDrivers.filter(d => pickedSet.has(d.driverId));
+  const fmtLimit = (v: number) => v.toLocaleString('es-CL', { maximumFractionDigits: 1 });
+  const selectionNote = pickRule
+    ? `Efectividad ${pickRule.op === 'lt' ? 'menor a' : 'mayor o igual a'} ${fmtLimit(pickRule.limit)}%`
+    : 'Selección manual de conductores';
+  const downloadSelectedPdf = () => report && pickedDrivers.length > 0 && runPdf({
+    report, drivers: includeSheets ? pickedDrivers : [], comparative: true, comparativeDrivers: pickedDrivers, selectionNote,
+    includeDaily: false, generatedAt: generatedAt(),
+    fileName: `Rendimiento_Seleccion_${pickedDrivers.length}_conductores_${report.period.startDate}_${report.period.endDate}.pdf`,
+  });
+  // Hojas aproximadas de un PDF con n conductores (portada + destacados + tabla + 2 hojas por conductor).
+  const pagesFor = (n: number) => 2 + Math.ceil(n / 24) + (includeSheets ? n * 2 : 0);
 
   const filteredRoster = roster.filter(r => r.name.toLowerCase().includes(search.trim().toLowerCase()));
   const toggleId = (id: string) => setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
@@ -185,19 +249,24 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
     : selectedIds.length <= 2 ? roster.filter(r => selectedIds.includes(r.id)).map(r => r.name).join(', ')
     : `${selectedIds.length} conductores`;
 
+  // Los gráficos siguen a la tabla: si se muestra solo la selección, grafican solo a esos conductores.
   const fleetCharts = useMemo(() => {
     if (!report || report.drivers.length < 2) return null;
-    const ds = report.drivers;
+    const ds = visibleDrivers;
+    // En un informe de un solo día no existen "2 días comparables": con un mínimo fijo de 2 el gráfico
+    // de ritmo salía vacío para cualquier período corto, aunque la tabla sí tenía los minutos.
+    const minPaceDays = Math.min(2, Math.max(1, report.period.days));
     const withVol = ds.filter(d => d.totals.assigned >= 5);
-    const paced = ds.filter(d => d.pace.avgMinutesPerDelivery != null && d.pace.reliableDays >= 2);
+    const paced = ds.filter(d => d.pace.avgMinutesPerDelivery != null && d.pace.reliableDays >= minPaceDays);
     const closers = ds.filter(d => d.closure.mlDeliveries >= report.meta.minMlForProfile && d.closure.avgMlDelayMin != null);
     return {
+      counts: { delivered: ds.length, rate: withVol.length, pace: paced.length, delay: closers.length },
       delivered: driversBarConfig(ds, d => d.totals.delivered, 'Entregados', C.indigo),
-      rate: driversBarConfig(withVol, d => d.totals.deliveryRate, '% Efectividad', C.emerald, { min: 90, max: 100, suffix: '%' }),
+      rate: driversBarConfig(withVol, d => d.totals.deliveryRate, '% Efectividad', C.emerald, { min: rateAxisMin(withVol.map(d => d.totals.deliveryRate)), max: 100, suffix: '%' }),
       pace: driversBarConfig(paced, d => d.pace.avgMinutesPerDelivery, 'Min por entrega', C.sky, { order: 'asc' }),
       delay: driversBarConfig(closers, d => d.closure.avgMlDelayMin, 'Min de demora', C.amber),
     };
-  }, [report]);
+  }, [report, visibleDrivers]);
 
   const detailCharts = useMemo(() => {
     if (!detail || !report) return null;
@@ -305,9 +374,15 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
                 <input type="checkbox" checked={includeSheets} onChange={e => setIncludeSheets(e.target.checked)} className="h-3.5 w-3.5 rounded" />
                 Incluir hoja de cada conductor
               </label>
-              <button type="button" onClick={downloadFleetPdf} disabled={busy}
+              {pickedIds.length > 0 && (
+                <button type="button" onClick={downloadSelectedPdf} disabled={busy} title={`Unas ${pagesFor(pickedIds.length)} hojas`}
+                  className="px-4 py-2 text-xs font-black text-white bg-emerald-600 rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 uppercase tracking-wider">
+                  {busy ? `PDF: hoja ${pdfProgress!.done} de ${pdfProgress!.total}…` : `⬇ PDF de los ${pickedIds.length} seleccionados`}
+                </button>
+              )}
+              <button type="button" onClick={downloadFleetPdf} disabled={busy} title={`Unas ${pagesFor(report.drivers.length)} hojas`}
                 className="px-4 py-2 text-xs font-black text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 disabled:opacity-50 uppercase tracking-wider">
-                {busy ? `PDF: hoja ${pdfProgress!.done} de ${pdfProgress!.total}…` : '⬇ Descargar PDF'}
+                {busy ? `PDF: hoja ${pdfProgress!.done} de ${pdfProgress!.total}…` : pickedIds.length > 0 ? '⬇ PDF de toda la flota' : '⬇ Descargar PDF'}
               </button>
             </div>
           </div>
@@ -330,17 +405,58 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
 
           {fleetCharts && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card title="Entregados por conductor"><ChartCanvas config={fleetCharts.delivered} height={260} /></Card>
-              <Card title="% de efectividad por conductor"><ChartCanvas config={fleetCharts.rate} height={260} /></Card>
-              <Card title="Min por entrega por conductor (menos es mejor)"><ChartCanvas config={fleetCharts.pace} height={260} /></Card>
-              <Card title="Demora de cierre en la app respecto a ML (min)"><ChartCanvas config={fleetCharts.delay} height={260} /></Card>
+              <Card title="Entregados por conductor"><ChartOrEmpty count={fleetCharts.counts.delivered} config={fleetCharts.delivered} height={260} empty="Sin conductores para graficar" /></Card>
+              <Card title="% de efectividad por conductor"><ChartOrEmpty count={fleetCharts.counts.rate} config={fleetCharts.rate} height={260} empty="Sin datos suficientes: se grafican los conductores con 5 o más paquetes asignados" /></Card>
+              <Card title="Min por entrega por conductor (menos es mejor)"><ChartOrEmpty count={fleetCharts.counts.pace} config={fleetCharts.pace} height={260} empty="Sin datos suficientes: el ritmo solo se mide en días en que el conductor cerró sus entregas en el momento" /></Card>
+              <Card title="Demora de cierre en la app respecto a ML (min)"><ChartOrEmpty count={fleetCharts.counts.delay} config={fleetCharts.delay} height={260} empty="Sin datos suficientes de cierre frente a Mercado Libre" /></Card>
             </div>
           )}
+
+          {/* Selección de conductores: por casilla o por % de efectividad */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex flex-wrap items-end gap-x-5 gap-y-3">
+            <div>
+              <span className="block text-[10px] font-black text-slate-500 uppercase mb-1">Seleccionar por % de efectividad</span>
+              <div className="flex items-center gap-1.5">
+                <select value={rateOp} onChange={e => setRateOp(e.target.value as 'lt' | 'gte')}
+                  className="px-2 py-1.5 text-xs font-bold bg-slate-100 border border-slate-200 rounded-lg" aria-label="Condición sobre el % de efectividad">
+                  <option value="lt">Menor a</option>
+                  <option value="gte">Mayor o igual a</option>
+                </select>
+                <input type="number" inputMode="decimal" min={0} max={100} step={0.1} value={rateLimit} onChange={e => setRateLimit(e.target.value)}
+                  className={`w-20 px-2 py-1.5 text-xs font-bold text-center bg-slate-100 border rounded-lg ${limitValid ? 'border-slate-200' : 'border-red-400'}`} aria-label="Porcentaje de efectividad" />
+                <span className="text-xs font-black text-slate-500">%</span>
+                <button type="button" onClick={selectByRate} disabled={!limitValid || matchCount === 0}
+                  className="px-3 py-1.5 text-[10px] font-black text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 uppercase tracking-wider">
+                  Seleccionar
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] font-bold text-slate-500 pb-1.5">
+              {limitValid
+                ? `${matchCount} conductor${matchCount === 1 ? '' : 'es'} ${matchCount === 1 ? 'cumple' : 'cumplen'} este criterio`
+                : 'Escribe un porcentaje entre 0 y 100'}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 ml-auto pb-1">
+              <span className="text-[11px] font-black text-slate-700">{pickedIds.length} de {report.drivers.length} seleccionados</span>
+              <label className={`flex items-center gap-1.5 text-[11px] font-bold ${pickedIds.length ? 'text-slate-600 cursor-pointer' : 'text-slate-300'}`}>
+                <input type="checkbox" checked={showOnlyPicked} disabled={!pickedIds.length} onChange={e => setOnlyPicked(e.target.checked)} className="h-3.5 w-3.5 rounded" />
+                Mostrar solo los seleccionados
+              </label>
+              <button type="button" onClick={clearPicks} disabled={!pickedIds.length}
+                className="px-3 py-1.5 text-[10px] font-black text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-40 uppercase">
+                Limpiar selección
+              </button>
+            </div>
+          </div>
 
           <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-sm">
             <table className="w-full text-left">
               <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider">
                 <tr>
+                  <th className="pl-3 pr-1 py-3 w-8 text-center">
+                    <input type="checkbox" checked={allVisiblePicked} onChange={toggleAllVisible} aria-label="Seleccionar todos los conductores visibles"
+                      ref={el => { if (el) el.indeterminate = someVisiblePicked && !allVisiblePicked; }} className="h-3.5 w-3.5 rounded cursor-pointer" />
+                  </th>
                   {COLUMNS.map(col => (
                     <th key={col.key} onClick={() => onSort(col.key)} className={`px-3 py-3 cursor-pointer select-none hover:bg-slate-800 ${col.align === 'left' ? '' : 'text-center'}`}>
                       {col.label}{sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
@@ -350,8 +466,11 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {sortedDrivers.map(d => (
-                  <tr key={d.driverId} className="hover:bg-slate-50">
+                {visibleDrivers.map(d => (
+                  <tr key={d.driverId} className={pickedSet.has(d.driverId) ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-slate-50'}>
+                    <td className="pl-3 pr-1 py-2.5 text-center">
+                      <input type="checkbox" checked={pickedSet.has(d.driverId)} onChange={() => togglePick(d.driverId)} aria-label={`Seleccionar a ${d.driverName}`} className="h-3.5 w-3.5 rounded cursor-pointer" />
+                    </td>
                     {COLUMNS.map(col => (
                       <td key={col.key} className={`px-3 py-2.5 ${col.align === 'left' ? '' : 'text-center'}`}>{col.render(d, f)}</td>
                     ))}
