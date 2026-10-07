@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useContext } from 'react';
 import { api } from '../../services/api';
 import { AuthContext } from '../../contexts/AuthContext';
-import { getLocalDateString } from '../../utils/dateUtils';
+import { getLocalDateString, getLogicalDateString } from '../../utils/dateUtils';
 import { IconChevronDown } from '../Icon';
 import ChartCanvas from './ChartCanvas';
 import type { PerformanceReport, DriverPerformance } from '../../utils/performanceTypes';
@@ -92,6 +92,9 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
   const auth = useContext(AuthContext);
   const tz = auth?.systemSettings?.timezone || 'America/Santiago';
   const today = getLocalDateString(new Date(), tz);
+  // "Ayer" según el día lógico de la operación (corte a las 02:00), el mismo con que se arman todos los
+  // informes: entre las 00:00 y las 02:00 la jornada de ese día calendario aún no termina.
+  const yesterday = addDays(getLogicalDateString(new Date(), tz), -1);
 
   const [startDate, setStartDate] = useState(firstOfMonth(today));
   const [endDate, setEndDate] = useState(today);
@@ -299,6 +302,7 @@ export const DriverPerformanceStatsPanel: React.FC = () => {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {[
+              { l: 'Ayer', s: yesterday, e: yesterday },
               { l: 'Últimos 7 días', s: addDays(today, -6), e: today },
               { l: 'Últimos 30 días', s: addDays(today, -29), e: today },
               { l: 'Este mes', s: firstOfMonth(today), e: today },
