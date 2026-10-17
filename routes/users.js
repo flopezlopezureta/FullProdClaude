@@ -25,6 +25,32 @@ const adminOnly = (req, res, next) => {
     next();
 };
 
+// GET /api/users devolvía TODAS las columnas de TODOS los usuarios a cualquier sesión iniciada, incluidos los
+// conductores: las credenciales de integración de cada cliente (tokens de Mercado Libre, Shopify, etc.), sus datos de
+// facturación y tarifas — y la app del conductor además guardaba esa lista completa en el localStorage del teléfono.
+// Los roles de oficina que usan las pantallas de administración, facturación y retiros siguen viendo la ficha completa;
+// el resto (conductor, auxiliar, cliente) solo recibe lo que sus pantallas leen de los demás usuarios.
+const OFFICE_ROLES = new Set(['ADMIN', 'OPERADOR_SISTEMAS', 'FACTURACION', 'RETIROS']);
+const FIELD_USER_COLUMNS = [
+    'id', 'name', 'email', 'phone', 'role', 'status', 'clientIdentifier', 'address', 'pickupAddress',
+    'driverPermissions', 'assignedDriverId', 'latitude', 'longitude', 'lastLocationUpdate', 'createdAt', 'packageCount'
+];
+
+// Las pantallas de conductor solo necesitan saber QUÉ integraciones tiene conectadas un cliente (p. ej. "tiene Mercado
+// Libre"), nunca sus credenciales: se devuelve la forma sin ningún secreto.
+function publicIntegrations(integrations) {
+    if (!integrations || typeof integrations !== 'object') return null;
+    const result = {};
+    for (const [key, value] of Object.entries(integrations)) {
+        if (key === 'accounts') {
+            result.accounts = (Array.isArray(value) ? value : []).map(a => ({ id: a.id, type: a.type, nickname: a.nickname, connectedAt: a.connectedAt }));
+        } else if (value && typeof value === 'object') {
+            result[key] = { connected: true };
+        }
+    }
+    return result;
+}
+
 
 // GET /api/users - Get all users
 router.get('/', authMiddleware, async (req, res) => {
@@ -36,13 +62,26 @@ router.get('/', authMiddleware, async (req, res) => {
             GROUP BY u.id
             ORDER BY u.name ASC
         `);
+        const isOfficeRole = OFFICE_ROLES.has(String(req.user.role).toUpperCase());
         const safeUsers = users.map(user => {
             delete user.password;
-            // Only admins can see plain passwords
-            if (req.user.role !== 'ADMIN' && req.user.role !== 'RETIROS') {
-                delete user.plainPassword;
+            // Ninguna pantalla los lee desde esta lista: el 2FA se gestiona por /auth/* y la sesión activa la valida el servidor.
+            delete user.twoFactorSecret;
+            delete user.activeSessionId;
+            if (isOfficeRole) {
+                // Only admins can see plain passwords
+                if (req.user.role !== 'ADMIN' && req.user.role !== 'RETIROS') {
+                    delete user.plainPassword;
+                }
+                return user;
             }
-            return user;
+            // Conductores, auxiliares y clientes: solo lo que sus pantallas usan de los demás usuarios.
+            const slim = {};
+            for (const column of FIELD_USER_COLUMNS) {
+                if (column in user) slim[column] = user[column];
+            }
+            slim.integrations = publicIntegrations(user.integrations);
+            return slim;
         });
         res.json(safeUsers);
     } catch (err) {

@@ -3,7 +3,7 @@ import { getLogicalDateString, formatLocalDisplayDate, getLocalDateString } from
 import { storageUtils } from '../../utils/storageUtils';
 import { PackageStatus, PackageSource, MessagingPlan } from '../../constants';
 import type { Package, User } from '../../types';
-import { api, ApiError, DeliveryConfirmationData } from '../../services/api';
+import { api, ApiError, DeliveryConfirmationData, isUnreadableResponse } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
 import PackageList from '../PackageList';
 import PackageDetailModal from '../PackageDetailModal';
@@ -334,6 +334,9 @@ const DriverDashboard: React.FC = () => {
     const todayStr = getLogicalDateString(new Date(), auth?.systemSettings?.timezone);
     return [...myPackages, ...stalePackages].filter(p =>
       p.meliDeliveredNeedsPhotos === true &&
+      // Solo los que siguen abiertos, con los mismos estados que usa el bloqueo real del servidor: un paquete ya entregado
+      // (o con problema, devuelto, cancelado) que conserva la marca "ML confirmó" no debe frenar al conductor.
+      [PackageStatus.Pending, PackageStatus.Assigned, PackageStatus.PickedUp, PackageStatus.InTransit].includes(p.status) &&
       getLogicalDateString(p.assignedAt ? new Date(p.assignedAt) : new Date(0), auth?.systemSettings?.timezone) !== todayStr
     );
   }, [myPackages, stalePackages, auth?.systemSettings?.timezone]);
@@ -630,7 +633,21 @@ const DriverDashboard: React.FC = () => {
     let updatedPackages: Package[];
     try {
       updatedPackages = await Promise.all(pkgIds.map(async (pkgId) => {
-        const updatedPackage = await api.confirmDelivery(pkgId, data);
+        let updatedPackage: Package;
+        try {
+          updatedPackage = await api.confirmDelivery(pkgId, data);
+        } catch (confirmError: any) {
+          // El servidor respondió OK pero la respuesta no llegó completa (red débil): el cierre pudo haberse guardado.
+          // Se consulta el estado real (liviano, sin fotos) antes de hacerle repetir la entrega al conductor — repetirla
+          // era lo que dejaba paquetes cerrados 2 a 4 veces y pedidos "que reaparecen abiertos" en su lista.
+          if (!isUnreadableResponse(confirmError)) throw confirmError;
+          const current = await api.getPackage(pkgId, { excludePhotos: true }).catch(() => null);
+          if (current && current.status === PackageStatus.Delivered) {
+            updatedPackage = current;
+          } else {
+            throw confirmError;
+          }
+        }
         if (!updatedPackage || !updatedPackage.id) {
             throw new Error("La respuesta del servidor no es válida.");
         }

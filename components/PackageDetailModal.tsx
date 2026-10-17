@@ -118,7 +118,8 @@ const PackageDetailModal: React.FC<PackageDetailModalProps> = ({ pkg, onClose, o
         });
         
         if (onUpdatePackage) {
-            onUpdatePackage(updatedPkg);
+            // La respuesta del cierre ya no trae las fotos en base64 (pesaban ~0,6 MB): se muestran las que se acaban de subir.
+            onUpdatePackage({ ...updatedPkg, deliveryPhotosBase64: adminPhotos });
         }
         alert("Envío cerrado con éxito.");
     } catch (error: any) {

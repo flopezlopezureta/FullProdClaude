@@ -296,7 +296,7 @@ router.get('/meli-tracking/:packageId', authMiddleware, async (req, res) => {
     try {
         // Get package + creator from DB
         const { rows: pkgRows } = await db.query(
-            'SELECT p."meliFlexCode", p."trackingId", p."creatorId", p."meliOrderId" FROM packages p WHERE p.id = $1',
+            'SELECT p."meliFlexCode", p."trackingId", p."creatorId", p."meliOrderId", p."sourceAccountId" FROM packages p WHERE p.id = $1',
             [packageId]
         );
         if (pkgRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado' });
@@ -313,7 +313,7 @@ router.get('/meli-tracking/:packageId', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'El paquete no tiene ID de envÃ­o ML' });
         }
 
-        const accessToken = await meliPollingService.getValidMeliToken(pkg.creatorId);
+        const accessToken = await meliPollingService.getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
         if (!accessToken) return res.status(401).json({ message: 'Token ML no disponible' });
 
         // Make HTTPS request to ML API
@@ -353,7 +353,7 @@ router.get('/meli-label/:packageId', authMiddleware, async (req, res) => {
     const { packageId } = req.params;
     try {
         const { rows: pkgRows } = await db.query(
-            'SELECT p."meliFlexCode", p."creatorId", p."trackingId" FROM packages p WHERE p.id = $1',
+            'SELECT p."meliFlexCode", p."creatorId", p."trackingId", p."sourceAccountId" FROM packages p WHERE p.id = $1',
             [packageId]
         );
         if (pkgRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado' });
@@ -361,7 +361,7 @@ router.get('/meli-label/:packageId', authMiddleware, async (req, res) => {
         const pkg = pkgRows[0];
         if (!pkg.meliFlexCode) return res.status(400).json({ message: 'El paquete no tiene ID de envÃ­o ML' });
 
-        const accessToken = await meliPollingService.getValidMeliToken(pkg.creatorId);
+        const accessToken = await meliPollingService.getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
         if (!accessToken) return res.status(401).json({ message: 'Token ML no disponible' });
 
         // [NUEVO] Si no tenemos el trackingId (SCA), lo buscamos y guardamos ahora

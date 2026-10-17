@@ -91,6 +91,39 @@ const ensureMultiAccountStructure = (integrations) => {
     return integrations;
 };
 
+// Nombre visible (nickname) de la cuenta de Mercado Libre a la que pertenece un paquete, solo para mensajes de error
+// claros ("la cuenta «X»"). null si no se puede determinar.
+async function getMeliAccountLabel(clientId, accountId) {
+    try {
+        const { rows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
+        const accounts = ((rows[0] && rows[0].integrations && rows[0].integrations.accounts) || []).filter(a => a.type === 'MERCADO_LIBRE');
+        const account = accountId ? accounts.find(a => a.id === accountId) : accounts[0];
+        return (account && account.nickname) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Cuentas de Mercado Libre que un cliente puede tener, en el orden en que conviene probarlas cuando no se sabe a cuál
+// pertenece un envío: la principal (ranura clásica integrations.meli → accountId null) y luego las demás cuentas.
+async function getMeliAccountCandidates(clientId) {
+    try {
+        const { rows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
+        const integrations = (rows[0] && rows[0].integrations) || {};
+        const accounts = (integrations.accounts || []).filter(a => a.type === 'MERCADO_LIBRE');
+        const primaryUserId = integrations.meli && integrations.meli.userId ? String(integrations.meli.userId) : null;
+        const candidates = [];
+        if (integrations.meli) candidates.push(null);
+        for (const account of accounts) {
+            const sameAsPrimary = primaryUserId && account.credentials && String(account.credentials.userId) === primaryUserId;
+            if (!sameAsPrimary) candidates.push(account.id);
+        }
+        return candidates.length > 0 ? candidates : [null];
+    } catch (e) {
+        return [null];
+    }
+}
+
 async function getValidMeliToken(clientId, accountId = null) {
     const { rows: userRows } = await db.query('SELECT integrations FROM users WHERE id = $1', [clientId]);
     if (userRows.length === 0) return null;
@@ -392,11 +425,18 @@ async function pollPackageStatuses() {
                         // whenever meliAutoPromptPhotos was off, even though the CIERRE_OFICIAL_ML
                         // tracking event above was already being logged correctly.
                         if (pkg.status !== 'ENTREGADO') {
-                            await db.query(
-                                'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1 WHERE id = $2',
+                            // pkg.status viene de la lista leída al INICIO del ciclo, que con miles de paquetes tarda
+                            // minutos: el conductor puede haber cerrado la entrega mientras tanto. Por eso el estado se
+                            // vuelve a exigir en el propio UPDATE — sin esto ~1 de cada 5 paquetes ML entregados quedaba
+                            // ENTREGADO pero marcado "ML confirmó, faltan fotos" (y se avisaba al conductor por nada).
+                            // "IS NOT TRUE" además evita re-tocar updatedAt y re-avisar en cada ciclo a los paquetes
+                            // viejos que ya estaban marcados.
+                            const { rowCount: newlyFlagged } = await db.query(
+                                `UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1
+                                 WHERE id = $2 AND status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO') AND "meliDeliveredNeedsPhotos" IS NOT TRUE`,
                                 [now, pkg.id]
                             );
-                            if (meliAutoPromptPhotos) {
+                            if (newlyFlagged > 0 && meliAutoPromptPhotos) {
                                 emitDriverEvent(pkg.driverId, {
                                     packageId: pkg.id,
                                     trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
@@ -520,7 +560,7 @@ async function pollPackageStatuses() {
         // [NUEVO] Paso de Auto-Fix para paquetes sin tracking_id en las últimas 48 horas
         console.log('[MeliPolling] Checking for packages missing tracking_id (SCA)...');
         const { rows: missingTracking } = await db.query(`
-            SELECT id, "meliFlexCode", "meliOrderId", "creatorId" 
+            SELECT id, "meliFlexCode", "meliOrderId", "creatorId", "sourceAccountId" 
             FROM packages 
             WHERE source = 'MERCADO_LIBRE' 
             AND "trackingId" IS NULL 
@@ -530,7 +570,7 @@ async function pollPackageStatuses() {
 
         for (const pkg of missingTracking) {
             try {
-                const accessToken = await getValidMeliToken(pkg.creatorId);
+                const accessToken = await getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
                 if (accessToken) {
                     const shipmentId = pkg.meliFlexCode || pkg.meliOrderId;
                     const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
@@ -567,11 +607,11 @@ async function pollPackageStatuses() {
 // [NUEVO] Función para asegurar el tracking_id inmediatamente después de importar
 async function syncTrackingId(packageId) {
     try {
-        const { rows } = await db.query('SELECT id, "meliFlexCode", "meliOrderId", "creatorId", "trackingId" FROM packages WHERE id = $1', [packageId]);
+        const { rows } = await db.query('SELECT id, "meliFlexCode", "meliOrderId", "creatorId", "sourceAccountId", "trackingId" FROM packages WHERE id = $1', [packageId]);
         if (rows.length === 0 || rows[0].trackingId) return;
         
         const pkg = rows[0];
-        const accessToken = await getValidMeliToken(pkg.creatorId);
+        const accessToken = await getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
         if (!accessToken) return;
 
         const shipmentId = pkg.meliFlexCode || pkg.meliOrderId;
@@ -587,6 +627,7 @@ async function syncTrackingId(packageId) {
 
 async function syncPackage(packageId) {
     console.log(`[MeliPolling] Manually syncing package ${packageId}...`);
+    let syncedPkg = null; // para que el catch sepa a qué cuenta de ML pertenece el paquete
     try {
         const { rows } = await db.query(`
             SELECT * 
@@ -596,6 +637,7 @@ async function syncPackage(packageId) {
 
         if (rows.length === 0) throw new Error('Paquete no encontrado.');
         const pkg = rows[0];
+        syncedPkg = pkg;
 
         if (pkg.source !== 'MERCADO_LIBRE') {
             throw new Error('El paquete no es de Mercado Libre.');
@@ -606,9 +648,12 @@ async function syncPackage(packageId) {
             throw new Error('El paquete no tiene un ID de Mercado Libre (Order ID o Flex Code) asociado.');
         }
 
-        const accessToken = await getValidMeliToken(pkg.creatorId);
+        // Con la cuenta de ML a la que pertenece el paquete: un cliente puede tener varias y antes siempre se usaba la
+        // primera, así que los envíos de las demás cuentas fallaban con un falso "reconecta la cuenta".
+        const accessToken = await getValidMeliToken(pkg.creatorId, pkg.sourceAccountId);
         if (!accessToken) {
-            throw new Error('No se pudo obtener el token de Mercado Libre para el cliente propietario de este paquete. Asegúrate de que la integración esté activa.');
+            const accountLabel = await getMeliAccountLabel(pkg.creatorId, pkg.sourceAccountId);
+            throw new Error(`No se pudo obtener el token de Mercado Libre${accountLabel ? ` de la cuenta «${accountLabel}»` : ''} para el cliente propietario de este paquete. Asegúrate de que la integración esté activa.`);
         }
 
         console.log(`[MeliPolling] Requesting ML shipment ${shipmentId} for package ${packageId}...`);
@@ -667,7 +712,12 @@ async function syncPackage(packageId) {
             throw new Error(`El ID de envío ${packageId} no fue encontrado en Mercado Libre. Verifica que el ID sea correcto.`);
         }
         if (err.statusCode === 401 || err.statusCode === 403) {
-            throw new Error('Error de autenticación con Mercado Libre. Por favor, reconecta la cuenta del cliente.');
+            const accountLabel = syncedPkg ? await getMeliAccountLabel(syncedPkg.creatorId, syncedPkg.sourceAccountId) : null;
+            const accountText = accountLabel ? `la cuenta «${accountLabel}» del cliente` : 'la cuenta del cliente';
+            if (err.statusCode === 401) {
+                throw new Error(`Mercado Libre rechazó las credenciales de ${accountText}. Si el aviso se repite, reconecta esa cuenta.`);
+            }
+            throw new Error(`Mercado Libre no autorizó la consulta de este envío con ${accountText}.`);
         }
         throw new Error(err.message || 'Error desconocido al sincronizar con Mercado Libre.');
     }
@@ -1115,7 +1165,7 @@ async function cleanupDuplicates() {
 
 
 // [NUEVO] Función para importar un paquete específico en tiempo real (Just-In-Time)
-async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter = false) {
+async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter = false, accountId = null) {
     // [NUEVO] Si shipmentId es un JSON (etiqueta oficial), extraer solo el ID
     if (shipmentId && typeof shipmentId === 'string' && shipmentId.startsWith('{')) {
         try {
@@ -1126,11 +1176,29 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
 
     console.log(`[MeliPolling] Attempting just-in-time import for Shipment ID ${shipmentId} (Client: ${clientId}, SkipRegionFilter: ${skipRegionFilter})`);
     try {
-        const accessToken = await getValidMeliToken(clientId);
-        if (!accessToken) throw new Error('Token ML no disponible');
-
-        // 1. Fetch Shipment Details
-        const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
+        // 1. Fetch Shipment Details — con la cuenta de Mercado Libre a la que pertenece el envío. Si se sabe cuál
+        // (accountId) se usa esa; si no, se prueba la principal y luego las demás cuentas del cliente hasta que alguna
+        // lo vea. Antes solo se probaba la principal, así que los envíos de las demás cuentas no se podían importar
+        // al escanearlos ("paquete no encontrado" para un envío real que aún no entraba por la importación automática).
+        const candidateAccounts = accountId ? [accountId] : await getMeliAccountCandidates(clientId);
+        let shipment = null;
+        let usedAccountId = null;
+        let lastShipmentError = null;
+        for (const candidate of candidateAccounts) {
+            const candidateToken = await getValidMeliToken(clientId, candidate);
+            if (!candidateToken) continue;
+            try {
+                shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, candidateToken);
+                usedAccountId = candidate;
+                break;
+            } catch (shipmentErr) {
+                lastShipmentError = shipmentErr;
+            }
+        }
+        if (!shipment) {
+            if (lastShipmentError) throw lastShipmentError;
+            throw new Error('Token ML no disponible');
+        }
         const orderId = shipment.order_id?.toString();
 
         if (!orderId) {
@@ -1212,6 +1280,15 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
             destIsApproximate
         };
 
+        // Si el envío salió de una cuenta de ML concreta del cliente, se deja registrada (igual que la importación
+        // automática): sin eso las consultas y el cierre no sabrían con qué credenciales verificar este paquete.
+        if (usedAccountId) {
+            newPackage.sourceAccountId = usedAccountId;
+            const accountLabel = await getMeliAccountLabel(clientId, usedAccountId);
+            if (accountLabel) newPackage.sourceAccountName = accountLabel;
+            if (shipment.sender_id) newPackage.meliSellerId = String(shipment.sender_id);
+        }
+
         const columns = Object.keys(newPackage).map(k => `"${k}"`).join(', ');
         const values = Object.values(newPackage).map(v => v === undefined ? null : v);
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
@@ -1224,7 +1301,7 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
         return newPackage.id;
 
     } catch (err) {
-        console.error(`[MeliPolling] Just-in-time import error for ${shipmentId}:`, err.message);
+        console.error(`[MeliPolling] Just-in-time import error for ${shipmentId}:`, err.message || (err.statusCode ? `ML respondió ${err.statusCode}` : err));
         return null;
     }
 }
@@ -1256,6 +1333,7 @@ async function optimizedJITDiscovery(shipmentId) {
 
         // If we extracted a senderId from the scan, find the matching user directly
         let matchingUser = null;
+        let matchingAccountId = null;
         if (senderId) {
             for (const u of users) {
                 let uIntegrations = u.integrations || {};
@@ -1267,6 +1345,7 @@ async function optimizedJITDiscovery(shipmentId) {
                     const acc = uIntegrations.accounts.find(a => a.type === 'MERCADO_LIBRE' && String(a.credentials?.userId) === senderId);
                     if (acc) {
                         matchingUser = u;
+                        matchingAccountId = acc.id;
                         break;
                     }
                 }
@@ -1276,7 +1355,7 @@ async function optimizedJITDiscovery(shipmentId) {
         // If we found a matching user directly, import it!
         if (matchingUser) {
             console.log(`[MeliPolling] JIT: Direct match for client ${matchingUser.id} (ML User: ${senderId}). Performing import...`);
-            return await importSpecificMeliPackage(matchingUser.id, shipmentId, true);
+            return await importSpecificMeliPackage(matchingUser.id, shipmentId, true, matchingAccountId);
         }
 
         // Fallback: If no senderId or no direct match, query Mercado Libre shipments by trying each user's token (parallel scan)
@@ -1471,19 +1550,25 @@ async function syncDriverPendingPackages(driverId) {
                         [pkg.id, 'CIERRE_OFICIAL_ML', 'Mercado Libre API (Fast-Sync)', `Entrega detectada en Meli: ${meliTime.toISOString()}`, meliTime]
                     );
                 }
-
-                // Set the flag
-                await db.query(
-                    'UPDATE packages SET "meliDeliveredNeedsPhotos" = true, "updatedAt" = $1 WHERE id = $2',
+                
+                // Set the flag — solo si el paquete sigue abierto: el conductor pudo cerrarlo mientras se consultaba a ML y
+                // marcar un paquete ya ENTREGADO como "faltan fotos" era el defecto (ver pollPackageStatuses). Si ya estaba
+                // marcado se conserva su updatedAt, pero se sigue avisando a la app: este es el chequeo que el propio
+                // conductor dispara al volver desde la app de Mercado Libre.
+                const { rowCount: stillOpen } = await db.query(
+                    `UPDATE packages SET "meliDeliveredNeedsPhotos" = true,
+                            "updatedAt" = CASE WHEN "meliDeliveredNeedsPhotos" IS TRUE THEN "updatedAt" ELSE $1 END
+                     WHERE id = $2 AND status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO')`,
                     [now, pkg.id]
                 );
-                emitDriverEvent(driverId, {
-                    packageId: pkg.id,
-                    trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
-                    type: 'MELI_DELIVERY_CLOSED'
-                });
-
-                newlyDelivered.push(pkg.id);
+                if (stillOpen > 0) {
+                    emitDriverEvent(driverId, {
+                        packageId: pkg.id,
+                        trackingId: pkg.meliOrderId || pkg.meliFlexCode || null,
+                        type: 'MELI_DELIVERY_CLOSED'
+                    });
+                    newlyDelivered.push(pkg.id);
+                }
             }
         } catch (err) {
             console.error(`[MeliPolling] Fast sync failed for package ${pkg.id}:`, err.message || err);

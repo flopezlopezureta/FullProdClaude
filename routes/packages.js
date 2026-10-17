@@ -541,7 +541,13 @@ router.get('/:id', authMiddleware, async (req, res) => {
         if (rows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
         const pkg = rows[0];
         pkg.history = await getHistory(id);
-        
+
+        // ?excludePhotos=true: consulta liviana del estado (la app la usa para confirmar si un cierre quedó guardado
+        // cuando la respuesta no le llegó completa) — sin los ~0,6 a 1,2 MB de fotos en base64.
+        if (req.query.excludePhotos === 'true') {
+            return res.json(withoutHeavyPhotos({ ...pkg, photos: [] }));
+        }
+
         // Map deliveryPhotosBase64 JSONB to photos array
         if (pkg.deliveryPhotosBase64) {
             try {
@@ -1658,6 +1664,40 @@ router.post('/sync-my-meli', authMiddleware, async (req, res) => {
     }
 });
 
+// POST /api/packages/meli-ready   { ids: [paquetes] }
+// Consulta liviana (sin fotos) que usa la app mientras espera la confirmación de Mercado Libre, para saber cuándo
+// ya se puede reenviar el cierre. ready:true cuando ML muestra cada envío como entregado, cuando la validación no
+// aplica (no es Flex, está desactivada, o el paquete ya está entregado) o cuando no se puede consultar a ML (igual
+// que /deliver: una falla del lado de ML no frena al conductor). Una sola consulta por paquete, sin esperas.
+router.post('/meli-ready', authMiddleware, async (req, res) => {
+    try {
+        const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+            .filter(x => typeof x === 'string' && x.length > 0 && x.length < 80)
+            .slice(0, 25);
+        if (ids.length === 0) return res.status(400).json({ message: 'Faltan los paquetes a consultar.' });
+
+        const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');
+        const validationOn = settingsRows.length > 0 ? settingsRows[0].meliFlexValidation : true;
+
+        const pending = [];
+        if (validationOn) {
+            const { rows } = await db.query(
+                'SELECT id, status, "meliFlexCode", "creatorId", source, "sourceAccountId" FROM packages WHERE id = ANY($1::text[])',
+                [ids]
+            );
+            for (const row of rows) {
+                if (row.status === 'ENTREGADO') continue;
+                const verdict = await checkMeliDelivered(row, { attempts: 1 });
+                if (verdict.applicable && verdict.delivered === false) pending.push(row.id);
+            }
+        }
+        res.json({ ready: pending.length === 0, pending });
+    } catch (err) {
+        console.error('Error in POST /api/packages/meli-ready:', err);
+        res.status(500).json({ message: 'No se pudo consultar a Mercado Libre.' });
+    }
+});
+
 // [LEGACY/DEBUG] GET /api/packages/sys/status
 router.get('/sys/status', authMiddleware, async (req, res) => {
     try {
@@ -1718,6 +1758,88 @@ const makeMeliPostRequest = (path, postData) => makeMeliRequest({
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(postData) }
 }, postData);
 // --- END MELI HELPERS ---
+
+// --- CIERRE DE ENTREGA: ayudas compartidas por /:id/deliver y /meli-ready ---
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Código que acompaña el 400 cuando Mercado Libre aún no muestra el envío como entregado. La app lo usa para
+// esperar sola (hasta 60 s) en vez de pedirle al conductor que reintente a mano.
+const MELI_NOT_CONFIRMED = 'MELI_NOT_CONFIRMED';
+
+// ¿Mercado Libre ya muestra este envío Flex como entregado? Es la regla que exige cerrar primero en la app de Flex.
+//  - { applicable: false }: no es un envío de ML con código Flex → no se valida nada.
+//  - { delivered: true }: ML lo confirma, o no se pudo consultar (sin token / falla de la API de ML): se deja pasar,
+//    igual que siempre, para no frenar al conductor por un problema del lado de ML o de las credenciales.
+//  - { delivered: false, mlStatus }: ML respondió y el envío NO figura entregado.
+// Usa la cuenta de ML a la que pertenece el paquete (sourceAccountId): un cliente puede tener varias.
+async function checkMeliDelivered(pkgRow, { attempts = 1, delayMs = 0 } = {}) {
+    const { meliFlexCode, creatorId, source, sourceAccountId } = pkgRow || {};
+    if (!meliFlexCode || source !== 'MERCADO_LIBRE') return { applicable: false, delivered: true };
+
+    const accessToken = await meliPollingService.getValidMeliToken(creatorId, sourceAccountId);
+    if (!accessToken) {
+        console.warn(`[Deliver] Could not obtain ML token for shipment ${meliFlexCode}. Allowing bypass.`);
+        return { applicable: true, delivered: true, bypass: 'no_token' };
+    }
+
+    let lastStatus = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            const shippingDetails = await makeMeliGetRequest(`/shipments/${meliFlexCode}`, accessToken);
+            if (!shippingDetails) return { applicable: true, delivered: true, bypass: 'empty_response' };
+            lastStatus = shippingDetails.status;
+            if (lastStatus === 'delivered') return { applicable: true, delivered: true };
+        } catch (meliError) {
+            console.warn(`[Deliver] Meli status verification failed on attempt ${attempt} for shipment ${meliFlexCode}. Bypassing check to avoid blocking driver.`, meliError.body || meliError.message);
+            return { applicable: true, delivered: true, bypass: 'api_error' };
+        }
+        if (attempt < attempts) await sleep(delayMs);
+    }
+    return { applicable: true, delivered: false, mlStatus: lastStatus };
+}
+
+// Un cierre (/deliver) por paquete a la vez. Sin esto, dos envíos casi simultáneos del mismo paquete (doble
+// toque en "Confirmar", o un reintento que llega mientras el primero aún se procesa) corrían en paralelo y cada
+// uno guardaba, notificaba al destinatario y avisaba a las integraciones por su cuenta: en producción hubo
+// paquetes cerrados 3 y 4 veces, algunos dentro del mismo segundo. La app corre en un solo proceso, así que un
+// candado en memoria es suficiente.
+const deliverLocks = new Map();
+async function withDeliverLock(packageId, fn) {
+    const previous = deliverLocks.get(packageId) || Promise.resolve();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const tail = previous.then(() => gate);
+    deliverLocks.set(packageId, tail);
+    await previous;
+    try {
+        return await fn();
+    } finally {
+        release();
+        if (deliverLocks.get(packageId) === tail) deliverLocks.delete(packageId);
+    }
+}
+
+// Las fotos en base64 pesan ~0,3 MB cada una. El teléfono ya las tiene (las acaba de enviar), así que las
+// respuestas de cierre no las devuelven. Antes /deliver devolvía el paquete completo (~0,6 MB con 2 fotos) y,
+// en redes débiles, la respuesta llegaba cortada: la app mostraba "Error al procesar la respuesta del servidor"
+// aunque el cierre ya estaba guardado, y el conductor lo repetía. Misma forma que los paquetes del listado
+// (GET /api/packages ya los devuelve en NULL).
+function withoutHeavyPhotos(pkg) {
+    if (!pkg) return pkg;
+    const slim = { ...pkg };
+    if ('deliveryPhotosBase64' in slim) slim.deliveryPhotosBase64 = null;
+    if ('flexLabelPhotoBase64' in slim) slim.flexLabelPhotoBase64 = null;
+    if ('falabellaDirectLabelPhotoBase64' in slim) slim.falabellaDirectLabelPhotoBase64 = null;
+    return slim;
+}
+
+const sameReceiverText = (a, b) => {
+    const norm = (v) => String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return norm(a) === norm(b);
+};
+
+// --- FIN AYUDAS DE CIERRE ---
 
 // --- FALABELLA SYNC LOGIC ---
 const { decrypt, buildFalabellaSignature, verifyPhotoToken, signPhotoToken } = require('../services/falabellaCrypto');
@@ -2092,7 +2214,19 @@ async function syncDeliveryToEnviame(packageId, trackingId, attempts = 1) {
 // --- END ENVIAME SYNC LOGIC ---
 
 // POST /api/packages/:id/deliver
+// Un cierre a la vez por paquete (ver withDeliverLock): el segundo envío espera al primero y, si es idéntico,
+// se responde OK sin reprocesar nada (ver "cierre repetido" más abajo).
 router.post('/:id/deliver', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    try {
+        await withDeliverLock(id, () => handleDeliver(req, res));
+    } catch (err) {
+        console.error(`[Deliver] Fatal error confirming delivery for package ${id}:`, err);
+        if (!res.headersSent) res.status(500).json({ message: `Error al confirmar la entrega: ${err.message || 'Error desconocido'}` });
+    }
+});
+
+async function handleDeliver(req, res) {
     const { id } = req.params;
     const { receiverName, receiverId, photosBase64 } = req.body;
     try {
@@ -2113,6 +2247,25 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         }
         if (!validatePhotosAreRealImages(photosBase64)) {
             return res.status(400).json({ message: 'Una o más fotos de evidencia no son un archivo de imagen válido.' });
+        }
+
+        // Cierre repetido: el paquete YA está entregado con exactamente el mismo receptor y las mismas fotos. Pasa cuando
+        // la respuesta del primer envío no llegó completa al teléfono (la app mostraba un error aunque el cierre estaba
+        // guardado) o por un doble toque en "Confirmar". No se reprocesa nada —ni fotos, ni aviso al destinatario, ni
+        // envíos a Falabella/Jumpseller— y se responde OK para que la app lo dé por cerrado. Si cambian el receptor o las
+        // fotos (una corrección real), se procesa como siempre.
+        const { rows: priorRows } = await db.query('SELECT status, "deliveryReceiverName", "deliveryReceiverId" FROM packages WHERE id = $1', [id]);
+        if (priorRows.length > 0 && priorRows[0].status === 'ENTREGADO'
+            && sameReceiverText(priorRows[0].deliveryReceiverName, receiverName)
+            && sameReceiverText(priorRows[0].deliveryReceiverId, receiverId)) {
+            const { rows: priorPhotoRows } = await db.query('SELECT "deliveryPhotosBase64" FROM packages WHERE id = $1', [id]);
+            if (JSON.stringify(priorPhotoRows[0] ? priorPhotoRows[0].deliveryPhotosBase64 : null) === JSON.stringify(photosBase64)) {
+                const { rows: samePkgRows } = await db.query('SELECT * FROM packages WHERE id = $1', [id]);
+                const samePkg = samePkgRows[0];
+                samePkg.history = await getHistory(id);
+                console.log(`[Deliver] Cierre repetido idéntico para ${id}: se responde OK sin reprocesar.`);
+                return res.json(withoutHeavyPhotos(samePkg));
+            }
         }
 
         // Falabella Directo requires >=2 delivery-evidence photos for DELIVERED_001 — kept as an
@@ -2211,43 +2364,23 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         const { rows: settingsRows } = await db.query('SELECT "meliFlexValidation" FROM system_settings WHERE id = 1');
         const meliFlexValidation = settingsRows.length > 0 ? settingsRows[0].meliFlexValidation : true;
 
-        // --- NEW MELI VALIDATION (STRICT & UNIFIED) ---
+        // --- VALIDACIÓN MELI (estricta y unificada) ---
+        // El cierre en Full Envíos exige que Mercado Libre ya muestre el envío como entregado (se cierra primero en la
+        // app de Flex). Dos consultas con 1,5 s de por medio cubren el desfase de unos segundos de ML sin dejar al
+        // conductor esperando con la pantalla congelada. Si ML aún no lo muestra, se responde con un código y la app
+        // espera sola hasta 60 s consultando /meli-ready (ver DeliveryConfirmationModal), reenviando el cierre en
+        // cuanto ML lo confirma — sin volver a pedirle al conductor que reintente a mano.
         if (meliFlexValidation) {
             try {
                 const { rows: pkgRows } = await db.query('SELECT "meliFlexCode", "creatorId", "source", "sourceAccountId" FROM packages WHERE id = $1', [id]);
-                if (pkgRows.length > 0 && pkgRows[0].meliFlexCode && pkgRows[0].source === 'MERCADO_LIBRE') {
-                    const { meliFlexCode, creatorId, sourceAccountId } = pkgRows[0];
-
-                    const accessToken = await meliPollingService.getValidMeliToken(creatorId, sourceAccountId);
-                    
-                    if (!accessToken) {
-                        console.warn(`[Deliver] Could not obtain ML token for shipment ${meliFlexCode}. Allowing bypass.`);
-                    } else {
-                        let shippingDetails = null;
-                        const maxAttempts = 3;
-                        const delayMs = 3000;
-                        
-                        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                            try {
-                                shippingDetails = await makeMeliGetRequest(`/shipments/${meliFlexCode}`, accessToken);
-                                if (shippingDetails && shippingDetails.status === 'delivered') {
-                                    break; // Success!
-                                }
-                            } catch (meliError) {
-                                console.warn(`[Deliver] Meli status verification failed on attempt ${attempt} for shipment ${meliFlexCode}. Bypassing check to avoid blocking driver.`, meliError.body || meliError.message);
-                                shippingDetails = { status: 'delivered' }; // Bypass on API error
-                                break;
-                            }
-                            
-                            if (attempt < maxAttempts) {
-                                console.log(`[Deliver] Shipment ${meliFlexCode} status is ${shippingDetails?.status}. Retrying in ${delayMs/1000}s (Attempt ${attempt}/${maxAttempts})...`);
-                                await new Promise(resolve => setTimeout(resolve, delayMs));
-                            }
-                        }
-                        
-                        if (shippingDetails && shippingDetails.status !== 'delivered') {
-                            return res.status(400).json({ message: 'No se logro cerrar la entrega en la app de Mercado Libre Flex. Por favor intentelo en unos segundos mas y luego confirma nuevamente aquí.' });
-                        }
+                if (pkgRows.length > 0) {
+                    const verdict = await checkMeliDelivered(pkgRows[0], { attempts: 2, delayMs: 1500 });
+                    if (verdict.applicable && verdict.delivered === false) {
+                        return res.status(400).json({
+                            code: MELI_NOT_CONFIRMED,
+                            packageId: id,
+                            message: 'Mercado Libre aún no confirma el cierre de esta entrega en la app Flex. Verifica que la cerraste allí y confirma nuevamente en unos segundos.'
+                        });
                     }
                 }
             } catch (validationError) {
@@ -2255,7 +2388,7 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
                 // We don't return 500 here to avoid blocking the whole delivery process
             }
         }
-        // --- END MELI VALIDATION ---
+        // --- FIN VALIDACIÓN MELI ---
 
         const { rows } = await db.query(
             'UPDATE packages SET status = $1, "deliveryReceiverName" = $2, "deliveryReceiverId" = $3, "deliveryPhotosBase64" = $4, "meliDeliveredNeedsPhotos" = false, "updatedAt" = $5 WHERE id = $6 RETURNING *',
@@ -2376,13 +2509,14 @@ router.post('/:id/deliver', authMiddleware, async (req, res) => {
         // Notify recipient
         NotificationService.notifyRecipient(id, 'ENTREGADO');
 
-        res.json(updatedPackage);
+        // Sin las fotos en base64: el teléfono ya las tiene y una respuesta de ~0,6 MB era lo que llegaba cortado en redes débiles.
+        res.json(withoutHeavyPhotos(updatedPackage));
 
     } catch(err) {
         console.error(`[Deliver] Fatal error confirming delivery for package ${id}:`, err);
-        res.status(500).json({ message: `Error al confirmar la entrega: ${err.message || 'Error desconocido'}` });
+        if (!res.headersSent) res.status(500).json({ message: `Error al confirmar la entrega: ${err.message || 'Error desconocido'}` });
     }
-});
+}
 
 // POST /api/packages/billing/reconcile-meli-delivered
 // Admin only. Un paquete solo cuenta para facturación (ver BillingReportPage.tsx) cuando su
@@ -2574,7 +2708,8 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
         }
         // --- END FALABELLA DIRECTO NOTIFICATION ---
 
-        res.json(updatedPackage);
+        // Sin fotos en base64: el teléfono ya las tiene (mismo motivo que /:id/deliver).
+        res.json(withoutHeavyPhotos(updatedPackage));
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Error al reportar el problema.' });
@@ -2753,7 +2888,8 @@ router.post('/:id/return', authMiddleware, async (req, res) => {
         }
         // --- END FALABELLA DIRECTO NOTIFICATION ---
 
-        res.json(updatedPackage);
+        // Sin fotos en base64: el teléfono ya las tiene (mismo motivo que /:id/deliver).
+        res.json(withoutHeavyPhotos(updatedPackage));
 
     } catch(err) {
         console.error(err);

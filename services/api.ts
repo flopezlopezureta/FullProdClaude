@@ -114,9 +114,20 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     return await response.json();
   } catch (e) {
     console.error('[API] Failed to parse success response as JSON');
-    throw new ApiError('Error al procesar la respuesta del servidor', response.status);
+    // El servidor SÍ respondió con éxito (2xx) pero el cuerpo no llegó completo o legible (típico de una conexión débil).
+    // `unreadable` permite a quien llama confirmar el resultado real en vez de asumir que la acción falló.
+    throw new ApiError('Error al procesar la respuesta del servidor', response.status, { unreadable: true });
   }
 }
+
+// El servidor respondió 2xx pero la respuesta no se pudo leer: la acción pudo haberse guardado igual.
+export const isUnreadableResponse = (err: any): boolean =>
+  err instanceof ApiError && !!(err.body && err.body.unreadable);
+
+// Código que devuelve POST /packages/:id/deliver (HTTP 400) cuando Mercado Libre aún no muestra el envío como entregado.
+export const MELI_NOT_CONFIRMED = 'MELI_NOT_CONFIRMED';
+export const isMeliNotConfirmed = (err: any): boolean =>
+  err instanceof ApiError && !!(err.body && err.body.code === MELI_NOT_CONFIRMED);
 
 const get = <T>(endpoint: string) => request<T>(endpoint, { method: 'GET' });
 const post = <T>(endpoint: string, body: any) => request<T>(endpoint, { method: 'POST', body: JSON.stringify(body) });
@@ -323,7 +334,11 @@ export const api = {
       });
       return get<{ packages: Package[], total: number }>(`/packages?${searchParams.toString()}`);
   },
-  getPackage: (pkgId: string) => get<Package>(`/packages/${encodeURIComponent(pkgId)}`),
+  // excludePhotos: consulta liviana del estado, sin las fotos en base64 (cientos de KB por paquete).
+  getPackage: (pkgId: string, opts?: { excludePhotos?: boolean }) =>
+    get<Package>(`/packages/${encodeURIComponent(pkgId)}${opts?.excludePhotos ? '?excludePhotos=true' : ''}`),
+  // Consulta liviana mientras se espera a Mercado Libre: ¿ya se puede reenviar el cierre de estos paquetes?
+  checkMeliReady: (ids: string[]) => post<{ ready: boolean; pending: string[] }>('/packages/meli-ready', { ids }),
   getStaleDriverPackages: () => get<Package[]>('/packages/driver/stale'),
   createPackage: (data: PackageCreationData) => post<Package>('/packages', data),
   createMultiplePackages: (packages: PackageCreationData[]) => post<{ 

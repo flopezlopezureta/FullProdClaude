@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, ApiError } from './api';
 import { offlineQueue, QueuedAction } from './offlineQueue';
 
 /**
@@ -12,14 +12,25 @@ export async function processOfflineQueue(): Promise<{ synced: string[]; stillPe
 
   const pending = offlineQueue.getPending();
   const synced: string[] = [];
+  // Paquetes cuyo envío rechazó el servidor en este ciclo: sus acciones siguientes se saltan para conservar el orden.
+  const rejectedPackages = new Set<string>();
 
   for (const action of pending) {
+    if (rejectedPackages.has(action.pkgId)) continue;
     try {
       await syncAction(action);
       offlineQueue.remove(action.id);
       synced.push(action.pkgId);
     } catch (e) {
-      // Stop at the first failure (likely connection dropped again mid-sync) rather than
+      if (e instanceof ApiError && e.status) {
+        // El servidor SÍ respondió, pero rechazó esta acción (p. ej. Mercado Libre aún no confirma la entrega). Antes cualquier
+        // error detenía todo el ciclo, así que un solo paquete bloqueado dejaba sin sincronizar para siempre TODO lo que había
+        // detrás en la cola. Se deja esta acción para el próximo ciclo y se sigue con los demás paquetes.
+        console.warn('[OfflineQueue] Server rejected a queued action, keeping it for the next cycle.', action.pkgId, e.message);
+        rejectedPackages.add(action.pkgId);
+        continue;
+      }
+      // Stop at the first network failure (likely connection dropped again mid-sync) rather than
       // burning through retries on every remaining item — the next 'online' event or poll
       // will pick up where this left off.
       console.warn('[OfflineQueue] Sync stopped, will retry later.', e);

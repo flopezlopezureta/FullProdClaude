@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { Package } from '../../types';
-import { DeliveryConfirmationData } from '../../services/api';
+import { api, DeliveryConfirmationData, isMeliNotConfirmed } from '../../services/api';
 import { IconX, IconUser, IconId, IconCamera, IconAlertTriangle, IconCheckCircle, IconPhoto } from '../Icon';
 import { AuthContext } from '../../contexts/AuthContext';
 import imageCompression from 'browser-image-compression';
@@ -13,6 +13,38 @@ interface DeliveryConfirmationModalProps {
   onClose: () => void;
   onConfirm: (pkgIds: string[], data: DeliveryConfirmationData) => Promise<void>;
 }
+
+// Cuando Mercado Libre aún no muestra la entrega como cerrada en su app Flex, esta pantalla espera sola en vez de pedirle
+// al conductor que vuelva a tocar "Confirmar" una y otra vez: consulta cada MELI_POLL_SECONDS (consulta liviana, sin
+// reenviar las fotos) y, apenas ML lo confirma, reenvía el cierre. Hasta MELI_WAIT_SECONDS en total.
+const MELI_WAIT_SECONDS = 60;
+const MELI_POLL_SECONDS = 5;
+
+const MeliWaitNotice: React.FC<{ secondsLeft: number; onStop: () => void }> = ({ secondsLeft, onStop }) => (
+  <div role="status" aria-live="polite" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 text-left">
+    <div className="flex items-start gap-2">
+      <div className="mt-0.5 w-4 h-4 shrink-0 border-2 border-amber-600 border-t-transparent rounded-full animate-spin"></div>
+      <div className="flex-1">
+        <p className="text-sm font-bold">Esperando la confirmación de Mercado Libre</p>
+        <p className="text-xs mt-1">
+          Mercado Libre aún no registra el cierre de esta entrega. Se reintentará automáticamente por hasta {MELI_WAIT_SECONDS} segundos
+          y se cerrará sola apenas Mercado Libre la confirme. No cierres esta pantalla. Si aún no la cerraste en la app de
+          Mercado Libre Flex, ciérrala ahora.
+        </p>
+        <div className="mt-2 h-1.5 w-full rounded-full bg-amber-200 overflow-hidden">
+          <div
+            className="h-full bg-amber-500 transition-all duration-1000 ease-linear"
+            style={{ width: `${Math.max(0, Math.min(100, (secondsLeft / MELI_WAIT_SECONDS) * 100))}%` }}
+          />
+        </div>
+        <div className="mt-1.5 flex items-center justify-between text-xs">
+          <span className="font-semibold">Reintentando automáticamente… {secondsLeft} s</span>
+          <button type="button" onClick={onStop} className="underline font-semibold">Detener espera</button>
+        </div>
+      </div>
+    </div>
+  </div>
+);
 
 const CameraView: React.FC<{ pkgId: string, onCapture: (dataUrl: string) => void, onCancel: () => void }> = ({ pkgId, onCapture, onCancel }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -137,6 +169,16 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
   const [isCompressing, setIsCompressing] = useState(false);
   const [isRestored, setIsRestored] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Espera automática a Mercado Libre (ver MELI_WAIT_SECONDS): segundos que quedan, o null si no se está esperando.
+  const [meliWaitLeft, setMeliWaitLeft] = useState<number | null>(null);
+  const aliveRef = useRef(true);        // false al cerrar la pantalla: corta la espera
+  const stopWaitRef = useRef(false);    // true si el conductor toca "Detener espera"
+  const submittingRef = useRef(false);  // un doble toque en "Confirmar" no debe enviar el cierre dos veces
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   const auth = useContext(AuthContext);
 
@@ -269,33 +311,80 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
 
   const isFormValid = receiverName.trim() !== '' && (!isRutRequired || (receiverId.trim() !== '' && !rutProblemText)) && photosBase64.length >= requiredPhotos && !isCompressing;
 
+  const pauseMs = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+  // Espera a que Mercado Libre muestre la(s) entrega(s) como cerrada(s): cuenta regresiva para el conductor y una consulta
+  // liviana cada MELI_POLL_SECONDS. Termina cuando ML confirma, se acaba el tiempo o el conductor la detiene.
+  const waitForMeli = async (ids: string[], deadline: number) => {
+    let lastCheck = 0;
+    while (aliveRef.current && !stopWaitRef.current && Date.now() < deadline) {
+      setMeliWaitLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+      if (Date.now() - lastCheck >= MELI_POLL_SECONDS * 1000) {
+        lastCheck = Date.now();
+        try {
+          const { ready } = await api.checkMeliReady(ids);
+          if (ready) return;
+        } catch (checkErr) {
+          // Sin red o Mercado Libre no responde: se sigue esperando y, al terminar, se reintenta el cierre igual.
+        }
+      }
+      await pauseMs(1000);
+    }
+  };
+
+  // Envía el cierre. Si Mercado Libre aún no lo muestra cerrado (400 MELI_NOT_CONFIRMED), espera sola y reintenta hasta
+  // MELI_WAIT_SECONDS en total — antes el conductor tenía que volver a tocar "Confirmar" a mano una y otra vez.
+  const submitWithMeliWait = async (ids: string[], payload: DeliveryConfirmationData) => {
+    const deadline = Date.now() + MELI_WAIT_SECONDS * 1000;
+    stopWaitRef.current = false;
+    for (;;) {
+      try {
+        await onConfirm(ids, payload);
+        return;
+      } catch (err: any) {
+        if (!isMeliNotConfirmed(err) || stopWaitRef.current || !aliveRef.current || Date.now() >= deadline) throw err;
+        await waitForMeli(ids, deadline);
+        if (!aliveRef.current || stopWaitRef.current) throw err;
+        // Mercado Libre ya lo confirma (o se acabó el tiempo): se reintenta el cierre; si sigue sin confirmar, decide el
+        // próximo giro del ciclo (reintenta o termina si ya no queda tiempo).
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid) return;
-    
+    if (!isFormValid || submittingRef.current) return;
+
     // Si son múltiples paquetes y no han confirmado la advertencia, la mostramos
     if (pkgList.length > 1 && !isConfirmingMultiple) {
       setIsConfirmingMultiple(true);
       return;
     }
 
+    submittingRef.current = true;
     setIsLoading(true);
     setError(null);
     try {
-      await onConfirm(pkgList.map(p => p.id), {
+      await submitWithMeliWait(pkgList.map(p => p.id), {
         receiverName,
         receiverId,
         photosBase64,
       });
       clearDraft();
     } catch (err: any) {
+      if (!aliveRef.current) return; // el conductor cerró la pantalla mientras se esperaba
       if (err.status === 404) {
         setError('Uno de los paquetes ya no está disponible para entrega (puede haber sido reasignado o cancelado).');
+      } else if (isMeliNotConfirmed(err)) {
+        setError('Mercado Libre aún no confirma el cierre de esta entrega. Ciérrala en la app de Mercado Libre Flex y luego vuelve a presionar «Confirmar Entrega».');
       } else {
         setError(err.message || 'Ocurrió un error inesperado al confirmar la entrega.');
       }
       setIsLoading(false);
       setIsConfirmingMultiple(false);
+    } finally {
+      submittingRef.current = false;
+      if (aliveRef.current) setMeliWaitLeft(null);
     }
   };
 
@@ -312,6 +401,11 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
           <p className="text-sm text-[var(--text-muted)] mb-6">
             Estás a punto de confirmar la entrega de <strong className="text-[var(--brand-primary)]">{pkgList.length} paquetes</strong> de forma simultánea. Todos se registrarán con la misma firma y datos de recepción.
           </p>
+          {meliWaitLeft !== null && (
+            <div className="mb-4">
+              <MeliWaitNotice secondsLeft={meliWaitLeft} onStop={() => { stopWaitRef.current = true; }} />
+            </div>
+          )}
           <div className="flex flex-col space-y-2">
             <button
               onClick={(e) => {
@@ -320,7 +414,7 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
               disabled={isLoading}
               className="w-full py-3 px-4 text-sm font-bold text-white bg-orange-600 rounded-xl hover:bg-orange-700 shadow-md transition-all"
             >
-              {isLoading ? 'Confirmando...' : 'Sí, confirmar múltiples entregas'}
+              {isLoading ? (meliWaitLeft !== null ? 'Esperando a Mercado Libre…' : 'Confirmando...') : 'Sí, confirmar múltiples entregas'}
             </button>
             <button
               type="button"
@@ -369,6 +463,7 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto no-scrollbar">
             {error && <p className="text-sm text-[var(--error-text)] bg-[var(--error-bg)] p-3 rounded-md flex items-center"><IconAlertTriangle className="w-4 h-4 mr-2"/> {error}</p>}
+            {meliWaitLeft !== null && <MeliWaitNotice secondsLeft={meliWaitLeft} onStop={() => { stopWaitRef.current = true; }} />}
 
             {pkgList.length === 1 && mainPkg.recipientAddress && (
                 <div className="text-xs text-[var(--text-secondary)] bg-[var(--background-muted)] px-3 py-2 rounded-md">
@@ -462,7 +557,7 @@ const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({ p
           <footer className="px-6 py-4 bg-[var(--background-muted)] rounded-b-xl flex justify-end space-x-3 border-t border-[var(--border-primary)]">
             <button type="button" onClick={() => { clearDraft(); onClose(); }} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)]">Cancelar</button>
             <button type="submit" disabled={!isFormValid || isLoading} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
-              {isLoading ? 'Confirmando...' : 'Confirmar Entrega'}
+              {isLoading ? (meliWaitLeft !== null ? 'Esperando a Mercado Libre…' : 'Confirmando...') : 'Confirmar Entrega'}
             </button>
           </footer>
         </form>
