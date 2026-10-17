@@ -1,7 +1,7 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 
 // --- JUMPSELLER API HELPERS ---
@@ -122,6 +122,10 @@ async function autoImportJumpsellerPackages() {
     console.log('[JumpsellerPolling] Starting auto-import cycle...');
     let importedThisCycle = 0;
     try {
+        // Comunas habilitadas en el setup (una vez por ciclo). Vacío = el setup no tiene comunas activas: se aceptan todas las conocidas.
+        const { rows: activeRows } = await db.query('SELECT name FROM active_communes WHERE "isActive" = true');
+        const validCommunes = activeRows.map(r => normalizeCommune(r.name).toLowerCase());
+
         // 1. Get all users with Jumpseller integration (old or new format)
         const { rows: users } = await db.query(`
             SELECT id, integrations, "clientIdentifier", address, "pickupAddress" 
@@ -180,6 +184,15 @@ async function autoImportJumpsellerPackages() {
                                     const shipping = order.shipping_address || {};
                                     const municipality = (shipping.municipality || '').toLowerCase();
                                     const city = (shipping.city || '').toLowerCase();
+
+                                    // Comuna reconocida y NO habilitada en el setup → el pedido no entra. La lista fija de más abajo
+                                    // incluía TODAS las comunas de la RM, también las que el setup tiene desactivadas. Si el texto no
+                                    // identifica ninguna comuna se mantiene el criterio anterior.
+                                    const zone = checkOrderCommune([shipping.municipality, shipping.city], validCommunes, { strict: false });
+                                    if (!zone.allow) {
+                                        console.log(`[JumpsellerPolling] Skipping order ${order.id} - comuna "${zone.commune}" NO habilitada (${account.nickname}).`);
+                                        continue;
+                                    }
                                     
                                     const isRM = municipality.includes('metropolitana') || 
                                                  municipality.includes('santiago') || 
@@ -214,7 +227,7 @@ async function autoImportJumpsellerPackages() {
                                         shippingType: 'SAME_DAY',
                                         origin: origin,
                                         recipientAddress: shipping.address || 'N/A',
-                                        recipientCommune: normalizeCommune(shipping.municipality || 'N/A'),
+                                        recipientCommune: zone.commune || normalizeCommune(shipping.municipality || 'N/A'),
                                         recipientCity: normalizeCity(shipping.city || 'Santiago'),
                                         notes: `Auto-Import Jumpseller Order: ${order.id}`,
                                         estimatedDelivery: importNow,

@@ -1,7 +1,7 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 
 // --- WOOCOMMERCE API HELPERS ---
@@ -223,6 +223,16 @@ async function autoImportWooCommercePackages(activeCommunes = []) {
                                     
                                     const city = (address.city || '').toLowerCase();
                                     const state = (address.state || '').toLowerCase();
+
+                                    // Comuna reconocida y NO habilitada en el setup → el pedido no entra (antes solo se revisaba la
+                                    // región y entraba cualquier comuna de la RM, también las que el setup tiene desactivadas). Si el
+                                    // texto no identifica ninguna comuna ("Región Metropolitana", vacío...) se mantiene el criterio de
+                                    // región de más abajo.
+                                    const zone = checkOrderCommune([address.city, billing.city], validCommunes, { strict: false });
+                                    if (!zone.allow) {
+                                        console.log(`[WooCommercePolling] Skipping order ${order.number || orderId} - comuna "${zone.commune}" NO habilitada (${account.nickname}).`);
+                                        continue;
+                                    }
                                     
                                     const isRM = state.includes('metropolitana') || 
                                                  state.includes('santiago') || 
@@ -245,7 +255,7 @@ async function autoImportWooCommercePackages(activeCommunes = []) {
                                         shippingType: 'SAME_DAY',
                                         origin: 'Centro de Distribución',
                                         recipientAddress: `${address.address_1 || ''} ${address.address_2 || ''}`.trim() || billing.address_1 || 'N/A',
-                                        recipientCommune: normalizeCommune(address.city || billing.city || 'N/A'),
+                                        recipientCommune: zone.commune || normalizeCommune(address.city || billing.city || 'N/A'),
                                         recipientCity: normalizeCity('Región Metropolitana'),
                                         notes: `Auto-Import WooCommerce Order: ${order.number || orderId}`,
                                         estimatedDelivery: nowImport,

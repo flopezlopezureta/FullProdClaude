@@ -145,7 +145,54 @@ const normalizeCity = (city) => {
     return city.trim().toUpperCase();
 };
 
+// Comunas reales del sistema (nombres canónicos de RM_COMMUNES), para distinguir "comuna conocida" de texto cualquiera.
+const KNOWN_COMMUNE_SET = new Set(RM_COMMUNES);
+
+/**
+ * Identifica la comuna de un texto de ciudad/comuna de un pedido externo.
+ * Devuelve el nombre canónico en MAYÚSCULAS (p. ej. "ÑUÑOA", "SAN JOSÉ DE MAIPO") o null si el texto no corresponde a
+ * ninguna comuna conocida (vacío, "N/A", "Región Metropolitana", "RM", "Santiago de Chile"...).
+ * Además del texto completo prueba cada parte de un texto compuesto ("Ñuñoa, Santiago", "Las Condes / Apoquindo"), de
+ * izquierda a derecha, y devuelve la primera que sea una comuna conocida.
+ */
+const resolveKnownCommune = (raw) => {
+    if (!raw || typeof raw !== 'string') return null;
+    const whole = normalizeCommune(raw);
+    if (KNOWN_COMMUNE_SET.has(whole)) return whole;
+    for (const part of raw.split(/[,;\/()|]+/)) {
+        const text = part.trim();
+        if (!text) continue;
+        const canonical = normalizeCommune(text);
+        if (KNOWN_COMMUNE_SET.has(canonical)) return canonical;
+    }
+    return null;
+};
+
+/**
+ * ¿Debe entrar un pedido externo (Shopify, WooCommerce, Jumpseller) según las comunas HABILITADAS en el setup?
+ * rawTexts: textos candidatos de comuna/ciudad del pedido, en orden de preferencia.
+ * validCommunes: comunas habilitadas (el resultado de normalizeCommune(...).toLowerCase() de active_communes); si viene
+ * vacía (setup sin comunas activas) se consideran habilitadas todas las comunas conocidas, como hacen los demás importadores.
+ *  - strict = true  → solo entra si la comuna se reconoce Y está habilitada (igual que Mercado Libre y Falabella).
+ *  - strict = false → se descarta únicamente cuando se reconoce una comuna NO habilitada; si el texto no identifica ninguna
+ *    comuna se deja pasar para que decida el criterio anterior de cada importador.
+ * Devuelve { allow, commune, reason } con commune = nombre canónico o null.
+ */
+const checkOrderCommune = (rawTexts, validCommunes, { strict = true } = {}) => {
+    let commune = null;
+    for (const text of (Array.isArray(rawTexts) ? rawTexts : [rawTexts])) {
+        commune = resolveKnownCommune(text);
+        if (commune) break;
+    }
+    if (!commune) return { allow: !strict, commune: null, reason: 'unknown' };
+    const enabled = new Set((validCommunes || []).map(c => normalizeCommune(c)));
+    const active = enabled.size === 0 || enabled.has(commune);
+    return { allow: active, commune, reason: active ? 'active' : 'inactive' };
+};
+
 module.exports = {
     normalizeCommune,
-    normalizeCity
+    normalizeCity,
+    resolveKnownCommune,
+    checkOrderCommune
 };

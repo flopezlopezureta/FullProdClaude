@@ -1,7 +1,7 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 const { encrypt, decrypt } = require('./falabellaCrypto');
 
@@ -289,19 +289,18 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                     if (existing.length > 0) continue;
 
                                     const address = order.shippingAddress || order.billingAddress || {};
-                                    const province = (address.province || '').toLowerCase();
-                                    const city = (address.city || '').toLowerCase();
 
-                                    const isRM = province.includes('metropolitana') ||
-                                                 province.includes('santiago') ||
-                                                 province.includes('rm') ||
-                                                 province.includes('r.m.') ||
-                                                 city.includes('santiago') ||
-                                                 city.includes('metropolitana') ||
-                                                 city.includes('rm') ||
-                                                 validCommunes.includes(city);
-
-                                    if (!isRM) continue;
+                                    // La comuna del pedido tiene que ser una comuna HABILITADA en el setup, igual que en Mercado Libre y
+                                    // Falabella. Antes solo se revisaba que el pedido fuera de la Región Metropolitana: entraban pedidos de
+                                    // Talagante, San José de Maipo, Buin, etc., la limpieza automática los borraba a los pocos minutos y,
+                                    // como el pedido seguía abierto en Shopify, la vuelta siguiente los volvía a importar — aparecían y
+                                    // desaparecían de la lista todo el día. Un pedido sin comuna reconocible ("N/A", sin datos del
+                                    // comprador) tampoco entra: esa misma limpieza lo borraría igual.
+                                    const zone = checkOrderCommune([address.city], validCommunes, { strict: true });
+                                    if (!zone.allow) {
+                                        console.log(`[ShopifyPolling] Skipping order ${order.name || orderId} - ${zone.commune ? `comuna "${zone.commune}" NO habilitada` : 'sin comuna reconocible'} (${account.nickname}).`);
+                                        continue;
+                                    }
 
                                     const nowImport = new Date();
                                     const newPackage = {
@@ -313,7 +312,7 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                         shippingType: 'SAME_DAY',
                                         origin: 'Centro de Distribución',
                                         recipientAddress: `${address.address1 || ''} ${address.address2 || ''}`.trim() || 'N/A',
-                                        recipientCommune: normalizeCommune(address.city || 'N/A'),
+                                        recipientCommune: zone.commune,
                                         recipientCity: normalizeCity('Región Metropolitana'),
                                         notes: `Auto-Import Shopify Order: ${order.name || orderId}`,
                                         estimatedDelivery: nowImport,
