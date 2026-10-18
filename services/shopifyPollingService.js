@@ -1,7 +1,7 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity, checkOrderCommune, allowsIncompleteShopifyData } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 const { encrypt, decrypt } = require('./falabellaCrypto');
 
@@ -9,7 +9,7 @@ const { encrypt, decrypt } = require('./falabellaCrypto');
 // Shopify exige API GraphQL exclusiva para apps nuevas desde el 1 de abril de 2025 — REST
 // (/orders.json) ya no se acepta en revisión para una app que nunca fue aprobada antes de esa
 // fecha, como esta. Reemplaza al viejo makeShopifyRequest (REST) por completo.
-const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}) => {
+const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}, { allowPartial = false } = {}) => {
     return new Promise((resolve, reject) => {
         if (!shopUrl) return reject(new Error('La URL de la tienda es requerida.'));
         if (!accessToken) return reject(new Error('El Access Token de Shopify es requerido.'));
@@ -46,6 +46,13 @@ const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}) 
                     // GraphQL puede responder 200 y aun así traer errores (query inválida,
                     // campo sin permiso, etc.) en vez de un status HTTP de error.
                     if (res.statusCode >= 200 && res.statusCode < 300 && !parsed.errors) {
+                        resolve(parsed.data);
+                    } else if (allowPartial && res.statusCode >= 200 && res.statusCode < 300 && parsed.data
+                        && Array.isArray(parsed.errors) && parsed.errors.length > 0
+                        && parsed.errors.every(e => e && e.extensions && e.extensions.code === 'ACCESS_DENIED')) {
+                        // Tienda sin acceso a los datos protegidos del comprador (nombre, dirección, teléfono, email): Shopify
+                        // entrega el pedido igual, con esos campos vacíos, y lo avisa con errores ACCESS_DENIED. Solo se acepta
+                        // para los clientes marcados con datos incompletos; para el resto el error rechaza la consulta como siempre.
                         resolve(parsed.data);
                     } else {
                         reject({ statusCode: res.statusCode, body: parsed.errors || parsed });
@@ -233,6 +240,7 @@ async function autoImportShopifyPackages(activeCommunes = []) {
         for (const user of users) {
             const clientId = user.id;
             const clientIdentifier = user.clientIdentifier || 'CLI';
+            const incompleteOk = allowsIncompleteShopifyData(clientIdentifier);
             
             let integrations = ensureMultiAccountStructure(user.integrations);
             const shopifyAccounts = integrations.accounts.filter(acc => acc.type === 'SHOPIFY');
@@ -273,7 +281,8 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                 shopify.shopUrl,
                                 validAccessToken,
                                 SHOPIFY_ORDERS_QUERY,
-                                { searchQuery: 'status:open financial_status:paid', first: 50 }
+                                { searchQuery: 'status:open financial_status:paid', first: 50 },
+                                { allowPartial: incompleteOk }
                             );
                             const orders = (gqlData?.orders?.edges || []).map(e => e.node);
 
@@ -297,7 +306,13 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                     // desaparecían de la lista todo el día. Un pedido sin comuna reconocible ("N/A", sin datos del
                                     // comprador) tampoco entra: esa misma limpieza lo borraría igual.
                                     const zone = checkOrderCommune([address.city], validCommunes, { strict: true });
-                                    if (!zone.allow) {
+                                    // Cliente con pedidos de datos incompletos (SHOPIFY_INCOMPLETE_DATA_CLIENTS): el pedido es válido aunque la
+                                    // tienda no entregue la comuna, así que entra igual. Una comuna reconocida pero deshabilitada se sigue descartando.
+                                    const incompleteAllowed = incompleteOk && !zone.commune;
+                                    if (incompleteAllowed) {
+                                        console.log(`[ShopifyPolling] Order ${order.name || orderId} imported with incomplete buyer data (client ${clientIdentifier}, ${account.nickname}).`);
+                                    }
+                                    if (!zone.allow && !incompleteAllowed) {
                                         console.log(`[ShopifyPolling] Skipping order ${order.name || orderId} - ${zone.commune ? `comuna "${zone.commune}" NO habilitada` : 'sin comuna reconocible'} (${account.nickname}).`);
                                         continue;
                                     }
@@ -312,7 +327,7 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                         shippingType: 'SAME_DAY',
                                         origin: 'Centro de Distribución',
                                         recipientAddress: `${address.address1 || ''} ${address.address2 || ''}`.trim() || 'N/A',
-                                        recipientCommune: zone.commune,
+                                        recipientCommune: zone.commune || 'N/A',
                                         recipientCity: normalizeCity('Región Metropolitana'),
                                         notes: `Auto-Import Shopify Order: ${order.name || orderId}`,
                                         estimatedDelivery: nowImport,

@@ -148,6 +148,25 @@ const normalizeCity = (city) => {
 // Comunas reales del sistema (nombres canónicos de RM_COMMUNES), para distinguir "comuna conocida" de texto cualquiera.
 const KNOWN_COMMUNE_SET = new Set(RM_COMMUNES);
 
+// Abreviaturas habituales que escriben los compradores en tiendas online ("Qta Normal", "Est. Central"...). Solo las usa
+// resolveKnownCommune (importadores de Shopify, WooCommerce y Jumpseller); normalizeCommune no cambia para no alterar a los demás.
+// La clave va sin tildes, sin puntos ni comas y con espacios simples (ver abbreviationKey).
+const COMMUNE_ABBREVIATIONS = {
+    'QTA NORMAL': 'QUINTA NORMAL',
+    'EST CENTRAL': 'ESTACIÓN CENTRAL',
+    'P AGUIRRE CERDA': 'PEDRO AGUIRRE CERDA',
+    'PTE ALTO': 'PUENTE ALTO'
+};
+const abbreviationKey = (text) => text.toUpperCase().split('').map(char => ACCENT_MAP[char] || char).join('')
+    .replace(/[.,]/g, ' ').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Clientes de Shopify cuyos pedidos llegan con los datos del comprador incompletos (la tienda no entrega nombre, dirección ni
+// comuna, que quedan como "N/A"). Esos pedidos SON válidos: entran igual, sin exigir comuna reconocible, y la limpieza automática
+// no los borra. Se identifica por clientIdentifier. Una comuna reconocida pero deshabilitada se sigue descartando.
+//   COME-4e35 = Comercializadora Acuario (libreriaacuario.myshopify.com)
+const SHOPIFY_INCOMPLETE_DATA_CLIENTS = ['COME-4e35'];
+const allowsIncompleteShopifyData = (clientIdentifier) => !!clientIdentifier && SHOPIFY_INCOMPLETE_DATA_CLIENTS.includes(clientIdentifier);
+
 /**
  * Identifica la comuna de un texto de ciudad/comuna de un pedido externo.
  * Devuelve el nombre canónico en MAYÚSCULAS (p. ej. "ÑUÑOA", "SAN JOSÉ DE MAIPO") o null si el texto no corresponde a
@@ -157,11 +176,15 @@ const KNOWN_COMMUNE_SET = new Set(RM_COMMUNES);
  */
 const resolveKnownCommune = (raw) => {
     if (!raw || typeof raw !== 'string') return null;
+    const aliasWhole = COMMUNE_ABBREVIATIONS[abbreviationKey(raw)];
+    if (aliasWhole) return aliasWhole;
     const whole = normalizeCommune(raw);
     if (KNOWN_COMMUNE_SET.has(whole)) return whole;
     for (const part of raw.split(/[,;\/()|]+/)) {
         const text = part.trim();
         if (!text) continue;
+        const aliasPart = COMMUNE_ABBREVIATIONS[abbreviationKey(text)];
+        if (aliasPart) return aliasPart;
         const canonical = normalizeCommune(text);
         if (KNOWN_COMMUNE_SET.has(canonical)) return canonical;
     }
@@ -194,5 +217,7 @@ module.exports = {
     normalizeCommune,
     normalizeCity,
     resolveKnownCommune,
-    checkOrderCommune
+    checkOrderCommune,
+    SHOPIFY_INCOMPLETE_DATA_CLIENTS,
+    allowsIncompleteShopifyData
 };

@@ -1,7 +1,7 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity, SHOPIFY_INCOMPLETE_DATA_CLIENTS } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding, geocodeAddress } = require('./geocodingService');
 const gisService = require('./gisService');
 const { emitDriverEvent } = require('./driverEvents');
@@ -1109,11 +1109,18 @@ async function cleanupOutOfZonePackages() {
                    -- operador, asi que limpiarlos es correcto, igual que ya se hace con Meli.
                     (
                       source = 'SHOPIFY' AND
-                      NOT (LOWER("recipientCommune") = ANY($1))
+                      NOT (LOWER("recipientCommune") = ANY($1)) AND
+                      -- Excepcion: los pedidos de Shopify de clientes con datos incompletos (SHOPIFY_INCOMPLETE_DATA_CLIENTS, hoy
+                      -- Acuario) llegan sin comuna ("N/A") y son validos; sin esta excepcion se importaban y se borraban a los pocos
+                      -- minutos, vuelta tras vuelta. Una comuna reconocida y deshabilitada de ese mismo cliente sigue limpiandose.
+                      NOT (
+                          UPPER(TRIM(COALESCE("recipientCommune", ''))) IN ('', 'N/A')
+                          AND EXISTS (SELECT 1 FROM users u WHERE u.id = packages."creatorId" AND u."clientIdentifier" = ANY($2))
+                      )
                     )
                 )
         `;
-        const { rows: toDelete } = await db.query(queryFind, [validCommunes]);
+        const { rows: toDelete } = await db.query(queryFind, [validCommunes, SHOPIFY_INCOMPLETE_DATA_CLIENTS]);
         
         if (toDelete.length > 0) {
             const ids = toDelete.map(r => r.id);
