@@ -8,7 +8,7 @@ import {
 } from '../Icon';
 import {
     TARGET_PCT, CUTOFF_HOUR, LOW_VOLUME, METHOD_NOTES, mondayOf, addDays, weeksEndingAt, weekLabel, shortDate, fmtInt, fmtPct, fmtDelta, deltaPp,
-    sellersForWeek, totalsForWeek, weeklyTrend, dailyForWeek, excludedForWeek, sortSellers,
+    sellersForWeek, totalsForWeek, weeklyTrend, dailyForWeek, excludedForWeek, sortSellers, clip,
 } from '../../utils/meliWeeklyReport';
 import type { MeliWeeklyReport, GroupBy, SellerStats, Stats, SortKey } from '../../utils/meliWeeklyReport';
 import { downloadMeliWeeklyExcel, downloadMeliWeeklyPdf } from '../../utils/meliWeeklyExports';
@@ -196,7 +196,7 @@ const MeliWeeklyDeliveryReport: React.FC = () => {
     };
 
     // ---------- datos de los gráficos ----------
-    const barData = useMemo(() => withData.map(s => ({ key: s.key, name: s.name, pct: s.onTimePct ?? 0, below: s.onTimeBelow, onTime: s.onTime, total: s.total, deliveredPct: s.deliveredPct }))
+    const barData = useMemo(() => withData.map(s => ({ key: s.key, name: s.name, title: s.title, detail: s.detail, pct: s.onTimePct ?? 0, below: s.onTimeBelow, onTime: s.onTime, total: s.total, deliveredPct: s.deliveredPct }))
         .sort((a, b) => a.pct - b.pct || b.total - a.total), [withData]);
     // Eje de la tendencia: no parte de cero (es una línea), pero siempre incluye la meta, con marcas limpias (cada 5 o 10 puntos).
     const trendScale = useMemo(() => {
@@ -315,8 +315,20 @@ const MeliWeeklyDeliveryReport: React.FC = () => {
                                 <BarChart data={barData} layout="vertical" margin={{ top: 22, right: 4, bottom: 8, left: 4 }} barCategoryGap={6}>
                                     <CartesianGrid horizontal={false} stroke={C.grid} />
                                     <XAxis type="number" domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 10, fill: C.muted }} axisLine={{ stroke: C.axis }} tickLine={false} />
-                                    <YAxis type="category" dataKey="name" width={170} interval={0} tick={{ fontSize: 11, fontWeight: 700, fill: C.ink2 }} axisLine={{ stroke: C.axis }} tickLine={false}
-                                        tickFormatter={(v: string) => (v.length > 26 ? `${v.slice(0, 25)}…` : v)} />
+                                    {/* El nombre va en dos líneas: el cliente y, debajo, la cuenta de Mercado Libre (al agrupar por cuenta), cada una recortada por separado para no perder la cuenta. */}
+                                    <YAxis type="category" dataKey="name" width={204} interval={0} axisLine={{ stroke: C.axis }} tickLine={false}
+                                        tick={(p: any) => {
+                                            const d = barByName.get(p.payload?.value);
+                                            if (!d) return <g />;
+                                            const x = Number(p.x) - 6, y = Number(p.y);
+                                            return (
+                                                <g>
+                                                    <title>{d.name}</title>
+                                                    <text x={x} y={d.detail ? y - 6 : y} textAnchor="end" dominantBaseline="central" fontSize={11} fontWeight={700} fill={C.ink2}>{clip(d.title, 33)}</text>
+                                                    {d.detail && <text x={x} y={y + 7} textAnchor="end" dominantBaseline="central" fontSize={9.5} fill={C.muted}>{clip(d.detail, 38)}</text>}
+                                                </g>
+                                            );
+                                        }} />
                                     {/* Los valores van en una columna a la derecha del gráfico (no en la punta de cada barra) para que la línea de la meta nunca los cruce. */}
                                     <YAxis yAxisId="valores" orientation="right" type="category" dataKey="name" width={78} interval={0} axisLine={false} tickLine={false}
                                         tick={(p: any) => {
@@ -425,8 +437,8 @@ const MeliWeeklyDeliveryReport: React.FC = () => {
                                 <tr key={s.key} tabIndex={0} onClick={() => setOpenSeller(s.key)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenSeller(s.key); } }}
                                     className="group border-t border-slate-100 hover:bg-slate-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500">
                                     <td className="px-3 py-2.5 sticky left-0 bg-white group-hover:bg-slate-50 z-[1] min-w-[220px]">
-                                        <div className="font-black text-slate-900 leading-tight">{s.name}</div>
-                                        <div className="text-[10px] font-bold text-slate-400">{s.identifier || '—'}{groupBy === 'client' && s.accounts.length > 1 ? ` · ${s.accounts.length} cuentas ML` : ''}{s.lowVolume ? ' · pocos paquetes' : ''}</div>
+                                        <div className="font-black text-slate-900 leading-tight">{s.title}</div>
+                                        <div className="text-[10px] font-bold text-slate-400">{s.detail ? `${s.detail} · ` : ''}{s.identifier || '—'}{groupBy === 'client' && s.accounts.length > 1 ? ` · ${s.accounts.length} cuentas ML` : ''}{s.lowVolume ? ' · pocos paquetes' : ''}</div>
                                     </td>
                                     <td className="px-2 py-2.5 text-center font-bold text-slate-800 tabular-nums">{fmtInt(s.total)}</td>
                                     <td className="px-2 py-2.5 text-center text-slate-700 tabular-nums">{fmtInt(s.onTime)}</td>
@@ -501,7 +513,7 @@ const SellerPanel: React.FC<{ stats: SellerStats; weekStart: string; groupBy: Gr
                 <div className="p-5 border-b border-slate-100 bg-slate-50 flex items-start justify-between gap-3">
                     <div>
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Semana {weekLabel(weekStart)}</div>
-                        <h3 className="text-xl font-black text-slate-900 leading-tight">{stats.name}</h3>
+                        <h3 className="text-xl font-black text-slate-900 leading-tight">{stats.title}</h3>
                         <div className="text-[11px] font-bold text-slate-500 mt-0.5">{stats.identifier || '—'} · {stats.accounts.join(', ')}</div>
                     </div>
                     <button type="button" onClick={onClose} aria-label="Cerrar" className="p-2 rounded-full hover:bg-slate-200 text-slate-500"><IconX className="w-5 h-5" /></button>

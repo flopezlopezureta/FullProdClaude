@@ -1,7 +1,7 @@
 // Exportación del informe de cumplimiento de entregas de Mercado Libre: Excel con formato (rojo bajo la meta) y PDF A4 horizontal.
 import { renderPagesToPdf, esc } from './pdfPages';
 import {
-  TARGET_PCT, CUTOFF_HOUR, METHOD_NOTES, fmtInt, fmtPct, fmtDelta, deltaPp, weekLabel, shortDate, dailyForWeek, isBelow, pctFloor,
+  TARGET_PCT, CUTOFF_HOUR, METHOD_NOTES, fmtInt, fmtPct, fmtDelta, deltaPp, weekLabel, shortDate, dailyForWeek, isBelow, pctFloor, clip,
 } from './meliWeeklyReport';
 import type { SellerStats, Stats, MeliWeeklyRow, GroupBy, weeklyTrend } from './meliWeeklyReport';
 
@@ -82,7 +82,8 @@ export async function buildMeliWeeklyWorkbook(input: MeliExportInput) {
 
   // ---- Hoja 1: resumen de la semana por seller ----
   const ws = wb.addWorksheet('Resumen semanal', { views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-  ws.columns = [{ width: 34 }, { width: 13 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 13 }, { width: 13 }, { width: 10 }, { width: 14 }];
+  const nameW = Math.min(60, Math.max(34, ...input.sellers.map(s => s.name.length + 2))); // el nombre completo debe caber (por cuenta ML son más largos)
+  ws.columns = [{ width: nameW }, { width: 13 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 13 }, { width: 13 }, { width: 10 }, { width: 14 }];
   ws.mergeCells('A1:M1'); ws.getCell('A1').value = `Cumplimiento de entregas Mercado Libre · semana ${weekLabel(input.weekStart)}`; ws.getCell('A1').font = { bold: true, size: 15, color: { argb: 'FF0F172A' } };
   ws.mergeCells('A2:M2'); ws.getCell('A2').value = `Meta de Mercado Libre: ${TARGET_PCT} % · Corte diario ${CUTOFF_HOUR}:00 · Por ${groupLabel(input.groupBy)} · ${input.isCurrentWeek ? 'Semana en curso (parcial) · ' : ''}Generado el ${stamp(input.generatedAt)}`; ws.getCell('A2').font = { size: 10, color: { argb: 'FF475569' } };
   ws.mergeCells('A3:M3'); ws.getCell('A3').value = `Rojo = porcentaje bajo la meta de ${TARGET_PCT} % (riesgo de multa). Los porcentajes se truncan a 1 decimal.`; ws.getCell('A3').font = { size: 10, italic: true, color: { argb: 'FFB91C1C' } };
@@ -104,7 +105,7 @@ export async function buildMeliWeeklyWorkbook(input: MeliExportInput) {
 
   // ---- Hoja 2: detalle diario por seller ----
   const wd = wb.addWorksheet('Detalle diario', { views: [{ state: 'frozen', xSplit: 2, ySplit: 1 }] });
-  wd.columns = [{ width: 34 }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 13 }, { width: 13 }, { width: 10 }];
+  wd.columns = [{ width: nameW }, { width: 12 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 13 }, { width: 13 }, { width: 10 }];
   headerRow(wd, 1, ['Cliente', 'Día', 'Paquetes', 'Antes 21:00', '% antes 21:00', 'Después 21:00', 'Total entregados', '% entregados', 'Cancelados', 'Reprogramados', 'Reasignados otro día', 'Sin cierre']);
   let r2 = 2;
   for (const s of input.sellers) {
@@ -231,16 +232,20 @@ function trendSvg(trend: MeliExportInput['trend'], w: number, h: number): string
 const worstBars = (sellers: SellerStats[]) => {
   const list = sellers.filter(s => s.total > 0).sort((a, b) => (a.onTimePct ?? 101) - (b.onTimePct ?? 101) || b.total - a.total).slice(0, 10);
   if (!list.length) return `<div style="color:${MUTED};font-size:12px;padding:20px 0">Sin paquetes gestionados en la semana</div>`;
-  const trackW = 250;
+  const trackW = 190;
+  // Los nombres se recortan aquí (clip) y nunca con overflow/text-overflow: el generador de PDF dibuja mal ese recorte y corta las letras por la mitad.
   return list.map(s => {
     const below = isBelow(s.onTime, s.total);
     return `<div style="display:flex;align-items:center;gap:8px;height:31px">
-      <div style="width:190px;font-size:11px;font-weight:700;color:${INK};white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.name)}">${esc(s.name)}</div>
+      <div style="width:215px;line-height:1.2">
+        <div style="font-size:11px;font-weight:800;color:${INK};white-space:nowrap">${esc(clip(s.title, 32))}</div>
+        ${s.detail ? `<div style="font-size:9px;font-weight:600;color:#64748b;white-space:nowrap">${esc(clip(s.detail, 40))}</div>` : ''}
+      </div>
       <div style="position:relative;width:${trackW}px;height:12px;background:#f1f5f9;border-radius:0 4px 4px 0">
         <div style="position:absolute;left:0;top:0;height:12px;width:${Math.max(2, Math.round(trackW * (s.onTimePct ?? 0) / 100))}px;background:${below ? RED : BLUE};border-radius:0 4px 4px 0"></div>
         <div style="position:absolute;left:${Math.round(trackW * TARGET_PCT / 100)}px;top:-3px;height:18px;width:2px;background:#334155"></div>
       </div>
-      <div style="width:64px;font-size:11px;font-weight:900;color:${below ? RED_TEXT : GREEN_TEXT};text-align:right">${below ? '▼ ' : '✓ '}${esc(fmtPct(s.onTimePct))}</div>
+      <div style="width:62px;font-size:11px;font-weight:900;color:${below ? RED_TEXT : GREEN_TEXT};text-align:right">${below ? '▼ ' : '✓ '}${esc(fmtPct(s.onTimePct))}</div>
       <div style="font-size:9.5px;color:${MUTED}">${fmtInt(s.onTime)}/${fmtInt(s.total)}</div>
     </div>`;
   }).join('');
@@ -250,16 +255,19 @@ const tableHead = (by: GroupBy) => {
   const th = (t: string, extra = '', rowspan = 1) => `<th rowspan="${rowspan}" style="padding:5px 6px;font-size:9.5px;font-weight:800;color:#fff;background:#1e1b4b;border:1px solid #312e81;text-align:center;${extra}">${t}</th>`;
   const gh = (t: string, span: number) => `<th colspan="${span}" style="padding:4px 6px;font-size:9.5px;font-weight:800;color:#fff;background:#334155;border:1px solid #475569;text-align:center">${t}</th>`;
   return `<thead>
-    <tr>${th(by === 'account' ? 'Cliente · Cuenta ML' : 'Seller', 'text-align:left;width:230px', 2)}${th('Paquetes', '', 2)}${gh(`Entregados antes de las ${CUTOFF_HOUR}:00`, 2)}${th(`Después de las ${CUTOFF_HOUR}:00`, '', 2)}${gh('Total entregados', 2)}${gh('No entregados el mismo día', 4)}${th('Estado', '', 2)}</tr>
+    <tr>${th(by === 'account' ? 'Cliente · Cuenta ML' : 'Seller', 'text-align:left;width:300px', 2)}${th('Paquetes', '', 2)}${gh(`Entregados antes de las ${CUTOFF_HOUR}:00`, 2)}${th(`Después de las ${CUTOFF_HOUR}:00`, '', 2)}${gh('Total entregados', 2)}${gh('No entregados el mismo día', 4)}${th('Estado', '', 2)}</tr>
     <tr>${th('Paq.')}${th('%')}${th('Paq.')}${th('%')}${th('Cancel.')}${th('Reprog.')}${th('Reasig. otro día')}${th('Sin cierre')}</tr>
   </thead>`;
 };
 
-const tableRow = (name: string, ident: string | null, s: Stats, bold = false) => {
+// `stacked`: el cliente arriba y la cuenta ML (o el detalle) debajo, en dos líneas; si no, todo en una línea (cliente + identificador).
+const tableRow = (name: string, ident: string | null, s: Stats, bold = false, stacked = false) => {
   const td = (v: string, extra = '') => `<td style="padding:3px 6px;font-size:10px;text-align:right;border:1px solid ${GRID};font-variant-numeric:tabular-nums;${bold ? 'font-weight:900;background:#f1f5f9;' : ''}${extra}">${v}</td>`;
   const estado = s.total === 0 ? `<span style="color:${MUTED}">Sin paquetes</span>` : s.atRisk ? `<span style="color:${RED_TEXT};font-weight:900">▼ En riesgo</span>` : `<span style="color:${GREEN_TEXT};font-weight:900">✓ En meta</span>`;
   return `<tr>
-    <td style="padding:3px 6px;font-size:10px;font-weight:${bold ? 900 : 700};border:1px solid ${GRID};${bold ? 'background:#f1f5f9;' : ''}white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px">${esc(name)}${ident ? ` <span style="color:${MUTED};font-weight:600;font-size:9px">${esc(ident)}</span>` : ''}</td>
+    <td style="padding:3px 6px;font-size:10px;font-weight:${bold ? 900 : 700};border:1px solid ${GRID};${bold ? 'background:#f1f5f9;' : ''}white-space:nowrap">${stacked
+      ? `<div style="line-height:1.2">${esc(name)}</div>${ident ? `<div style="line-height:1.2;color:${MUTED};font-weight:600;font-size:9px">${esc(ident)}</div>` : ''}`
+      : `${esc(name)}${ident ? ` <span style="color:${MUTED};font-weight:600;font-size:9px">${esc(ident)}</span>` : ''}`}</td>
     ${td(fmtInt(s.total))}${td(fmtInt(s.onTime))}${td(pctHtml(s.onTime, s.total))}${td(fmtInt(s.lateSameDay))}${td(fmtInt(s.delivered))}${td(pctHtml(s.delivered, s.total))}
     ${td(fmtInt(s.cancelled))}${td(fmtInt(s.rescheduled))}${td(fmtInt(s.reassigned))}${td(fmtInt(s.noClose))}${td(estado, 'text-align:center')}
   </tr>`;
@@ -303,7 +311,7 @@ export function buildMeliWeeklyPdfPages(input: MeliExportInput): string[] {
     </div>`;
 
   // Tabla: 20 filas por hoja; la última hoja lleva el TOTAL, la leyenda y cómo se calcula.
-  const PER_PAGE = 25;
+  const PER_PAGE = input.groupBy === 'account' ? 19 : 25;   // por cuenta ML cada fila ocupa dos líneas, así que caben menos por hoja
   const chunks: SellerStats[][] = [];
   for (let i = 0; i < input.sellers.length; i += PER_PAGE) chunks.push(input.sellers.slice(i, i + PER_PAGE));
   if (chunks.length === 0) chunks.push([]);
@@ -311,7 +319,8 @@ export function buildMeliWeeklyPdfPages(input: MeliExportInput): string[] {
       <span><b style="color:${RED_TEXT}">▼ rojo</b> = bajo la meta de ${TARGET_PCT} % (riesgo de multa)</span><span><b style="color:${GREEN_TEXT}">✓ verde</b> = en meta</span><span>Porcentajes truncados a 1 decimal</span></div>`;
   const tablePages = chunks.map((chunk, idx) => {
     const last = idx === chunks.length - 1;
-    const rows = chunk.map(s => tableRow(s.name, s.identifier, s)).join('') + (last ? tableRow('TOTAL', null, t, true) : '');
+    // Una sola línea por fila (alto fijo, la hoja cabe completa): cliente y, a su lado, la cuenta ML (o el identificador), cada uno recortado.
+    const rows = chunk.map(s => tableRow(clip(s.title, 36), s.detail ? clip(s.detail, 36) : s.identifier, s, false, input.groupBy === 'account')).join('') + (last ? tableRow('TOTAL', null, t, true) : '');
     return `
       <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:3px solid #1e293b;padding-bottom:5px">
         <div style="font-size:16px;font-weight:900;letter-spacing:.05em;color:${INK};text-transform:uppercase">Detalle por ${esc(groupLabel(input.groupBy))}</div>

@@ -50,7 +50,11 @@ export interface Stats extends Counts {
   lowVolume: boolean;
 }
 
-export interface SellerStats extends Stats { key: string; name: string; identifier: string | null; accounts: string[] }
+/** `name` es el nombre completo ("Cliente · Cuenta" al agrupar por cuenta); `title` y `detail` son sus dos partes para mostrarlas en dos líneas. */
+export interface SellerStats extends Stats { key: string; name: string; title: string; detail: string | null; identifier: string | null; accounts: string[] }
+
+/** Recorta un texto largo con "…" (para donde no cabe: en el PDF no se puede confiar en el recorte automático del navegador). */
+export const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…` : text);
 
 /** Cómo se calcula el informe: se muestra en pantalla ("Cómo se calcula"), en el Excel y en el PDF, siempre el mismo texto. */
 export const METHOD_NOTES: string[] = [
@@ -122,18 +126,18 @@ const sellerName = (r: MeliWeeklyRow, by: GroupBy) => (by === 'account' ? `${r.c
 /** Suma las filas de UNA semana por seller (cliente, o cuenta de Mercado Libre). Solo incluye sellers con paquetes gestionados en la semana. */
 export function sellersForWeek(rows: MeliWeeklyRow[], weekStart: string, by: GroupBy = 'client', target: number = TARGET_PCT): SellerStats[] {
   const end = addDays(weekStart, 6);
-  const map = new Map<string, { name: string; identifier: string | null; accounts: Set<string>; counts: Counts }>();
+  const map = new Map<string, { name: string; title: string; detail: string | null; identifier: string | null; accounts: Set<string>; counts: Counts }>();
   for (const r of rows) {
     if (r.day < weekStart || r.day > end) continue;
     const k = sellerKey(r, by);
-    if (!map.has(k)) map.set(k, { name: sellerName(r, by), identifier: r.clientIdentifier, accounts: new Set(), counts: emptyCounts() });
+    if (!map.has(k)) map.set(k, { name: sellerName(r, by), title: r.clientName, detail: by === 'account' ? r.accountName : null, identifier: r.clientIdentifier, accounts: new Set(), counts: emptyCounts() });
     const m = map.get(k)!;
     m.accounts.add(r.accountName);
     addRow(m.counts, r);
   }
   return [...map.entries()]
     .filter(([, m]) => m.counts.total > 0 || m.counts.inRouteToday > 0)
-    .map(([key, m]) => ({ key, name: m.name, identifier: m.identifier, accounts: [...m.accounts].sort(), ...toStats(m.counts, target) }));
+    .map(([key, m]) => ({ key, name: m.name, title: m.title, detail: m.detail, identifier: m.identifier, accounts: [...m.accounts].sort(), ...toStats(m.counts, target) }));
 }
 
 /** Total de todos los sellers de una semana. */
