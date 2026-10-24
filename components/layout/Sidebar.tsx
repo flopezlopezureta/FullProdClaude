@@ -49,7 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     if (activeView.startsWith('users-')) menus.add('users');
     if (['assign-pickups', 'pickup-report'].includes(activeView)) menus.add('pickups');
     if (['settings', 'integrations'].includes(activeView)) menus.add('configuration');
-    if (['delivery-analytics', 'late-deliveries', 'activity-audit', 'fleet-control'].includes(activeView)) menus.add('reports');
+    if (['delivery-analytics', 'late-deliveries', 'activity-audit', 'fleet-control', 'meli-weekly-delivery'].includes(activeView)) menus.add('reports');
     if (['geolocate', 'zone-settings', 'live-map', 'sector-editor', 'projection-map'].includes(activeView)) menus.add('logistics');
     return menus;
   });
@@ -145,6 +145,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         { id: 'delivery-analytics', label: 'Análisis Logístico (BI)', icon: <IconBarChart className="h-5 w-5" /> },
         { id: 'activity-audit', label: 'Auditoría de Actividad', icon: <IconFileText className="h-5 w-5 text-amber-600" /> },
         { id: 'late-deliveries', label: 'Auditoría Nocturna (>21h)', icon: <IconClock className="h-5 w-5 text-red-500" /> },
+        { id: 'meli-weekly-delivery', label: 'Cumplimiento Meli (Semanal)', icon: <IconTarget className="h-5 w-5 text-indigo-600" /> },
         { id: 'meli-confirmed-stuck', label: 'Pendientes Confirmados Meli', icon: <IconAlertTriangle className="h-5 w-5 text-amber-600" /> },
       ]
     },

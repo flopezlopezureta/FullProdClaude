@@ -27,6 +27,7 @@ import AdminBillingSummary from '../admin/AdminBillingSummary';
 import LogisticsBIDashboard from '../admin/LogisticsBIDashboard';
 import LateDeliveriesAnalysis from '../admin/LateDeliveriesAnalysis';
 import MeliConfirmedStuckReport from '../admin/MeliConfirmedStuckReport';
+import MeliWeeklyDeliveryReport from '../admin/MeliWeeklyDeliveryReport';
 import DispatchScanner from '../auxiliar/DispatchScanner';
 import { PickupDashboard } from '../admin/PickupDashboard';
 import PickupReportPage from '../admin/PickupReportPage';
@@ -246,6 +247,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'meli-confirmed-stuck':
         if (isAdmin) return { title: 'Pendientes Confirmados por Mercado Libre', content: <MeliConfirmedStuckReport /> };
+        break;
+
+      case 'meli-weekly-delivery':
+        if (isAdmin) return { title: 'Cumplimiento de Entregas Mercado Libre (Semanal)', content: <MeliWeeklyDeliveryReport /> };
         break;
 
       case 'driver-performance':

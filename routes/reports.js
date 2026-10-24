@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const timeService = require('../services/timeService');
+const meliWeekly = require('../services/meliWeeklyDelivery');
 
 /**
  * GET /api/reports/activity-audit
@@ -159,6 +161,41 @@ router.patch('/meli-confirmed-stuck/:id/reviewed', authMiddleware, async (req, r
     } catch (err) {
         console.error('Error updating meliStuckReviewed:', err);
         res.status(500).json({ message: 'Error al actualizar el estado de revisión.' });
+    }
+});
+
+// GET /api/reports/meli-weekly-delivery?weekStart=YYYY-MM-DD&weeks=8[&refresh=1]
+// Cumplimiento de entregas de Mercado Libre por seller y por día de gestión (el frontend suma por semana lunes-domingo y marca en
+// rojo lo que baja del 97 %). Solo lectura. Las reglas de cálculo están documentadas en services/meliWeeklyDelivery.js.
+// Cache de 45 s con una sola consulta en vuelo por combinación (el cálculo recorre los eventos de varias semanas): varios
+// administradores abriendo el informe a la vez no multiplican la carga; "refresh=1" salta el cache.
+const meliWeeklyCache = new Map();
+const MELI_WEEKLY_TTL_MS = 45 * 1000;
+router.get('/meli-weekly-delivery', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    try {
+        const tz = await timeService.getSystemTimezone();
+        const today = await timeService.getLogicalDate();
+        const weekStart = req.query.weekStart ? String(req.query.weekStart) : today;
+        if (!meliWeekly.isIsoDate(weekStart)) {
+            return res.status(400).json({ message: 'weekStart debe ser una fecha válida YYYY-MM-DD.' });
+        }
+        const weeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || meliWeekly.DEFAULT_WEEKS, 1), meliWeekly.MAX_WEEKS);
+        const key = `${tz}|${meliWeekly.mondayOf(weekStart)}|${weeks}|${today}`;
+        const hit = meliWeeklyCache.get(key);
+        if (!req.query.refresh && hit && Date.now() - hit.at < MELI_WEEKLY_TTL_MS) {
+            return res.json(await hit.promise);
+        }
+        const promise = meliWeekly.buildMeliWeeklyDeliveryReport({ query: (text, params) => db.query(text, params), tz, weekStart, weeks, today });
+        meliWeeklyCache.set(key, { at: Date.now(), promise });
+        if (meliWeeklyCache.size > 12) meliWeeklyCache.delete(meliWeeklyCache.keys().next().value);
+        promise.catch(() => meliWeeklyCache.delete(key)); // un error no se queda en el cache
+        res.json(await promise);
+    } catch (err) {
+        console.error('Error in meli-weekly-delivery report:', err);
+        res.status(500).json({ message: 'Error al generar el informe de cumplimiento de entregas de Mercado Libre.' });
     }
 });
 
