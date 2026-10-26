@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { PackageStatus, ShippingType, Role } from '../constants';
 import type { PerformanceReport } from '../utils/performanceTypes';
+import type { DriverDayRoute } from '../utils/routePlanning';
 
 const API_URL = '/api';
 
@@ -441,6 +442,8 @@ export const api = {
   // Geo
   updateDriverLocation: (driverId: string, latitude: number, longitude: number) => post<void>('/geo/update-location', { driverId, latitude, longitude }),
   getActiveDriversLocations: () => get<User[]>('/geo/active-drivers'),
+  // Paradas de un conductor en un día (hoy por defecto) con la hora real de cada visita: base de la ruta realizada/sugerida del Mapa en Vivo.
+  getDriverRoute: (driverId: string, date?: string) => get<DriverDayRoute>(`/geo/driver-route?driverId=${encodeURIComponent(driverId)}${date ? `&date=${encodeURIComponent(date)}` : ''}`),
   getRoutePolyline: (points: {lat: number, lng: number}[]) => post<[number, number][]>('/geo/route', { points }),
 
   // Pickups & Assignments (Legacy + New System)

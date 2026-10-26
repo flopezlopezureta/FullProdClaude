@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const timeService = require('../services/timeService');
+const { buildDriverDayRoute, isIsoDate } = require('../services/driverDayRoute');
 
 // POST /api/geo/update-location
 router.post('/update-location', authMiddleware, async (req, res) => {
@@ -40,6 +42,30 @@ router.get('/active-drivers', authMiddleware, async (req, res) => {
         }
         console.error(err);
         res.status(500).json({ message: 'Error al obtener la ubicación de los conductores.' });
+    }
+});
+
+// GET /api/geo/driver-route?driverId=...[&date=YYYY-MM-DD]
+// Paradas de un conductor en un día (por defecto hoy, día lógico con corte 02:00) con la hora real de cada visita, para dibujar su ruta
+// realizada y calcular la sugerida en el Mapa en Vivo. Solo lectura; solo administradores y operadores (trae direcciones de clientes).
+router.get('/driver-route', authMiddleware, async (req, res) => {
+    if (!['ADMIN', 'OPERADOR_SISTEMAS'].includes(req.user.role)) {
+        return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    try {
+        const tz = await timeService.getSystemTimezone();
+        const today = await timeService.getLogicalDate();
+        const date = req.query.date ? String(req.query.date) : today;
+        if (!isIsoDate(date)) return res.status(400).json({ message: 'date debe ser una fecha válida YYYY-MM-DD.' });
+        if (date > today) return res.status(400).json({ message: 'No hay rutas de días futuros.' });
+        const driverId = String(req.query.driverId || '');
+        if (!driverId || driverId.length > 100) return res.status(400).json({ message: 'Falta driverId.' });
+        const result = await buildDriverDayRoute({ query: (text, params) => db.query(text, params), driverId, date, tz, today });
+        if (!result) return res.status(404).json({ message: 'Conductor no encontrado.' });
+        res.json(result);
+    } catch (err) {
+        console.error('Error in driver-route:', err);
+        res.status(500).json({ message: 'Error al obtener la ruta del conductor.' });
     }
 });
 

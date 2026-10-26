@@ -1,10 +1,17 @@
 
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { getLocalDateString } from '../../utils/dateUtils';
+import React, { useEffect, useRef, useState, useMemo, useCallback, useContext } from 'react';
+import { getLocalDateString, getLogicalDateString } from '../../utils/dateUtils';
+import { AuthContext } from '../../contexts/AuthContext';
 import { User, Package } from '../../types';
 import { PackageStatus, MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../constants';
 import { api } from '../../services/api';
 import { IconRefresh, IconLoader, IconMapPin, IconBattery, IconWifi, IconCopy, IconPower, IconX, IconSearch } from '../Icon';
+import DriverRoutePanel from './DriverRoutePanel';
+import type { RouteMode } from './DriverRoutePanel';
+import {
+    visitsOf, pendingOf, withoutLocation, visitQuality, planRemainingRoute, planDoneRoute, etaTimes, pointsAlong, stopKind, fmtClock, SERVICE_SECONDS,
+} from '../../utils/routePlanning';
+import type { DriverDayRoute, PlannedRoute, RoadRoute, RouteStop, LatLng } from '../../utils/routePlanning';
 
 declare const L: any;
 
@@ -33,9 +40,9 @@ function formatTimeAgo(date: Date | null): string {
     if (!date) return 'Nunca';
     const now = new Date();
     const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    
+
     if (seconds < 60) return `hace segundos`;
-    
+
     let interval = seconds / 31536000;
     if (interval > 1) return `hace ${Math.floor(interval)} años`;
     interval = seconds / 2592000;
@@ -48,12 +55,23 @@ function formatTimeAgo(date: Date | null): string {
     return `hace ${Math.floor(interval)} minutos`;
 }
 
+// Los datos de clientes llegan de afuera: se escapan antes de ponerlos dentro del HTML de un popup.
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const ROUTE_COLORS = { done: '#16a34a', attempt: '#dc2626', plan: '#2563eb' };
+const GPS_FRESH_MS = 15 * 60 * 1000;   // una posición más vieja que esto ya no sirve como punto de partida de la ruta sugerida
 
 const LiveMap: React.FC = () => {
+    const auth = useContext(AuthContext);
+    const tz = auth?.systemSettings?.timezone || 'America/Santiago';
+    const todayLogical = getLogicalDateString(new Date(), tz);
     const mapRef = useRef<any>(null);
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const markersLayerRef = useRef<any>(null);
     const packageClusterRef = useRef<any>(null);
+    const routeLayerRef = useRef<any>(null);
+    const stopMarkersRef = useRef<Record<string, any>>({});
+    const lastRouteFitRef = useRef<string>('');
     const [activeDrivers, setActiveDrivers] = useState<User[]>([]);
     const [packages, setPackages] = useState<Package[]>([]);
     const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -62,6 +80,21 @@ const LiveMap: React.FC = () => {
     const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
     const [driverSearch, setDriverSearch] = useState('');
     const lastFitDriverIdRef = useRef<string | null | undefined>(undefined);
+
+    // --- Ruta del conductor seleccionado (realizada + sugerida) ---
+    const [routeMode, setRouteMode] = useState<RouteMode>('both');
+    const [routeDate, setRouteDate] = useState<string>(todayLogical);
+    const [routeData, setRouteData] = useState<DriverDayRoute | null>(null);
+    const [routeLoading, setRouteLoading] = useState(false);
+    const [routeError, setRouteError] = useState<string | null>(null);
+    const [doneRoad, setDoneRoad] = useState<RoadRoute | null>(null);
+    const [planState, setPlanState] = useState<{ plan: PlannedRoute; at: Date } | null>(null);
+    const [planning, setPlanning] = useState(false);
+    const [replanTick, setReplanTick] = useState(0);
+    const [focusId, setFocusId] = useState<string | null>(null);
+    const routeReqRef = useRef(0);
+    const doneReqRef = useRef(0);
+    const planReqRef = useRef(0);
 
     const fetchData = useCallback(async () => {
         try {
@@ -109,6 +142,7 @@ const LiveMap: React.FC = () => {
                 spiderfyOnMaxZoom: true,
                 showCoverageOnHover: false,
             }).addTo(mapRef.current);
+            routeLayerRef.current = L.layerGroup().addTo(mapRef.current);
             setTimeout(() => mapRef.current?.invalidateSize(), 100);
         }
 
@@ -120,13 +154,14 @@ const LiveMap: React.FC = () => {
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;
+                routeLayerRef.current = null;
             }
         };
     }, [fetchData]);
 
-    const allApprovedDrivers = useMemo(() => 
+    const allApprovedDrivers = useMemo(() =>
         allUsers.filter(u => u.role === 'DRIVER' && u.status === 'APROBADO')
-                .sort((a,b) => a.name.localeCompare(b.name)), 
+                .sort((a,b) => a.name.localeCompare(b.name)),
     [allUsers]);
 
     const driverStatuses = useMemo(() => {
@@ -134,7 +169,7 @@ const LiveMap: React.FC = () => {
         return allApprovedDrivers.map(driver => {
             const isActive = activeDriverIds.has(driver.id);
             const activeDriverData = isActive ? activeDrivers.find(d => d.id === driver.id) : null;
-            
+
             const driverPackages = packages.filter(p => p.driverId === driver.id);
             const total = driverPackages.length;
             const delivered = driverPackages.filter(p => p.status === PackageStatus.Delivered).length;
@@ -154,6 +189,8 @@ const LiveMap: React.FC = () => {
             };
         });
     }, [allApprovedDrivers, activeDrivers, packages]);
+    const driverStatusesRef = useRef(driverStatuses);
+    driverStatusesRef.current = driverStatuses;
 
     const filteredDriverStatuses = useMemo(() => {
         const q = driverSearch.trim().toLowerCase();
@@ -161,8 +198,156 @@ const LiveMap: React.FC = () => {
         return driverStatuses.filter(d => d.name.toLowerCase().includes(q));
     }, [driverStatuses, driverSearch]);
 
+    const selectedStatus = useMemo(() => driverStatuses.find(d => d.id === selectedDriverId) || null, [driverStatuses, selectedDriverId]);
+    // Con un conductor elegido, la lista se reduce a su fila para dejar sitio a su ruta; al buscar por nombre vuelven todos los que coinciden.
+    const visibleDriverRows = useMemo(
+        () => (selectedDriverId && !driverSearch.trim() ? filteredDriverStatuses.filter(d => d.id === selectedDriverId) : filteredDriverStatuses),
+        [filteredDriverStatuses, selectedDriverId, driverSearch],
+    );
+    const [legendOpen, setLegendOpen] = useState(true);
+
+    // ---------- datos de la ruta del conductor seleccionado ----------
+    const loadRoute = useCallback(async (driverId: string, date: string, silent: boolean) => {
+        const mine = ++routeReqRef.current;
+        if (!silent) { setRouteLoading(true); setRouteError(null); }
+        try {
+            const data = await api.getDriverRoute(driverId, date);
+            if (routeReqRef.current !== mine) return;          // el admin ya cambió de conductor o de día
+            setRouteData(data);
+            setRouteError(null);
+        } catch (e: any) {
+            if (routeReqRef.current !== mine) return;
+            if (!silent) setRouteError(e?.message || 'No se pudo cargar la ruta del conductor.');
+        } finally {
+            if (routeReqRef.current === mine && !silent) setRouteLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
-        console.log('[LiveMap DEBUG] Efecto de marcadores. mapRef:', !!mapRef.current, 'markersLayerRef:', !!markersLayerRef.current, 'packageClusterRef:', !!packageClusterRef.current, 'selectedDriverId:', selectedDriverId);
+        // Al cambiar de conductor o de día se parte limpio: no se muestra la ruta del anterior mientras carga la nueva.
+        setRouteData(null); setDoneRoad(null); setPlanState(null); setRouteError(null); setFocusId(null);
+        lastRouteFitRef.current = '';
+        if (!selectedDriverId) { routeReqRef.current++; return; }
+        loadRoute(selectedDriverId, routeDate, false);
+        const timer = routeDate === todayLogical ? setInterval(() => loadRoute(selectedDriverId, routeDate, true), 30000) : null;
+        return () => { if (timer) clearInterval(timer); routeReqRef.current++; };
+    }, [selectedDriverId, routeDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const visits = useMemo(() => (routeData ? visitsOf(routeData.stops) : []), [routeData]);
+    const pending = useMemo(() => (routeData ? pendingOf(routeData.stops) : []), [routeData]);
+    const quality = useMemo(() => visitQuality(visits), [visits]);
+    const without = useMemo<RouteStop[]>(() => (routeData ? withoutLocation(routeData.stops.filter(s => ['done', 'attempt', 'open'].includes(stopKind(s)))) : []), [routeData]);
+    const visitsKey = visits.map(v => v.stop.id).join(',');
+    const pendingKey = pending.map(s => s.id).join(',');
+    const wantDone = routeMode === 'both' || routeMode === 'done';
+    const wantPlan = (routeMode === 'both' || routeMode === 'plan') && !!routeData?.isToday;
+
+    // Trazado por calles de la ruta realizada (se recalcula solo si cambian las paradas visitadas).
+    useEffect(() => {
+        const mine = ++doneReqRef.current;
+        if (!wantDone || visits.length < 2) { setDoneRoad(null); return; }
+        planDoneRoute(visits).then(r => { if (doneReqRef.current === mine) setDoneRoad(r); }).catch(() => { if (doneReqRef.current === mine) setDoneRoad(null); });
+    }, [visitsKey, wantDone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Ruta sugerida: se recalcula cuando cambia el conjunto de paradas pendientes (p. ej. tras una entrega) o con "Recalcular". NO en cada
+    // movimiento del conductor, para no saturar el servicio de calles; sale de su posición del momento del cálculo.
+    useEffect(() => {
+        const mine = ++planReqRef.current;
+        if (!wantPlan || !selectedDriverId) { setPlanState(null); setPlanning(false); return; }
+        const drv = driverStatusesRef.current.find(d => d.id === selectedDriverId);
+        const fresh = !!drv && drv.latitude != null && drv.longitude != null && !!drv.lastUpdate && Date.now() - drv.lastUpdate.getTime() < GPS_FRESH_MS;
+        const lastVisit = visits[visits.length - 1];
+        let start: LatLng | null = null;
+        let startKind: PlannedRoute['startKind'] = 'free';
+        if (fresh) { start = [drv!.latitude as number, drv!.longitude as number]; startKind = 'driver'; }
+        else if (lastVisit) { start = [lastVisit.stop.lat, lastVisit.stop.lng]; startKind = 'lastStop'; }
+        setPlanning(true);
+        planRemainingRoute({ stops: pending, start, startKind })
+            .then(plan => { if (planReqRef.current === mine) setPlanState({ plan, at: new Date() }); })
+            .catch(err => { console.error('No se pudo calcular la ruta sugerida', err); })
+            .finally(() => { if (planReqRef.current === mine) setPlanning(false); });
+    }, [pendingKey, wantPlan, replanTick, selectedDriverId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const etas = useMemo(() => (planState && routeData?.isToday ? etaTimes(planState.plan.legs, planState.at, SERVICE_SECONDS) : []), [planState, routeData?.isToday]);
+    const routeActive = !!selectedDriverId && routeMode !== 'off' && !!routeData && !routeError;
+
+    // ---------- dibujo de la ruta en el mapa ----------
+    useEffect(() => {
+        const map = mapRef.current;
+        const group = routeLayerRef.current;
+        if (!map || !group) return;
+        group.clearLayers();
+        stopMarkersRef.current = {};
+        if (!routeActive || !routeData) return;
+
+        const bounds: LatLng[] = [];
+        const addLine = (pts: LatLng[], color: string, dashed: boolean) => {
+            if (pts.length < 2) return;
+            L.polyline(pts, { color: '#ffffff', weight: 8, opacity: 0.85, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(group);
+            L.polyline(pts, { color, weight: 4, opacity: 0.95, dashArray: dashed ? '9 9' : undefined, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(group);
+            pointsAlong(pts, 650).forEach(a => {
+                L.marker(a.at, {
+                    icon: L.divIcon({ html: `<div class="rt-arrow" style="transform:rotate(${a.bearing.toFixed(0)}deg);border-bottom-color:${color}"></div>`, className: 'rt-arrow-wrap', iconSize: [10, 10], iconAnchor: [5, 5] }),
+                    interactive: false, keyboard: false,
+                }).addTo(group);
+            });
+            pts.forEach(p => bounds.push(p));
+        };
+        const addStop = (n: number, color: string, stop: RouteStop & { lat: number; lng: number }, popup: string, isNext = false) => {
+            const marker = L.marker([stop.lat, stop.lng], {
+                icon: L.divIcon({ html: `<div class="rt-pin${stop.approx ? ' approx' : ''}${isNext ? ' next' : ''}" style="background:${color}">${n}</div>`, className: '', iconSize: [26, 26], iconAnchor: [13, 13] }),
+                zIndexOffset: isNext ? 1000 : 0,
+            }).bindPopup(popup, { maxWidth: 260 }).addTo(group);
+            stopMarkersRef.current[stop.id] = marker;
+            bounds.push([stop.lat, stop.lng]);
+        };
+        const stopInfo = (s: RouteStop) => `
+            <div style="font-size:12px;margin-top:3px">${esc(s.address || 'Sin dirección')}</div>
+            <div style="font-size:11px;color:#6b7280">${esc(s.commune)}${s.approx ? ' · ubicación aproximada' : ''}</div>
+            <div style="font-size:11px;margin-top:3px">${esc(s.recipient || '')}</div>
+            <div style="font-size:10px;color:#6b7280">Paquete ${esc(s.id)}${s.flexCode ? ` · FLEX ${esc(s.flexCode)}` : ''}</div>`;
+
+        if (wantDone) {
+            if (doneRoad && doneRoad.geometry.length > 1) addLine(doneRoad.geometry, ROUTE_COLORS.done, false);
+            else if (visits.length > 1) addLine(visits.map(v => [v.stop.lat, v.stop.lng] as LatLng), ROUTE_COLORS.done, false);   // mientras llega el trazado por calles
+            visits.forEach((v, i) => addStop(i + 1, v.kind === 'done' ? ROUTE_COLORS.done : ROUTE_COLORS.attempt, v.stop,
+                `<div><b>#${i + 1} · ${v.kind === 'done' ? 'Entregada' : 'No se pudo entregar'}</b>${stopInfo(v.stop)}<div style="font-size:11px;margin-top:3px">Hora real: <b>${fmtClock(v.at, tz)}</b></div></div>`));
+        }
+        if (wantPlan && planState) {
+            const { plan } = planState;
+            if (plan.geometry.length > 1) addLine(plan.geometry, ROUTE_COLORS.plan, true);
+            plan.order.forEach((s, i) => addStop(visits.length + i + 1, ROUTE_COLORS.plan, s,
+                `<div><b>#${visits.length + i + 1} · Pendiente${i === 0 ? ' (siguiente)' : ''}</b>${stopInfo(s)}${etas[i] ? `<div style="font-size:11px;margin-top:3px">Llegada estimada: <b>${fmtClock(etas[i], tz)}</b></div>` : ''}</div>`, i === 0));
+        }
+
+        // Encuadra la ruta una vez por conductor/día/modo (no en cada refresco, o el mapa se movería solo mientras el admin lo mira).
+        const key = `${selectedDriverId}|${routeData.date}|${routeMode}`;
+        if (lastRouteFitRef.current !== key && bounds.length > 0) {
+            lastRouteFitRef.current = key;
+            const drv = driverStatusesRef.current.find(d => d.id === selectedDriverId);
+            if (drv?.latitude != null && drv?.longitude != null && drv.isOnline) bounds.push([drv.latitude, drv.longitude]);
+            try { map.fitBounds(L.latLngBounds(bounds), { padding: [50, 50], maxZoom: 15 }); } catch (err) { console.error('No se pudo encuadrar la ruta', err); }
+        }
+
+        // Las flechas de dirección estorban con el mapa muy alejado: solo se ven desde el zoom 13.
+        const container = map.getContainer();
+        const applyZoom = () => container.classList.toggle('rt-hide-arrows', map.getZoom() < 13);
+        applyZoom();
+        map.on('zoomend', applyZoom);
+        return () => { map.off('zoomend', applyZoom); };
+    }, [routeActive, routeData, visits, doneRoad, planState, etas, wantDone, wantPlan, routeMode, selectedDriverId, tz]);
+
+    const handleFocusStop = useCallback((id: string) => {
+        setFocusId(id);
+        const marker = stopMarkersRef.current[id];
+        if (marker && mapRef.current) {
+            mapRef.current.setView(marker.getLatLng(), Math.max(mapRef.current.getZoom(), 16), { animate: true });
+            marker.openPopup();
+        }
+    }, []);
+
+    // ---------- conductores y pines ----------
+    useEffect(() => {
         if (!mapRef.current || !markersLayerRef.current || !packageClusterRef.current) return;
 
         markersLayerRef.current.clearLayers();
@@ -185,8 +370,8 @@ const LiveMap: React.FC = () => {
             if (driver.latitude && driver.longitude) {
                 const position: [number, number] = [driver.latitude, driver.longitude];
                 const marker = L.marker(position, { icon: driverIcon })
-                    .bindPopup(`<b>${driver.name}</b><br>${driver.email}`)
-                    .bindTooltip(`<b>${driver.name}</b>`, {
+                    .bindPopup(`<b>${esc(driver.name)}</b><br>${esc(driver.email)}`)
+                    .bindTooltip(`<b>${esc(driver.name)}</b>`, {
                         permanent: true, direction: 'top', offset: [0, -40], className: 'driver-name-tooltip'
                     });
                 markersLayerRef.current.addLayer(marker);
@@ -195,11 +380,11 @@ const LiveMap: React.FC = () => {
 
         // Solo se dibujan los paquetes del conductor seleccionado - con todos los
         // conductores a la vez, el mapa se llena de cientos de puntos superpuestos
-        // e ilegibles (el problema original que motivo este cambio).
-        const visiblePackages = selectedDriverId
+        // e ilegibles (el problema original que motivo este cambio). Cuando la ruta
+        // del conductor está visible, sus paradas numeradas reemplazan a estos pines.
+        const visiblePackages = selectedDriverId && !routeActive
             ? packages.filter(p => p.driverId === selectedDriverId && p.destLatitude && p.destLongitude)
             : [];
-        console.log('[LiveMap DEBUG] visiblePackages para', selectedDriverId, ':', visiblePackages.length, 'de', packages.length, 'paquetes totales cargados');
 
         visiblePackages.forEach(pkg => {
             const position: [number, number] = [pkg.destLatitude!, pkg.destLongitude!];
@@ -210,12 +395,12 @@ const LiveMap: React.FC = () => {
 
             const popupContent = `
                 <div class="p-1">
-                    <b class="text-sm">Paquete: ${pkg.id}</b><br>
-                    ${pkg.meliFlexCode ? `<span class="text-[10px] bg-yellow-100 text-yellow-800 px-1 rounded font-bold">FLEX: ${pkg.meliFlexCode}</span><br>` : ''}
-                    <span class="text-xs font-bold ${labelColorClass}">Estado: ${statusLabel}</span><br>
-                    <span class="text-xs">Dest: ${pkg.recipientName}</span><br>
-                    <span class="text-xs">Dir: ${pkg.recipientAddress}</span><br>
-                    <span class="text-xs">Conductor: ${assignedDriver?.name || 'No asignado'}</span><br>
+                    <b class="text-sm">Paquete: ${esc(pkg.id)}</b><br>
+                    ${pkg.meliFlexCode ? `<span class="text-[10px] bg-yellow-100 text-yellow-800 px-1 rounded font-bold">FLEX: ${esc(pkg.meliFlexCode)}</span><br>` : ''}
+                    <span class="text-xs font-bold ${labelColorClass}">Estado: ${esc(statusLabel)}</span><br>
+                    <span class="text-xs">Dest: ${esc(pkg.recipientName)}</span><br>
+                    <span class="text-xs">Dir: ${esc(pkg.recipientAddress)}</span><br>
+                    <span class="text-xs">Conductor: ${esc(assignedDriver?.name || 'No asignado')}</span><br>
                     <span class="text-[10px] text-gray-500">Act: ${formatTimeAgo(new Date(pkg.updatedAt))}</span>
                 </div>
             `;
@@ -228,30 +413,29 @@ const LiveMap: React.FC = () => {
 
         // Encuadra el mapa a los paquetes del conductor recien seleccionado, una sola vez por
         // seleccion (no en cada refresco de 15s, o el mapa se re-centraria solo mientras el
-        // admin intenta mirarlo).
+        // admin intenta mirarlo). Con la ruta visible, el encuadre lo hace el dibujo de la ruta.
         if (selectedDriverId !== lastFitDriverIdRef.current) {
             lastFitDriverIdRef.current = selectedDriverId;
-            if (selectedDriverId) {
+            if (selectedDriverId && !routeActive) {
                 try {
                     const bounds = packageClusterRef.current.getBounds();
                     const selDriver = activeDrivers.find(d => d.id === selectedDriverId);
                     if (selDriver?.latitude && selDriver?.longitude) {
                         bounds.extend([selDriver.latitude, selDriver.longitude]);
                     }
-                    console.log('[LiveMap DEBUG] bounds.isValid():', bounds?.isValid?.());
                     if (bounds.isValid && bounds.isValid()) {
                         mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
                     }
                 } catch (err) {
-                    console.error('[LiveMap DEBUG] Error al encuadrar el mapa:', err);
+                    console.error('[LiveMap] Error al encuadrar el mapa:', err);
                 }
             }
         }
 
-    }, [activeDrivers, packages, allUsers, selectedDriverId]);
-    
+    }, [activeDrivers, packages, allUsers, selectedDriverId, routeActive]);
+
     const handleDriverClick = (driver: typeof driverStatuses[0]) => {
-        console.log('[LiveMap DEBUG] Click en fila de conductor:', driver.name, driver.id);
+        setRouteDate(todayLogical);
         setSelectedDriverId(prev => prev === driver.id ? null : driver.id);
         if (driver.isOnline && driver.latitude && driver.longitude && mapRef.current) {
             mapRef.current.setView([driver.latitude, driver.longitude], 14, { animate: true });
@@ -263,13 +447,13 @@ const LiveMap: React.FC = () => {
         Un conductor aparece 'Offline' si no podemos recibir su ubicación. Pídele que revise lo siguiente en su teléfono (es muy importante seguir todos los pasos):
 
         1.  📍 *GPS / Ubicación:* Asegurarse de que los servicios de ubicación estén *ACTIVADOS*.
-    
+
         2.  🔐 *Permisos de la App:* Ir a Ajustes -> Aplicaciones -> (Nombre de la App) -> Permisos y verificar que la *UBICACIÓN* esté permitida ("Permitir siempre" o "Mientras se usa").
-    
+
         3.  🔋 *Ahorro de Batería:* Ir a Ajustes -> Batería -> Optimización de batería y *EXCLUIR* nuestra app para que no se cierre en segundo plano.
-    
+
         4.  🔌 *IMPORTANTE - App sin Uso:* En la misma pantalla de información de la app, buscar una opción llamada "Pausar actividad si no se usa" o "Quitar permisos si la app no se usa" y *DESACTIVARLA*.
-    
+
         5.  📶 *Conexión a Internet:* Verificar que tenga una conexión de datos móviles o Wi-Fi estable.
         `;
         navigator.clipboard.writeText(instructions.trim()).then(() => {
@@ -285,6 +469,11 @@ const LiveMap: React.FC = () => {
             <style>{`
                 .driver-name-tooltip { background-color: var(--background-secondary); color: var(--text-primary); border: 1px solid var(--border-secondary); padding: 2px 8px; border-radius: 9999px; font-size: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); white-space: nowrap; }
                 .driver-name-tooltip.leaflet-tooltip-top:before { border-top-color: var(--border-secondary); }
+                .rt-pin { width: 26px; height: 26px; border-radius: 50%; color: #fff; font: 800 11px/22px system-ui, -apple-system, 'Segoe UI', sans-serif; text-align: center; border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.5); box-sizing: border-box; }
+                .rt-pin.approx { border-style: dashed; }
+                .rt-pin.next { box-shadow: 0 0 0 4px rgba(37,99,235,.38), 0 1px 5px rgba(0,0,0,.5); }
+                .rt-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 10px solid #16a34a; filter: drop-shadow(0 0 1px #fff); }
+                .rt-hide-arrows .rt-arrow-wrap { display: none; }
             `}</style>
             <div className="flex flex-col md:flex-row gap-4" style={{ height: '75vh' }}>
                 <div className="flex-grow bg-[var(--background-secondary)] shadow-md rounded-lg p-4 h-full relative">
@@ -292,14 +481,17 @@ const LiveMap: React.FC = () => {
 
                     {!selectedDriverId && (
                         <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-[var(--background-secondary)] px-4 py-2 rounded-lg shadow-lg border border-[var(--border-primary)] z-[1000] text-sm font-semibold text-[var(--text-secondary)]">
-                            Selecciona un conductor para ver sus entregas del día
+                            Selecciona un conductor para ver su ruta del día
                         </div>
                     )}
 
                     {/* Map Legend */}
                     <div className="absolute bottom-8 left-8 bg-[var(--background-secondary)] p-3 rounded-lg shadow-lg border border-[var(--border-primary)] z-[1000] text-xs">
-                        <h4 className="font-bold mb-2 border-b border-[var(--border-primary)] pb-1">Leyenda</h4>
-                        <div className="space-y-2">
+                        <button type="button" onClick={() => setLegendOpen(o => !o)} aria-expanded={legendOpen} title={legendOpen ? 'Ocultar la leyenda' : 'Mostrar la leyenda'}
+                            className={`w-full flex items-center justify-between gap-6 font-bold text-left ${legendOpen ? 'mb-2 border-b border-[var(--border-primary)] pb-1' : ''}`}>
+                            <span>Leyenda</span><span aria-hidden="true" className="text-[var(--text-muted)]">{legendOpen ? '–' : '+'}</span>
+                        </button>
+                        <div className={`space-y-2 ${legendOpen ? '' : 'hidden'}`}>
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 rounded-full border border-white" style={{ backgroundColor: STATUS_COLORS.delivered }}></div>
                                 <span>Entregado</span>
@@ -318,11 +510,18 @@ const LiveMap: React.FC = () => {
                                 </div>
                                 <span>Conductor</span>
                             </div>
+                            {routeActive && (
+                                <>
+                                    <div className="pt-1 mt-1 border-t border-[var(--border-primary)] flex items-center gap-2"><span className="inline-block w-5 h-[4px] rounded" style={{ background: ROUTE_COLORS.done }}></span><span>Ruta realizada (orden real)</span></div>
+                                    <div className="flex items-center gap-2"><span className="inline-block w-5 h-0 border-t-[4px] border-dashed" style={{ borderColor: ROUTE_COLORS.plan }}></span><span>Ruta sugerida (lo pendiente)</span></div>
+                                    <div className="text-[10px] text-[var(--text-muted)] max-w-[190px]">El número es el orden de la parada en el día. Borde punteado: ubicación aproximada.</div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
-                
-                <div className="w-full md:w-80 lg:w-96 flex-shrink-0 bg-[var(--background-secondary)] shadow-md rounded-lg flex flex-col h-full">
+
+                <div className="w-full md:w-80 lg:w-96 flex-shrink-0 bg-[var(--background-secondary)] shadow-md rounded-lg flex flex-col h-full min-h-0">
                     <div className="flex items-center justify-between p-4 border-b border-[var(--border-primary)] flex-shrink-0">
                         <h3 className="text-lg font-bold text-[var(--text-primary)]">
                             Estado de Conductores
@@ -369,9 +568,9 @@ const LiveMap: React.FC = () => {
                             </button>
                         )}
                     </div>
-                    <div className="overflow-y-auto custom-scrollbar flex-grow">
-                        {filteredDriverStatuses.length === 0 && <p className="p-4 text-sm text-[var(--text-muted)]">Ningún conductor coincide con la búsqueda.</p>}
-                        {filteredDriverStatuses.map(driver => (
+                    <div className={`overflow-y-auto custom-scrollbar ${selectedDriverId ? 'flex-shrink-0 max-h-[30%]' : 'flex-grow'}`}>
+                        {visibleDriverRows.length === 0 && <p className="p-4 text-sm text-[var(--text-muted)]">Ningún conductor coincide con la búsqueda.</p>}
+                        {visibleDriverRows.map(driver => (
                             <button
                                 key={driver.id}
                                 onClick={() => handleDriverClick(driver)}
@@ -401,6 +600,34 @@ const LiveMap: React.FC = () => {
                             </button>
                         ))}
                     </div>
+                    {selectedDriverId && selectedStatus ? (
+                        <DriverRoutePanel
+                            driverName={selectedStatus.name}
+                            isOnline={selectedStatus.isOnline}
+                            lastUpdate={selectedStatus.lastUpdate}
+                            tz={tz}
+                            date={routeDate}
+                            today={todayLogical}
+                            onDateChange={setRouteDate}
+                            mode={routeMode}
+                            onModeChange={setRouteMode}
+                            loading={routeLoading}
+                            error={routeError}
+                            onRetry={() => loadRoute(selectedDriverId, routeDate, false)}
+                            data={routeData}
+                            visits={visits}
+                            quality={quality}
+                            doneRoad={doneRoad}
+                            plan={planState ? planState.plan : null}
+                            planning={planning}
+                            onReplan={() => setReplanTick(t => t + 1)}
+                            etas={etas}
+                            without={without}
+                            focusId={focusId}
+                            onFocusStop={handleFocusStop}
+                            onClose={() => setSelectedDriverId(null)}
+                        />
+                    ) : (
                      <div className="p-4 border-t border-[var(--border-primary)] bg-[var(--background-muted)] rounded-b-lg">
                         <h4 className="text-sm font-bold text-[var(--text-primary)] mb-2">Guía de Solución Rápida</h4>
                         <ul className="space-y-2.5 text-xs text-[var(--text-secondary)]">
@@ -410,7 +637,7 @@ const LiveMap: React.FC = () => {
                             <li className="flex items-start gap-2"><IconPower className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500"/> <strong className="text-red-600">App sin Uso (Importante):</strong> DESACTIVAR "Pausar actividad si no se usa".</li>
                             <li className="flex items-start gap-2"><IconWifi className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500"/> <strong>Internet:</strong> Verificar conexión de datos o Wi-Fi.</li>
                         </ul>
-                         <button 
+                         <button
                             onClick={handleCopyInstructions}
                             className={`w-full mt-3 px-3 py-2 text-xs font-semibold rounded-md flex items-center justify-center gap-2 transition-colors ${copySuccess ? 'bg-green-600 text-white' : 'bg-[var(--background-secondary)] text-[var(--text-secondary)] hover:bg-[var(--background-hover)] border border-[var(--border-secondary)]'}`}
                          >
@@ -418,6 +645,7 @@ const LiveMap: React.FC = () => {
                              {copySuccess ? '¡Copiado!' : 'Copiar Instrucciones'}
                          </button>
                     </div>
+                    )}
                 </div>
             </div>
         </>
