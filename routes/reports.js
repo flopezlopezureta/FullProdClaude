@@ -199,4 +199,41 @@ router.get('/meli-weekly-delivery', authMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/reports/meli-weekly-delivery/detail?weekStart=YYYY-MM-DD&clientId=ID[&accountId=ID&accountName=NOMBRE]
+// Detalle por paquete de lo que NO se entregó antes de las 21:00 en la semana de un seller, con el conductor que lo tenía (para ubicar al
+// responsable). Usa la misma clasificación que el informe, así que sus conteos coinciden con los de la tabla. Solo lectura; se pide al abrir
+// la ficha de un seller, no en la carga del informe. clientId vacío = paquetes sin cliente. accountId y accountName van juntos (vista por cuenta).
+router.get('/meli-weekly-delivery/detail', authMiddleware, async (req, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    try {
+        const { weekStart, clientId, accountId, accountName } = req.query;
+        for (const [name, value] of Object.entries({ weekStart, clientId, accountId, accountName })) {
+            if (value !== undefined && (typeof value !== 'string' || value.length > 200)) {
+                return res.status(400).json({ message: `El parámetro ${name} no es válido.` });
+            }
+        }
+        if (!meliWeekly.isIsoDate(weekStart || '')) {
+            return res.status(400).json({ message: 'weekStart debe ser una fecha válida YYYY-MM-DD.' });
+        }
+        if (clientId === undefined) {
+            return res.status(400).json({ message: 'clientId es obligatorio (vacío para paquetes sin cliente).' });
+        }
+        if ((accountId === undefined) !== (accountName === undefined)) {
+            return res.status(400).json({ message: 'accountId y accountName deben enviarse juntos.' });
+        }
+        const tz = await timeService.getSystemTimezone();
+        const today = await timeService.getLogicalDate();
+        const detail = await meliWeekly.buildMeliWeeklyDelayDetail({
+            query: (text, params) => db.query(text, params), tz, weekStart, today,
+            clientId, accountId: accountId ?? null, accountName: accountName ?? null,
+        });
+        res.json(detail);
+    } catch (err) {
+        console.error('Error in meli-weekly-delivery/detail report:', err);
+        res.status(500).json({ message: 'Error al obtener el detalle de paquetes de Mercado Libre.' });
+    }
+});
+
 module.exports = router;

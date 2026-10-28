@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, LineChart, Line, Rectangle,
 } from 'recharts';
@@ -8,10 +8,11 @@ import {
 } from '../Icon';
 import {
     TARGET_PCT, CUTOFF_HOUR, LOW_VOLUME, METHOD_NOTES, mondayOf, addDays, weeksEndingAt, weekLabel, shortDate, fmtInt, fmtPct, fmtDelta, deltaPp,
-    sellersForWeek, totalsForWeek, weeklyTrend, dailyForWeek, excludedForWeek, sortSellers, clip,
+    sellersForWeek, totalsForWeek, weeklyTrend, dailyForWeek, excludedForWeek, sortSellers, clip, NO_FILTER,
 } from '../../utils/meliWeeklyReport';
-import type { MeliWeeklyReport, GroupBy, SellerStats, Stats, SortKey } from '../../utils/meliWeeklyReport';
+import type { MeliWeeklyReport, GroupBy, SellerStats, Stats, SortKey, DelayFilter, DelayGroup } from '../../utils/meliWeeklyReport';
 import { downloadMeliWeeklyExcel, downloadMeliWeeklyPdf } from '../../utils/meliWeeklyExports';
+import MeliDelayDetail from './MeliDelayDetail';
 
 const WINDOW_WEEKS = 8;
 
@@ -503,13 +504,37 @@ const MeliWeeklyDeliveryReport: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------------------------------------------------------------
+/** Un número de la tabla por día que lleva al detalle de esos paquetes (solo si es mayor que cero). */
+const CountLink: React.FC<{ n: number; label: string; onPick: () => void }> = ({ n, label, onPick }) => (
+    n > 0
+        ? <button type="button" onClick={onPick} aria-label={label} title={label} className="min-w-[1.5rem] rounded px-1.5 py-0.5 font-black text-slate-900 underline decoration-dotted underline-offset-2 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">{fmtInt(n)}</button>
+        : <span>{fmtInt(n)}</span>
+);
+const pkgs = (n: number) => `${n} ${n === 1 ? 'paquete' : 'paquetes'}`;
+
 const SellerPanel: React.FC<{ stats: SellerStats; weekStart: string; groupBy: GroupBy; report: MeliWeeklyReport; windowWeeks: string[]; onClose: () => void }> = ({ stats, weekStart, groupBy, report, windowWeeks, onClose }) => {
     const days = useMemo(() => dailyForWeek(report.rows, weekStart, stats.key, groupBy), [report.rows, weekStart, stats.key, groupBy]);
     const history = useMemo(() => windowWeeks.map(w => ({ w, s: sellersForWeek(report.rows, w, groupBy).find(x => x.key === stats.key) || null })), [report.rows, windowWeeks, stats.key, groupBy]);
+
+    // Detalle por paquete: los números de la tabla por día llevan a esa lista ya filtrada.
+    const [filter, setFilter] = useState<DelayFilter>(NO_FILTER);
+    const sectionRef = useRef<HTMLElement>(null);
+    const headingRef = useRef<HTMLHeadingElement>(null);
+    const outside = stats.total - stats.onTime;       // paquetes que no se entregaron antes de las 21:00
+    // Al elegir un número de la tabla se aplica el filtro y, una vez que React pinta la lista, se lleva la vista y el foco a la sección.
+    const [focusTick, setFocusTick] = useState(0);
+    const showDetail = (f: DelayFilter) => { setFilter(f); setFocusTick(t => t + 1); };
+    useEffect(() => {
+        if (!focusTick) return;
+        const calm = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        sectionRef.current?.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+        headingRef.current?.focus({ preventScroll: true });
+    }, [focusTick]);
+    const pick = (day: string, group: DelayGroup | null): DelayFilter => ({ day, group, driver: null });
     return (
         <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Detalle de ${stats.name}`}>
             <button type="button" aria-label="Cerrar detalle" onClick={onClose} className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] cursor-default" />
-            <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col">
+            <div className="relative w-full max-w-3xl bg-white h-full shadow-2xl flex flex-col">
                 <div className="p-5 border-b border-slate-100 bg-slate-50 flex items-start justify-between gap-3">
                     <div>
                         <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Semana {weekLabel(weekStart)}</div>
@@ -521,7 +546,7 @@ const SellerPanel: React.FC<{ stats: SellerStats; weekStart: string; groupBy: Gr
                 <div className="flex-1 overflow-y-auto p-5 space-y-6">
                     <div className="grid grid-cols-3 gap-3">
                         <div className="p-3 rounded-xl border border-slate-200"><div className="text-[10px] font-black text-slate-500 uppercase">Paquetes</div><div className="text-2xl font-black text-slate-900">{fmtInt(stats.total)}</div>{stats.inRouteToday > 0 && <div className="text-[10px] font-bold text-amber-700">+{stats.inRouteToday} en ruta hoy</div>}</div>
-                        <div className="p-3 rounded-xl border" style={{ borderColor: stats.onTimeBelow ? '#fecaca' : '#e2e8f0', background: stats.onTimeBelow ? C.redBg : '#fff' }}><div className="text-[10px] font-black text-slate-500 uppercase">Antes de las {CUTOFF_HOUR}:00</div><div className="text-2xl font-black" style={{ color: stats.onTimeBelow ? C.redText : C.ink }}>{fmtPct(stats.onTimePct)}</div><div className="text-[10px] font-bold text-slate-500">{fmtInt(stats.onTime)} de {fmtInt(stats.total)}</div></div>
+                        <div className="p-3 rounded-xl border" style={{ borderColor: stats.onTimeBelow ? '#fecaca' : '#e2e8f0', background: stats.onTimeBelow ? C.redBg : '#fff' }}><div className="text-[10px] font-black text-slate-500 uppercase">Antes de las {CUTOFF_HOUR}:00</div><div className="text-2xl font-black" style={{ color: stats.onTimeBelow ? C.redText : C.ink }}>{fmtPct(stats.onTimePct)}</div><div className="text-[10px] font-bold text-slate-500">{fmtInt(stats.onTime)} de {fmtInt(stats.total)}</div>{outside > 0 && <button type="button" onClick={() => showDetail(NO_FILTER)} className="mt-1 rounded text-[10px] font-black text-indigo-700 hover:text-indigo-900 underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">Ver los {pkgs(outside)} ↓</button>}</div>
                         <div className="p-3 rounded-xl border" style={{ borderColor: stats.deliveredBelow ? '#fecaca' : '#e2e8f0', background: stats.deliveredBelow ? C.redBg : '#fff' }}><div className="text-[10px] font-black text-slate-500 uppercase">Total entregados</div><div className="text-2xl font-black" style={{ color: stats.deliveredBelow ? C.redText : C.ink }}>{fmtPct(stats.deliveredPct)}</div><div className="text-[10px] font-bold text-slate-500">{fmtInt(stats.delivered)} de {fmtInt(stats.total)}</div></div>
                     </div>
 
@@ -538,19 +563,23 @@ const SellerPanel: React.FC<{ stats: SellerStats; weekStart: string; groupBy: Gr
                                             <td className="px-2 py-1.5 text-left font-bold text-slate-700 capitalize whitespace-nowrap">{d.label}</td>
                                             <td className="px-2 py-1.5">{d.total ? fmtInt(d.total) : <span className="text-slate-300">—</span>}</td>
                                             <td className="px-2 py-1.5">{d.total ? fmtInt(d.onTime) : ''}</td>
-                                            <td className="px-2 py-1.5">{d.total ? <PctBadge pct={d.onTimePct} below={d.onTimeBelow} /> : ''}</td>
-                                            <td className="px-2 py-1.5">{d.total ? fmtInt(d.lateSameDay) : ''}</td>
+                                            <td className="px-2 py-1.5">{d.total ? (d.total - d.onTime > 0
+                                                ? <button type="button" onClick={() => showDetail(pick(d.day, null))} aria-label={`Ver los ${pkgs(d.total - d.onTime)} del ${d.label} que no se entregaron antes de las ${CUTOFF_HOUR}:00`} title={`Ver los ${pkgs(d.total - d.onTime)} que no se entregaron antes de las ${CUTOFF_HOUR}:00`} className="rounded hover:ring-2 hover:ring-indigo-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"><PctBadge pct={d.onTimePct} below={d.onTimeBelow} /></button>
+                                                : <PctBadge pct={d.onTimePct} below={d.onTimeBelow} />) : ''}</td>
+                                            <td className="px-2 py-1.5">{d.total ? <CountLink n={d.lateSameDay} label={`Ver ${pkgs(d.lateSameDay)} del ${d.label} entregados después de las ${CUTOFF_HOUR}:00`} onPick={() => showDetail(pick(d.day, 'late'))} /> : ''}</td>
                                             <td className="px-2 py-1.5">{d.total ? fmtInt(d.delivered) : ''}</td>
                                             <td className="px-2 py-1.5">{d.total ? <PctBadge pct={d.deliveredPct} below={d.deliveredBelow} /> : ''}</td>
-                                            <td className="px-2 py-1.5">{d.total ? fmtInt(d.cancelled) : ''}</td>
-                                            <td className="px-2 py-1.5">{d.total ? fmtInt(d.rescheduled) : ''}</td>
-                                            <td className="px-2 py-1.5">{d.total ? fmtInt(d.reassigned) : ''}</td>
+                                            <td className="px-2 py-1.5">{d.total ? <CountLink n={d.cancelled} label={`Ver ${pkgs(d.cancelled)} cancelados el ${d.label}`} onPick={() => showDetail(pick(d.day, 'cancelled'))} /> : ''}</td>
+                                            <td className="px-2 py-1.5">{d.total ? <CountLink n={d.rescheduled} label={`Ver ${pkgs(d.rescheduled)} reprogramados el ${d.label}`} onPick={() => showDetail(pick(d.day, 'rescheduled'))} /> : ''}</td>
+                                            <td className="px-2 py-1.5">{d.total ? <CountLink n={d.reassigned} label={`Ver ${pkgs(d.reassigned)} del ${d.label} reasignados a otro día`} onPick={() => showDetail(pick(d.day, 'reassigned'))} /> : ''}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                         </div>
                     </div>
+
+                    <MeliDelayDetail stats={stats} weekStart={weekStart} groupBy={groupBy} filter={filter} onFilter={setFilter} sectionRef={sectionRef} headingRef={headingRef} />
 
                     <div>
                         <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide mb-2">Últimas {history.length} semanas</h4>

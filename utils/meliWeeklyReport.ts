@@ -50,8 +50,14 @@ export interface Stats extends Counts {
   lowVolume: boolean;
 }
 
-/** `name` es el nombre completo ("Cliente · Cuenta" al agrupar por cuenta); `title` y `detail` son sus dos partes para mostrarlas en dos líneas. */
-export interface SellerStats extends Stats { key: string; name: string; title: string; detail: string | null; identifier: string | null; accounts: string[] }
+/**
+ * `name` es el nombre completo ("Cliente · Cuenta" al agrupar por cuenta); `title` y `detail` son sus dos partes para mostrarlas en dos líneas.
+ * `clientId` / `accountId` / `accountName` identifican al seller ante el servidor (el detalle por paquete los pide); la cuenta solo viene al agrupar por cuenta.
+ */
+export interface SellerStats extends Stats {
+  key: string; name: string; title: string; detail: string | null; identifier: string | null; accounts: string[];
+  clientId: string | null; accountId: string | null; accountName: string | null;
+}
 
 /** Recorta un texto largo con "…" (para donde no cabe: en el PDF no se puede confiar en el recorte automático del navegador). */
 export const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…` : text);
@@ -126,18 +132,18 @@ const sellerName = (r: MeliWeeklyRow, by: GroupBy) => (by === 'account' ? `${r.c
 /** Suma las filas de UNA semana por seller (cliente, o cuenta de Mercado Libre). Solo incluye sellers con paquetes gestionados en la semana. */
 export function sellersForWeek(rows: MeliWeeklyRow[], weekStart: string, by: GroupBy = 'client', target: number = TARGET_PCT): SellerStats[] {
   const end = addDays(weekStart, 6);
-  const map = new Map<string, { name: string; title: string; detail: string | null; identifier: string | null; accounts: Set<string>; counts: Counts }>();
+  const map = new Map<string, { name: string; title: string; detail: string | null; identifier: string | null; clientId: string | null; accountId: string | null; accountName: string | null; accounts: Set<string>; counts: Counts }>();
   for (const r of rows) {
     if (r.day < weekStart || r.day > end) continue;
     const k = sellerKey(r, by);
-    if (!map.has(k)) map.set(k, { name: sellerName(r, by), title: r.clientName, detail: by === 'account' ? r.accountName : null, identifier: r.clientIdentifier, accounts: new Set(), counts: emptyCounts() });
+    if (!map.has(k)) map.set(k, { name: sellerName(r, by), title: r.clientName, detail: by === 'account' ? r.accountName : null, identifier: r.clientIdentifier, clientId: r.clientId, accountId: by === 'account' ? r.accountId : null, accountName: by === 'account' ? r.accountName : null, accounts: new Set(), counts: emptyCounts() });
     const m = map.get(k)!;
     m.accounts.add(r.accountName);
     addRow(m.counts, r);
   }
   return [...map.entries()]
     .filter(([, m]) => m.counts.total > 0 || m.counts.inRouteToday > 0)
-    .map(([key, m]) => ({ key, name: m.name, title: m.title, detail: m.detail, identifier: m.identifier, accounts: [...m.accounts].sort(), ...toStats(m.counts, target) }));
+    .map(([key, m]) => ({ key, name: m.name, title: m.title, detail: m.detail, identifier: m.identifier, clientId: m.clientId, accountId: m.accountId, accountName: m.accountName, accounts: [...m.accounts].sort(), ...toStats(m.counts, target) }));
 }
 
 /** Total de todos los sellers de una semana. */
@@ -180,3 +186,92 @@ export function sortSellers(list: SellerStats[], key: SortKey, dir: 'asc' | 'des
     return av === bv ? b.total - a.total || a.name.localeCompare(b.name, 'es') : sign * (av - bv);
   });
 }
+
+// ---------- detalle por paquete (qué paquetes causaron el retraso y qué conductor los tenía) ----------
+// Lo entrega GET /api/reports/meli-weekly-delivery/detail con la MISMA clasificación que los conteos de arriba: la suma por categoría
+// coincide con las columnas Después / Cancel. / Reprog. / Reasig. de la tabla por día.
+
+export type DelayOutcome = 'LATE_SAME_DAY' | 'CANCELLED' | 'RESCHEDULED' | 'REASSIGNED_DELIVERED' | 'REASSIGNED_OPEN' | 'NO_CLOSE';
+/** Las categorías como las ve el usuario en la tabla por día (los dos tipos de "reasignado" se muestran juntos, igual que la columna Reasig.). */
+export type DelayGroup = 'late' | 'cancelled' | 'rescheduled' | 'reassigned' | 'noClose';
+export const GROUP_ORDER: DelayGroup[] = ['late', 'cancelled', 'rescheduled', 'reassigned', 'noClose'];
+export const OUTCOME_GROUP: Record<DelayOutcome, DelayGroup> = {
+  LATE_SAME_DAY: 'late', CANCELLED: 'cancelled', RESCHEDULED: 'rescheduled', REASSIGNED_DELIVERED: 'reassigned', REASSIGNED_OPEN: 'reassigned', NO_CLOSE: 'noClose',
+};
+export const GROUP_LABEL: Record<DelayGroup, string> = {
+  late: `Entregado después de las ${CUTOFF_HOUR}:00`, cancelled: 'Cancelado', rescheduled: 'Reprogramado', reassigned: 'Reasignado a otro día', noClose: 'Sin cierre registrado',
+};
+/** Versión corta para las pastillas de filtro. */
+export const GROUP_SHORT: Record<DelayGroup, string> = { late: `Después de las ${CUTOFF_HOUR}:00`, cancelled: 'Cancelados', rescheduled: 'Reprogramados', reassigned: 'Reasignados', noClose: 'Sin cierre' };
+
+export type StoryKind = 'dispatch' | 'assign' | 'reassign' | 'unassign' | 'delivered_app' | 'delivered_ml' | 'cancelled' | 'rescheduled' | 'problem';
+export interface DelayStoryStep { at: string; kind: StoryKind; who: string | null; from: string | null; text: string | null }
+
+export interface DelayItem {
+  id: string;                          // código interno del paquete (se busca en la lista de paquetes)
+  meliOrderId: string | null;          // id del envío en Mercado Libre
+  meliFlexCode: string | null;
+  commune: string | null;
+  clientId: string | null; accountId: string; accountName: string;
+  day: string;                         // día de gestión (YYYY-MM-DD)
+  outcome: DelayOutcome;
+  status: string;                      // estado actual del paquete
+  deliveredAt: string | null;          // primer registro de entrega (ISO)
+  deliveredDay: string | null;
+  deliveredVia: 'app' | 'ml' | null;   // de dónde sale esa hora: cierre en la app o entrega detectada en Mercado Libre
+  lateMinutes: number | null;          // solo "después de las 21:00": minutos pasados de la hora de corte
+  driver: string | null;               // conductor responsable
+  driverBasis: 'holder' | 'before' | 'after' | 'current' | null;   // holder = lo tenía asignado en el momento clave; el resto es aproximado
+  driverSince: string | null;          // desde cuándo lo tenía
+  finalDriver: string | null;          // quien lo tiene/entregó al final, si es otro
+  drivers: string[];                   // todos por los que pasó, en orden
+  reason: string | null;               // motivo de la cancelación o del "reagendar"
+  story: DelayStoryStep[];
+}
+export interface DelayDetailMeta { tz: string; cutoffHour: number; weekStart: string; fromDay: string; toDay: string; today: string; generatedAt: string }
+export interface DelayDetail { meta: DelayDetailMeta; items: DelayItem[] }
+
+export interface DelayFilter { day: string | null; group: DelayGroup | null; driver: string | null }
+export const NO_FILTER: DelayFilter = { day: null, group: null, driver: null };
+export const isFiltered = (f: DelayFilter): boolean => !!(f.day || f.group || f.driver);
+export const NO_DRIVER = 'Sin conductor registrado';
+export const driverOf = (i: DelayItem): string => i.driver || NO_DRIVER;
+
+/** Aplica el filtro; `ignore` deja fuera una de las condiciones (para saber cuántos habría con otra pastilla elegida). */
+export const filterDelay = (items: DelayItem[], f: DelayFilter, ignore?: keyof DelayFilter): DelayItem[] =>
+  items.filter(i => (ignore === 'day' || !f.day || i.day === f.day)
+    && (ignore === 'group' || !f.group || OUTCOME_GROUP[i.outcome] === f.group)
+    && (ignore === 'driver' || !f.driver || driverOf(i) === f.driver));
+
+/** Cuántos paquetes hay en cada categoría respetando el día y el conductor elegidos. */
+export const groupCounts = (items: DelayItem[], f: DelayFilter): Record<DelayGroup, number> => {
+  const c: Record<DelayGroup, number> = { late: 0, cancelled: 0, rescheduled: 0, reassigned: 0, noClose: 0 };
+  for (const i of filterDelay(items, f, 'group')) c[OUTCOME_GROUP[i.outcome]]++;
+  return c;
+};
+/** Cuántos paquetes tiene cada conductor respetando el día y la categoría elegidos; el que más tiene, primero. */
+export const driverCounts = (items: DelayItem[], f: DelayFilter): { name: string; count: number }[] => {
+  const m = new Map<string, number>();
+  for (const i of filterDelay(items, f, 'driver')) m.set(driverOf(i), (m.get(driverOf(i)) || 0) + 1);
+  return [...m.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
+};
+
+// Horas en la zona horaria del sistema (el servidor la entrega en meta.tz). Los formateadores se reutilizan: crear uno por celda es lento.
+const fmtCache = new Map<string, Intl.DateTimeFormat>();
+const fmt = (key: string, make: () => Intl.DateTimeFormat) => { let f = fmtCache.get(key); if (!f) { f = make(); fmtCache.set(key, f); } return f; };
+export const fmtClock = (iso: string | null, tz: string): string =>
+  (iso ? fmt(`c|${tz}`, () => new Intl.DateTimeFormat('es-CL', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })).format(new Date(iso)) : '—');
+/** Fecha local (YYYY-MM-DD) de un instante. Es el día del calendario, no el día lógico de gestión. */
+export const localDate = (iso: string, tz: string): string =>
+  fmt(`d|${tz}`, () => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })).format(new Date(iso));
+/** "mar 27 14:16". */
+export const fmtDayClock = (iso: string | null, tz: string): string => (iso ? `${dayLabel(localDate(iso, tz))} ${fmtClock(iso, tz)}` : '—');
+/** Minutos de atraso en palabras: 18 → "18 min", 74 → "1 h 14 min", 120 → "2 h". */
+export const fmtLate = (min: number): string => (min < 60 ? `${min} min` : min % 60 === 0 ? `${min / 60} h` : `${Math.floor(min / 60)} h ${min % 60} min`);
+/** "PADRE HURTADO" → "Padre Hurtado". */
+export const titleCase = (s: string | null): string => (s ? s.toLowerCase().replace(/(^|[\s'-])([a-záéíóúñü])/g, (_m, a, b) => a + b.toUpperCase()) : '—');
+const STATUS_LABEL: Record<string, string> = {
+  EN_TRANSITO: 'En tránsito', ASIGNADO: 'Asignado', PENDIENTE: 'Pendiente', RETIRADO: 'Disponible, sin conductor', PROBLEMA: 'Con problema',
+  REPROGRAMADO: 'Reprogramado', ENTREGADO: 'Entregado', CANCELADO: 'Cancelado', DEVUELTO: 'Devuelto',
+};
+export const statusLabel = (s: string): string => STATUS_LABEL[s] || (s ? s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ') : '—');
