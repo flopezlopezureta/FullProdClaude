@@ -77,6 +77,10 @@ const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}, 
 
 // Misma query que routes/integrations.js usa para el fetch manual — mismos campos, para no
 // tener que tocar el resto del mapeo de pedido a paquete que ya existía con REST.
+// NO pide "customer": ese campo exige el permiso read_customers, que la app propia de algunas tiendas (Donenic) no tiene. Shopify
+// responde 200 con ACCESS_DENIED por ese campo y, como se rechaza la respuesta completa cuando trae errores, NINGÚN pedido de esa
+// tienda entraba (se notó el 28-oct-2026: el importador de pruebas, con código REST, importaba por ella hasta que se apagó el 17-oct).
+// Este importador no usa "customer": nombre, teléfono y dirección salen de shippingAddress / billingAddress.
 const SHOPIFY_ORDERS_QUERY = `
   query GetOrders($searchQuery: String!, $first: Int!) {
     orders(first: $first, query: $searchQuery, sortKey: CREATED_AT, reverse: true) {
@@ -86,7 +90,6 @@ const SHOPIFY_ORDERS_QUERY = `
           name
           number
           email
-          customer { firstName defaultPhoneNumber { phoneNumber } }
           shippingAddress { firstName lastName phone address1 address2 city province }
           billingAddress { firstName lastName phone address1 address2 city province }
         }
@@ -294,7 +297,14 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                 try {
                                     const orderId = order.legacyResourceId;
                                     const orderNumber = order.number ? order.number.toString() : (order.name || orderId);
-                                    const { rows: existing } = await db.query('SELECT id FROM packages WHERE "shopifyOrderId" = $1 OR "id" = $2', [orderId, orderId]);
+                                    // Ya existe si se importó antes (ID de Shopify) o si el cliente lo ingresó a mano usando el número del pedido como
+                                    // código del paquete ("2812" o "#2812"), como hacen Donenic y Acuario: sin esto, cada pedido que ya cargaron a mano
+                                    // se importaría de nuevo como un duplicado. Solo cuentan los paquetes del mismo cliente.
+                                    const manualCodes = [...new Set([orderNumber, `#${orderNumber}`, order.name].filter(Boolean).map(String))];
+                                    const { rows: existing } = await db.query(
+                                        'SELECT id FROM packages WHERE "shopifyOrderId" = $1 OR "id" = $2 OR ("creatorId" = $3 AND "id" = ANY($4::text[]))',
+                                        [orderId, orderId, clientId, manualCodes]
+                                    );
                                     if (existing.length > 0) continue;
 
                                     const address = order.shippingAddress || order.billingAddress || {};

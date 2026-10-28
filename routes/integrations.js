@@ -1143,6 +1143,9 @@ const makeShopifyGraphQLRequest = (shopUrl, accessToken, query, variables = {}) 
 // forma de datos que antes traía REST (shipping/billing address, cliente), solo que ahora en
 // camelCase y con legacyResourceId en vez de id numérico, para no tener que tocar el resto del
 // código que arma el paquete a partir de estos campos.
+// NO pide "customer": exige el permiso read_customers, que la app propia de algunas tiendas (Donenic) no tiene; Shopify responde
+// ACCESS_DENIED y esta consulta se rechaza completa, así que la lista de pedidos salía vacía. El nombre y el teléfono de respaldo
+// salen de billingAddress.
 const SHOPIFY_ORDERS_QUERY = `
   query GetOrders($searchQuery: String!, $first: Int!) {
     orders(first: $first, query: $searchQuery, sortKey: CREATED_AT, reverse: true) {
@@ -1152,7 +1155,6 @@ const SHOPIFY_ORDERS_QUERY = `
           name
           number
           email
-          customer { firstName defaultPhoneNumber { phoneNumber } }
           shippingAddress { firstName lastName phone address1 address2 city province }
           billingAddress { firstName lastName phone address1 address2 city province }
         }
@@ -1507,8 +1509,8 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
                 if (orders.length > 0) {
                     const mapped = orders.map(order => ({
                         id: order.legacyResourceId,
-                        recipientName: `${order.shippingAddress?.firstName || ''} ${order.shippingAddress?.lastName || ''}`.trim() || order.customer?.firstName || 'N/A',
-                        recipientPhone: order.shippingAddress?.phone || order.customer?.defaultPhoneNumber?.phoneNumber || 'N/A',
+                        recipientName: `${order.shippingAddress?.firstName || ''} ${order.shippingAddress?.lastName || ''}`.trim() || `${order.billingAddress?.firstName || ''} ${order.billingAddress?.lastName || ''}`.trim() || 'N/A',
+                        recipientPhone: order.shippingAddress?.phone || order.billingAddress?.phone || 'N/A',
                         address: `${order.shippingAddress?.address1 || ''} ${order.shippingAddress?.address2 || ''}`.trim() || 'N/A',
                         commune: normalizeCommune(order.shippingAddress?.city || 'N/A'),
                         city: order.shippingAddress?.province || 'N/A',
