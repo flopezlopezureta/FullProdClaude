@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 
 const meliPollingService = require('../services/meliPollingService');
 const { normalizeCommune } = require('../utils/normUtil');
+const shopifyOrders = require('../services/shopifyOrders');
 
 // --- MULTI-ACCOUNT HELPERS ---
 const ensureMultiAccountStructure = (integrations) => {
@@ -1482,11 +1483,19 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
                     });
                 }
             } catch (e) {
-                return res.json([]);
+                // Antes respondía una lista vacía (HTTP 200) sin decir por qué: un cliente sin Shopify conectado y un token rechazado se veían igual.
+                if (e && e.message === 'El cliente no tiene Shopify configurado.') {
+                    return res.status(404).json({ message: 'Este cliente no tiene una tienda Shopify conectada.' });
+                }
+                const d = shopifyOrders.describeShopifyError(e);
+                console.error(`[ShopifyOrders] Cliente ${clientId}: no se pudieron leer las credenciales de Shopify: ${d.detail}`);
+                return res.status(502).json({ message: `No se pudieron obtener los pedidos de Shopify: ${d.message} (${d.detail})` });
             }
         }
 
         let allOrders = [];
+        const accountErrors = [];   // una entrada por tienda que Shopify no pudo entregar
+        let accountsOk = 0;         // tiendas que respondieron bien (aunque no tuvieran pedidos)
         for (const account of shopifyAccounts) {
             try {
                 // El pseudo-account 'legacy-shopify' (armado arriba) ya trae sus credenciales
@@ -1505,6 +1514,7 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
                     { searchQuery: 'status:open fulfillment_status:unfulfilled', first: 50 }
                 );
                 const orders = (gqlData?.orders?.edges || []).map(e => e.node);
+                accountsOk++;
 
                 if (orders.length > 0) {
                     const mapped = orders.map(order => ({
@@ -1516,13 +1526,42 @@ router.get('/:clientId/shopify/orders', authMiddleware, async (req, res) => {
                         city: order.shippingAddress?.province || 'N/A',
                         notes: `Shopify Order: ${order.name || order.legacyResourceId} (${account.nickname})`,
                         orderNumber: order.number?.toString() || order.name || order.legacyResourceId,
+                        orderName: order.name || null,
                         sourceAccountId: account.id,
                         sourceAccountName: account.nickname
                     }));
                     allOrders = [...allOrders, ...mapped];
                 }
             } catch (err) {
-                console.error(`Error fetching Shopify orders for ${account.nickname}:`, err.message);
+                // makeShopifyGraphQLRequest rechaza con un objeto { statusCode, body } sin `message`: antes esto registraba "undefined".
+                const d = shopifyOrders.describeShopifyError(err);
+                console.error(`[ShopifyOrders] ${account.nickname} (cliente ${clientId}): ${d.detail}`);
+                accountErrors.push({ account: account.nickname, message: d.message, detail: d.detail });
+            }
+        }
+
+        // Si NINGUNA tienda pudo entregar sus pedidos, la lista vacía engañaba: se responde con el motivo (la pantalla lo muestra en rojo). Es un 502 y no
+        // el código de Shopify porque la pantalla cierra la sesión ante un 401. Si al menos una tienda respondió, se entregan sus pedidos y el fallo de la otra
+        // queda en el registro del servidor.
+        if (accountErrors.length > 0 && accountsOk === 0) {
+            const detalle = accountErrors.map(e => `${e.account}: ${e.message} (${e.detail})`).join(' | ');
+            return res.status(502).json({ message: `No se pudieron obtener los pedidos de Shopify. ${detalle}`, errors: accountErrors });
+        }
+
+        // Marca los pedidos que ya existen (importados antes, o ingresados a mano con el número como código) para que no se vuelvan a importar.
+        // Es un aviso: si esta consulta falla, la lista se entrega igual (el servidor igual rechaza el duplicado al importar).
+        if (allOrders.length > 0) {
+            try {
+                const existing = await shopifyOrders.findExistingForOrders((text, params) => db.query(text, params), {
+                    clientId,
+                    orders: allOrders.map(o => ({ shopifyOrderId: o.id, orderNumber: o.orderNumber, orderName: o.orderName }))
+                });
+                allOrders = allOrders.map(o => {
+                    const found = existing.get(String(o.id));
+                    return found ? { ...o, existingPackageId: found.id, existingKind: found.kind, existingStatus: found.status } : o;
+                });
+            } catch (markErr) {
+                console.error(`[ShopifyOrders] No se pudo marcar los pedidos ya existentes (cliente ${clientId}):`, markErr.message);
             }
         }
 

@@ -15,6 +15,7 @@ const gisService = require('../services/gisService');
 const { buildSellerNameSql } = require('../services/falabellaDirectSellers');
 const rutValidator = require('../services/rutValidator');
 const cancelled = require('../services/cancelledPackages');
+const shopifyOrders = require('../services/shopifyOrders');
 const falabellaDirectClientNameSql = `CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / ' || ${buildSellerNameSql()} ELSE u.name END as "clientName"`;
 
 // [EMERGENCIA] Ruta para normalizar todas las comunas y ciudades del historial
@@ -987,6 +988,25 @@ router.post('/batch', authMiddleware, async (req, res) => {
                     }
                 }
 
+                // [VALIDACION] Prevenir duplicados de Shopify: el pedido ya se importó antes (ID de Shopify) o el cliente lo ingresó a mano usando el número
+                // del pedido como código del paquete ("2812" / "#2812"). Es la misma regla del sondeo automático (services/shopifyOrders.js); sin ella, la
+                // importación manual del panel creaba un duplicado pendiente de un pedido que ya estaba entregado.
+                let shopifyRef = null;
+                if (source === 'SHOPIFY' && shopifyOrderId) {
+                    shopifyRef = shopifyOrders.orderRefFromImport({ shopifyOrderNumber, notes });
+                    const existingShopify = await shopifyOrders.findExistingForOrder((text, params) => db.query(text, params), {
+                        shopifyOrderId, clientId: creatorId, orderNumber: shopifyRef.orderNumber, orderName: shopifyRef.orderName
+                    });
+                    if (existingShopify) {
+                        errors.push({
+                            index: i,
+                            recipientName: recipientName || 'Desconocido',
+                            error: shopifyOrders.duplicateMessage(existingShopify, shopifyRef.orderName, shopifyRef.orderNumber)
+                        });
+                        continue;
+                    }
+                }
+
                 const { rows: creatorRows } = await db.query('SELECT "clientIdentifier" FROM users WHERE id = $1', [creatorId]);
                 if (creatorRows.length === 0) {
                     errors.push({ 
@@ -1022,9 +1042,10 @@ router.post('/batch', authMiddleware, async (req, res) => {
                     creatorId, 
                     source, 
                     meliOrderId, 
-                    shopifyOrderId, 
-                    shopifyOrderNumber,
-                    wooOrderId, 
+                    shopifyOrderId,
+                    // Las pantallas que no mandan el número del pedido lo dejaban vacío: se completa con el de las notas, como lo guarda el sondeo.
+                    shopifyOrderNumber: shopifyOrderNumber || (shopifyRef && shopifyRef.orderNumber) || undefined,
+                    wooOrderId,
                     jumpsellerOrderId,
                     trackingId: cleanTrackingId,
                     recipientEmail,

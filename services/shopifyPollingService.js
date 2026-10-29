@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity, checkOrderCommune, allowsIncompleteShopifyData } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 const { encrypt, decrypt } = require('./falabellaCrypto');
+const shopifyOrders = require('./shopifyOrders');
 
 // --- SHOPIFY API HELPERS ---
 // Shopify exige API GraphQL exclusiva para apps nuevas desde el 1 de abril de 2025 — REST
@@ -299,13 +300,12 @@ async function autoImportShopifyPackages(activeCommunes = []) {
                                     const orderNumber = order.number ? order.number.toString() : (order.name || orderId);
                                     // Ya existe si se importó antes (ID de Shopify) o si el cliente lo ingresó a mano usando el número del pedido como
                                     // código del paquete ("2812" o "#2812"), como hacen Donenic y Acuario: sin esto, cada pedido que ya cargaron a mano
-                                    // se importaría de nuevo como un duplicado. Solo cuentan los paquetes del mismo cliente.
-                                    const manualCodes = [...new Set([orderNumber, `#${orderNumber}`, order.name].filter(Boolean).map(String))];
-                                    const { rows: existing } = await db.query(
-                                        'SELECT id FROM packages WHERE "shopifyOrderId" = $1 OR "id" = $2 OR ("creatorId" = $3 AND "id" = ANY($4::text[]))',
-                                        [orderId, orderId, clientId, manualCodes]
-                                    );
-                                    if (existing.length > 0) continue;
+                                    // se importaría de nuevo como un duplicado. Solo cuentan los paquetes del mismo cliente. La regla vive en
+                                    // services/shopifyOrders.js porque también la usa la importación manual del panel (POST /api/packages/batch).
+                                    const existing = await shopifyOrders.findExistingForOrder((text, params) => db.query(text, params), {
+                                        shopifyOrderId: orderId, clientId, orderNumber, orderName: order.name
+                                    });
+                                    if (existing) continue;
 
                                     const address = order.shippingAddress || order.billingAddress || {};
 

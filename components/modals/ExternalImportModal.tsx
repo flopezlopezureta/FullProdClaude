@@ -130,9 +130,13 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
         return auth.activeCommunes.some(c => c.toUpperCase() === (communeName || '').toUpperCase());
     };
 
+    // Pedidos que el servidor marcó como ya existentes (importados antes, o ingresados a mano con el número del pedido como código): no se vuelven a importar.
+    const existsText = (order: any): string => `Ya existe ${order.existingKind === 'MANUAL' ? 'como paquete ingresado a mano' : 'importado'}: ${order.existingPackageId}${order.existingStatus ? ` (${order.existingStatus})` : ''}`;
+
     const handleSelectOrder = (order: any) => {
         if (!isCommuneActive(order.commune)) return; // Prevents selection of inactive communes
-        
+        if (order.existingPackageId) return; // Prevents re-importing an order that already exists
+
         setSelectedOrderIds(prev => {
             const newSet = new Set(prev);
             if (newSet.has(order.id)) newSet.delete(order.id);
@@ -142,7 +146,7 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
     };
 
     const handleSelectAll = () => {
-        const activeOrders = filteredOrders.filter(o => isCommuneActive(o.commune));
+        const activeOrders = filteredOrders.filter(o => isCommuneActive(o.commune) && !o.existingPackageId);
         if (selectedOrderIds.size === activeOrders.length && activeOrders.length > 0) {
             setSelectedOrderIds(new Set());
         } else {
@@ -174,11 +178,19 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                     pkg.falabellaTrackingId = order.orderNumber;
                 } else {
                     pkg[config.orderIdField] = order.id;
+                    // Shopify: el número del pedido ("2812") viaja con el paquete para quedar guardado y servir de control contra duplicados.
+                    if (source === 'SHOPIFY' && order.orderNumber) pkg.shopifyOrderNumber = String(order.orderNumber);
                 }
                 return pkg;
             });
 
-            await onImport(packagesToCreate);
+            const result: any = await onImport(packagesToCreate);
+            // ClientDashboard devuelve el resultado del lote; UserManagement ya muestra el suyo y no devuelve nada. Si algún pedido no se importó (por ejemplo
+            // porque ya existe) hay que decirlo: antes el modal se cerraba igual y parecía que todo había salido bien.
+            if (result && typeof result === 'object' && result.errorCount > 0 && Array.isArray(result.errors)) {
+                const errMsgs = result.errors.map((e: any) => `${e.recipientName}: ${e.error}`).join('\n');
+                alert(`Se importaron ${result.importedCount} paquetes.\n\nNo se importaron (${result.errorCount}):\n${errMsgs}`);
+            }
             onClose();
         } catch (err: any) {
             const msg = err?.message || err?.toString() || 'Error al importar las órdenes.';
@@ -241,10 +253,13 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                             Cargando órdenes...
                         </div>
                     ) : filteredOrders.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-48 text-[var(--text-muted)]">
-                            <IconInfo className="w-12 h-12 mb-2 opacity-50" />
-                            No se encontraron órdenes pendientes.
-                        </div>
+                        // Con un error arriba (p. ej. Shopify rechazó el acceso), "no se encontraron órdenes" lo contradecía: la lista vacía es consecuencia del error.
+                        error ? null : (
+                            <div className="flex flex-col items-center justify-center h-48 text-[var(--text-muted)]">
+                                <IconInfo className="w-12 h-12 mb-2 opacity-50" />
+                                No se encontraron órdenes pendientes.
+                            </div>
+                        )
                     ) : (
                         <table className="w-full text-sm text-left">
                             <thead className="bg-[var(--background-muted)] text-[var(--text-secondary)] font-semibold sticky top-0">
@@ -262,26 +277,37 @@ const ExternalImportModal: React.FC<ExternalImportModalProps> = ({ client, sourc
                             <tbody className="divide-y divide-[var(--border-primary)]">
                                 {filteredOrders.map(order => {
                                     const isActive = isCommuneActive(order.commune);
+                                    const exists = !!order.existingPackageId;
                                     return (
-                                        <tr 
-                                            key={order.id} 
+                                        <tr
+                                            key={order.id}
+                                            title={exists ? existsText(order) : undefined}
                                             className={`
                                                 border-b border-[var(--border-primary)] transition-colors
-                                                ${!isActive ? 'opacity-50 grayscale' : 'hover:bg-[var(--background-hover)] cursor-pointer'} 
+                                                ${!isActive ? 'opacity-50 grayscale' : exists ? 'opacity-60 cursor-not-allowed' : 'hover:bg-[var(--background-hover)] cursor-pointer'}
                                                 ${selectedOrderIds.has(order.id) ? 'bg-[var(--brand-muted)]' : ''}
-                                            `} 
+                                            `}
                                             onClick={() => handleSelectOrder(order)}
                                         >
                                             <td className="p-3" onClick={e => e.stopPropagation()}>
-                                                <input 
-                                                    type="checkbox" 
-                                                    checked={selectedOrderIds.has(order.id)} 
-                                                    onChange={() => handleSelectOrder(order)} 
-                                                    disabled={!isActive}
-                                                    className={`rounded border-gray-300 text-[var(--brand-primary)] focus:ring-[var(--brand-secondary)] ${!isActive ? 'cursor-not-allowed opacity-50' : ''}`} 
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedOrderIds.has(order.id)}
+                                                    onChange={() => handleSelectOrder(order)}
+                                                    disabled={!isActive || exists}
+                                                    className={`rounded border-gray-300 text-[var(--brand-primary)] focus:ring-[var(--brand-secondary)] ${(!isActive || exists) ? 'cursor-not-allowed opacity-50' : ''}`}
                                                 />
                                             </td>
-                                            <td className="p-3 font-mono text-[10px]">{order.id}</td>
+                                            <td className="p-3 font-mono text-[10px]">
+                                                {order.id}
+                                                {exists && (
+                                                    <div className="mt-1">
+                                                        <span role="note" className="inline-block font-sans text-[9px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full uppercase tracking-widest border border-amber-200">
+                                                            Ya existe · <span className="normal-case tracking-normal">{order.existingPackageId}</span>
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </td>
                                             <td className="p-3">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[10px] font-black px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full uppercase tracking-tighter">
