@@ -1396,7 +1396,7 @@ router.post('/:id/assign-driver', authMiddleware, async (req, res) => {
                 return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.assign });
             }
             if (oldDriverId !== driverId) {
-                const previousName = oldDriverId ? await getCachedDriverName(oldDriverId) : null;
+                const previousName = await cancelled.userName((text, params) => db.query(text, params), oldDriverId);
                 const moved = await cancelled.moveCancelledToWarehouse((text, params) => db.query(text, params), id, targetRows[0], previousName);
                 if (!moved) return res.status(409).json({ message: 'El paquete cambió de estado mientras se procesaba. Actualiza la lista e inténtalo de nuevo.' });
                 logAction(req.user.id, req.user.name, 'ASSIGN_CANCELLED_TO_WAREHOUSE', { packageId: id, driverId });
@@ -1486,7 +1486,7 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
         // Un paquete CANCELADO no sale a ruta (el conductor perdería el viaje y el comprador recibiría un aviso de un envío que canceló): solo puede
         // volver a la bodega, es decir, escanearse a nombre del conductor "Bodega", y sigue CANCELADO. Ver services/cancelledPackages.js.
         if (cancelled.isCancelled(currentPkg.status)) {
-            const targetName = await getCachedDriverName(driverId);
+            const targetName = await cancelled.userName((text, params) => db.query(text, params), driverId);
             if (!cancelled.isWarehouseName(targetName)) {
                 logAction(req.user.id, req.user.name, 'DISPATCH_CANCELLED_BLOCKED', { packageId: realId, driverId });
                 return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.dispatch });
@@ -1494,7 +1494,7 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
             if (currentPkg.driverId === driverId) {
                 return res.json({ message: cancelled.MESSAGES.alreadyInWarehouse(targetName), package: currentPkg });
             }
-            const previousName = currentPkg.driverId ? await getCachedDriverName(currentPkg.driverId) : null;
+            const previousName = await cancelled.userName((text, params) => db.query(text, params), currentPkg.driverId);
             const moved = await cancelled.moveCancelledToWarehouse((text, params) => db.query(text, params), realId, { id: driverId, name: targetName }, previousName);
             if (!moved) return res.status(409).json({ message: 'El paquete cambió de estado mientras se procesaba. Escanéalo de nuevo.' });
             logAction(req.user.id, req.user.name, 'DISPATCH_CANCELLED_TO_WAREHOUSE', { packageId: realId, driverId });

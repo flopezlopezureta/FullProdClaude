@@ -30,6 +30,16 @@ const MESSAGES = {
     allCancelled: (n) => `${n === 1 ? 'El paquete seleccionado está CANCELADO' : `Los ${n} paquetes seleccionados están CANCELADOS`}: solo se pueden devolver al conductor «Bodega».`,
 };
 
+/**
+ * Nombre de un usuario por id (null si no existe o no se indicó). Consulta propia a propósito: esta rama es poco frecuente, y así el cambio no depende
+ * de los cachés de nombres que tiene routes/packages.js en unos entornos y no en otros (Producción no tenía getCachedDriverName).
+ */
+async function userName(run, userId) {
+    if (!userId) return null;
+    const { rows } = await run('SELECT name FROM users WHERE id = $1', [userId]);
+    return rows[0] ? rows[0].name : null;
+}
+
 /** Texto del evento que queda en el historial de un paquete cancelado cuando vuelve a la bodega. */
 const warehouseReturnDetails = (warehouseName, previousDriverName) =>
     `Paquete cancelado devuelto a ${warehouseName}${previousDriverName && !isWarehouseName(previousDriverName) ? ` (lo tenía ${previousDriverName})` : ''}.`;
@@ -56,4 +66,4 @@ async function moveCancelledToWarehouse(run, pkgId, warehouse, previousDriverNam
     return rows[0];
 }
 
-module.exports = { CANCELLED_STATUS, CANCELLED_CODE, MESSAGES, isCancelled, isWarehouseName, warehouseReturnDetails, moveCancelledToWarehouse };
+module.exports = { CANCELLED_STATUS, CANCELLED_CODE, MESSAGES, isCancelled, isWarehouseName, userName, warehouseReturnDetails, moveCancelledToWarehouse };
