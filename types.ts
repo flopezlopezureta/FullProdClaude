@@ -332,6 +332,10 @@ export interface Package {
   falabellaOrderId?: string;
   falabellaTrackingId?: string;
   meliDeliveredNeedsPhotos?: boolean;
+  // Estado del envío EN Mercado Libre (status/substatus de GET /shipments/{id}) y cuándo se consultó por última vez. Solo existe en paquetes de ML ya consultados.
+  meliStatus?: string | null;
+  meliSubstatus?: string | null;
+  meliStatusCheckedAt?: string | null;
   distance?: number;
   isRoadDistance?: boolean;
   // Computed by the backend (routes/packages.js) — prefer this over resolving a display name from

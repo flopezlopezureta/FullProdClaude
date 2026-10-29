@@ -4,6 +4,7 @@ import { PackageStatus, ShippingType, PackageSource } from '../constants';
 import type { Package } from '../types';
 import { IconAlertTriangle, IconCheckCircle, IconClock, IconTruck, IconPackage, IconUserPlus, IconDotsVertical, IconPencil, IconTrash, IconArchive, IconChevronRight, IconPrinter, IconSun, IconZap, IconMoon, IconMercadoLibre, IconWoocommerce, IconArrowUturnLeft, IconUser, IconMapPin, IconQrcode, IconX, IconCopy, IconMail, IconPlugConnected, IconShopify, IconJumpseller, IconFalabella } from './Icon';
 import QRCodeModal from './client/QRCodeModal';
+import { meliStatusLabel, meliSubstatusLabel, meliStatusTone, meliCheckedAgo, MeliStatusTone } from '../utils/meliStatus';
 
 interface PackageListItemProps {
   pkg: Package;
@@ -34,6 +35,14 @@ const statusIcons: { [key in PackageStatus]: React.ReactNode } = {
   [PackageStatus.Returned]: <IconArchive className="h-5 w-5" />,
   [PackageStatus.Cancelled]: <IconX className="h-5 w-5" />,
   [PackageStatus.Rescheduled]: <IconClock className="h-5 w-5" />,
+};
+
+const meliToneClasses: { [key in MeliStatusTone]: string } = {
+  success: 'bg-green-50 text-green-700 border-green-200',
+  warning: 'bg-amber-50 text-amber-800 border-amber-200',
+  danger: 'bg-red-50 text-red-700 border-red-200',
+  info: 'bg-sky-50 text-sky-700 border-sky-200',
+  neutral: 'bg-slate-100 text-slate-600 border-slate-300',
 };
 
 const shippingTypeIcons: { [key in ShippingType]: React.ReactNode } = {
@@ -299,6 +308,17 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                                             </span>
                                         )
                                     )
+                                )}
+                                {pkg.source === 'MERCADO_LIBRE' && pkg.meliStatus && (
+                                    <span
+                                        role="status"
+                                        data-testid="meli-status-badge"
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border ${meliToneClasses[meliStatusTone(pkg.meliStatus)]}`}
+                                        title={`Estado en Mercado Libre: ${meliStatusLabel(pkg.meliStatus)}${meliSubstatusLabel(pkg.meliSubstatus) ? ` (${meliSubstatusLabel(pkg.meliSubstatus)})` : ''}${meliCheckedAgo(pkg.meliStatusCheckedAt) ? ` · consultado ${meliCheckedAgo(pkg.meliStatusCheckedAt)}` : ''}`}
+                                    >
+                                        ML: {meliStatusLabel(pkg.meliStatus)}
+                                        {meliSubstatusLabel(pkg.meliSubstatus) && <span className="font-medium normal-case opacity-80">· {meliSubstatusLabel(pkg.meliSubstatus)}</span>}
+                                    </span>
                                 )}
                                 {pkg.shippingType && shippingTypeIcons[pkg.shippingType]}
                             </div>

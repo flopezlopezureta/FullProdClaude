@@ -1029,6 +1029,16 @@ async function initializeDatabase() {
         } catch (err) {
             if (err.code !== '42701') { console.error('Error during packages migration (meliStuckReviewed):', err); }
         }
+        // Estado del envío en Mercado Libre (status/substatus de GET /shipments/{id}) y cuándo se consultó por última vez: permite filtrar el panel de
+        // paquetes por "Estado ML" sin preguntarle a Mercado Libre en cada búsqueda. Ver services/meliStatuses.js.
+        for (const [col, type] of [['meliStatus', 'TEXT'], ['meliSubstatus', 'TEXT'], ['meliStatusCheckedAt', 'TIMESTAMPTZ']]) {
+            try {
+                await db.query(`ALTER TABLE packages ADD COLUMN "${col}" ${type}`);
+                console.log(`MIGRATION APPLIED: Column "${col}" was added to "packages".`);
+            } catch (err) {
+                if (err.code !== '42701') { console.error(`Error during packages migration (${col}):`, err); }
+            }
+        }
         try {
             await db.query('ALTER TABLE system_settings ADD COLUMN "pendingNotificationsEnabled" BOOLEAN DEFAULT false');
             console.log('MIGRATION APPLIED: Column "pendingNotificationsEnabled" was added to "system_settings".');

@@ -5,6 +5,7 @@ const { normalizeCommune, normalizeCity, SHOPIFY_INCOMPLETE_DATA_CLIENTS } = req
 const { triggerBackgroundGeocoding, geocodeAddress } = require('./geocodingService');
 const gisService = require('./gisService');
 const { emitDriverEvent } = require('./driverEvents');
+const meliStatuses = require('./meliStatuses');
 
 // --- MELI API HELPERS (Duplicated from integrations.js for independence) ---
 const makeMeliRequest = (options, postData = null) => {
@@ -363,6 +364,9 @@ async function pollPackageStatuses() {
                     const mlStatus = shipment.status;
                     const mlSubstatus = shipment.substatus;
                     const now = new Date();
+                    // Se guarda el estado que informa ML (para el filtro "Estado ML" del panel): ya se pagó la llamada, y esto no toca el estado propio del paquete.
+                    // Este sondeo recorre decenas de miles de paquetes (casi todos antiguos y sin cambios): la marca de hora se refresca solo cada 6 h.
+                    await saveMeliStatus(pkg.id, mlStatus, mlSubstatus, now, 360);
 
                     // Mercado Libre sometimes sends buyer PII (receiver_name, address_line,
                     // receiver_phone) as a literal "XXXXXXX" placeholder around the time an
@@ -515,7 +519,8 @@ async function pollPackageStatuses() {
                     if (accessToken) {
                         const shipmentId = pkg.meliFlexCode || pkg.meliOrderId;
                         const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
-                        
+                        await saveMeliStatus(pkg.id, shipment.status, shipment.substatus);
+
                         let meliTimeStr = null;
                         let source = '';
 
@@ -604,6 +609,105 @@ async function pollPackageStatuses() {
     }
 }
 
+// ── Estado de Mercado Libre de cada envío (filtro "Estado ML" del panel de paquetes; reglas en services/meliStatuses.js) ─────────────────────────────
+
+// Guarda lo que Mercado Libre informa para un envío. Solo escribe estas 3 columnas (no toca updatedAt ni el estado propio del paquete) y solo si algo cambió o la
+// última consulta guardada tiene más de `refreshAfterMinutes`, para no reescribir miles de filas iguales en cada vuelta. Nunca interrumpe a quien la llama.
+async function saveMeliStatus(packageId, mlStatus, mlSubstatus, now = new Date(), refreshAfterMinutes = 10) {
+    if (!packageId || !mlStatus) return false;
+    try {
+        const { rowCount } = await db.query(
+            `UPDATE packages SET "meliStatus" = $1, "meliSubstatus" = $2, "meliStatusCheckedAt" = $3
+             WHERE id = $4 AND ("meliStatus" IS DISTINCT FROM $1 OR "meliSubstatus" IS DISTINCT FROM $2 OR "meliStatusCheckedAt" IS NULL
+                                OR "meliStatusCheckedAt" < $3::timestamptz - ($5::int * interval '1 minute'))`,
+            [String(mlStatus), mlSubstatus ? String(mlSubstatus) : null, now, packageId, refreshAfterMinutes]
+        );
+        return rowCount > 0;
+    } catch (err) {
+        console.error(`[MeliPolling] No se pudo guardar el estado de Mercado Libre de ${packageId}:`, err.message || err);
+        return false;
+    }
+}
+
+// Sondeo FRECUENTE y liviano de los envíos recientes que Mercado Libre aún no da por terminados. El sondeo general (pollPackageStatuses) recorre todo lo
+// activo —decenas de miles de paquetes, casi todos antiguos— y tarda lo que tarda; para ver "qué falta entregar hoy" hace falta un estado fresco de lo reciente.
+// Solo GUARDA el estado (sin cambiar estados propios, avisar ni crear eventos: eso sigue siendo del sondeo general). Pide el token una vez por cuenta, no por
+// paquete, y vuelve a preguntar según el último estado (en camino: cada 4 min; el resto: cada 15). Lo terminado (entregado/cancelado) deja de consultarse.
+const RECENT_STATUS_POLL_MS = 3 * 60 * 1000;
+let isPollingRecent = false;
+let recentTimeoutId = null;
+let lastRecentStatusPoll = null;
+
+const recheckIntervalSql = () => `CASE ${Object.entries(meliStatuses.RECHECK_MINUTES).filter(([k]) => k !== 'default').map(([k, m]) => `WHEN "meliStatus" = '${k}' THEN interval '${m} minutes'`).join(' ')} ELSE interval '${meliStatuses.RECHECK_MINUTES.default} minutes' END`;
+
+async function pollRecentMeliStatuses() {
+    if (isPollingRecent) return null;
+    isPollingRecent = true;
+    const startedAt = Date.now();
+    const stats = { due: 0, polled: 0, saved: 0, notFound: 0, errors: 0, noToken: 0, rateLimited: false };
+    try {
+        const terminal = meliStatuses.TERMINAL.map(s => `'${s}'`).join(', ');
+        const { rows: due } = await db.query(`
+            SELECT id, "meliOrderId", "meliFlexCode", "creatorId", "sourceAccountId"
+            FROM packages
+            WHERE source = 'MERCADO_LIBRE'
+              AND ("meliOrderId" IS NOT NULL OR "meliFlexCode" IS NOT NULL)
+              AND ("createdAt" >= now() - interval '${meliStatuses.RECENT_DAYS_CREATED} days' OR "assignedAt" >= now() - interval '${meliStatuses.RECENT_DAYS_ASSIGNED} days')
+              AND ("meliStatus" IS NULL OR "meliStatus" NOT IN (${terminal}))
+              AND ("meliStatusCheckedAt" IS NULL OR "meliStatusCheckedAt" < now() - (${recheckIntervalSql()}))
+            ORDER BY "meliStatusCheckedAt" ASC NULLS FIRST
+            LIMIT 4000
+        `);
+        stats.due = due.length;
+
+        const byAccount = new Map();
+        for (const p of due) {
+            const key = `${p.creatorId}|${p.sourceAccountId || ''}`;
+            if (!byAccount.has(key)) byAccount.set(key, []);
+            byAccount.get(key).push(p);
+        }
+
+        for (const items of byAccount.values()) {
+            if (stats.rateLimited) break;
+            let token = null;
+            try { token = await getValidMeliToken(items[0].creatorId, items[0].sourceAccountId || null); } catch (e) { token = null; }
+            if (!token) { stats.noToken += items.length; continue; }
+
+            let tokenRejected = false;
+            await runWithLimit(4, items, async (p) => {
+                if (stats.rateLimited || tokenRejected) return;
+                try {
+                    const shipment = await makeMeliGetRequest(`/shipments/${p.meliFlexCode || p.meliOrderId}`, token);
+                    stats.polled++;
+                    if (await saveMeliStatus(p.id, shipment.status, shipment.substatus, new Date(), 0)) stats.saved++;
+                } catch (err) {
+                    const code = err && err.statusCode;
+                    if (code === 404) { stats.notFound++; await saveMeliStatus(p.id, 'not_found', null, new Date(), 0); }      // ML no conoce ese envío: no se insiste
+                    else if (code === 429) stats.rateLimited = true;                                            // límite de uso: se corta la vuelta y se reintenta en la siguiente
+                    else if (code === 401 || code === 403) tokenRejected = true;                                // el token de esa cuenta no sirve: se omite el resto de la cuenta
+                    else stats.errors++;
+                }
+            });
+        }
+    } catch (err) {
+        console.error('[MeliPolling] Error en el sondeo de estados ML recientes:', err.message || err);
+        stats.errors++;
+    } finally {
+        isPollingRecent = false;
+        lastRecentStatusPoll = { at: new Date().toISOString(), ms: Date.now() - startedAt, ...stats };
+        if (stats.due > 0) {
+            console.log(`[MeliPolling] Estados ML recientes: ${stats.polled}/${stats.due} consultados, ${stats.saved} guardados, ${stats.notFound} no encontrados, ${stats.errors} errores, ${stats.noToken} sin token${stats.rateLimited ? ', LÍMITE DE USO de ML (se reintenta)' : ''} (${lastRecentStatusPoll.ms} ms).`);
+        }
+    }
+    return stats;
+}
+
+async function recentStatusCycle() {
+    try { await pollRecentMeliStatuses(); }
+    catch (err) { console.error('[MeliPolling] Error en la vuelta de estados ML recientes:', err); }
+    finally { if (recentTimeoutId !== null) recentTimeoutId = setTimeout(recentStatusCycle, RECENT_STATUS_POLL_MS); }
+}
+
 // [NUEVO] Función para asegurar el tracking_id inmediatamente después de importar
 async function syncTrackingId(packageId) {
     try {
@@ -661,7 +765,8 @@ async function syncPackage(packageId) {
         
         const mlStatus = shipment.status;
         const mlSubstatus = shipment.substatus;
-        
+        await saveMeliStatus(pkg.id, mlStatus, mlSubstatus);
+
         console.log(`[MeliPolling] ML Status for ${shipmentId}: ${mlStatus} (${mlSubstatus || 'no substatus'})`);
 
         let newStatus = null;
@@ -1413,6 +1518,11 @@ function start(intervalMs = 5 * 60 * 1000, delayMs = 0, statusIntervalMsArg = 15
         nextStatusScheduledTime = Date.now() + delayMs;
         statusTimeoutId = setTimeout(pollPackageStatuses, delayMs);
     }
+
+    // Sondeo frecuente de los estados de ML de los envíos recientes (filtro "Estado ML" del panel): ver pollRecentMeliStatuses.
+    if (recentTimeoutId === null) {
+        recentTimeoutId = setTimeout(recentStatusCycle, delayMs + 45 * 1000);
+    }
 }
 
 function stop() {
@@ -1423,6 +1533,10 @@ function stop() {
     if (statusTimeoutId !== null) {
         clearTimeout(statusTimeoutId);
         statusTimeoutId = null;
+    }
+    if (recentTimeoutId !== null) {
+        clearTimeout(recentTimeoutId);
+        recentTimeoutId = null;
     }
 }
 
@@ -1460,7 +1574,8 @@ function getStatus() {
         lastImportCount,
         nextStatusPollTime: nextStatusScheduledTime,
         isPollingStatuses,
-        statusIntervalMs
+        statusIntervalMs,
+        recentStatusPoll: { isPolling: isPollingRecent, intervalMs: RECENT_STATUS_POLL_MS, last: lastRecentStatusPoll }
     };
 }
 
@@ -1537,6 +1652,7 @@ async function syncDriverPendingPackages(driverId) {
 
             const shipment = await makeMeliGetRequest(`/shipments/${shipmentId}`, accessToken);
             const mlStatus = shipment.status;
+            await saveMeliStatus(pkg.id, mlStatus, shipment.substatus);
 
             if (mlStatus === 'delivered' && pkg.status !== 'ENTREGADO') {
                 const now = new Date();
@@ -1591,6 +1707,8 @@ module.exports = {
     getStatus,
     pollMeliPackages,
     pollPackageStatuses,
+    pollRecentMeliStatuses,
+    saveMeliStatus,
     syncPackage,
     getValidMeliToken,
     autoImportMeliPackages,
