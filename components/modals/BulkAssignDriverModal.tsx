@@ -6,6 +6,7 @@ import SearchableSelect from '../SearchableSelect';
 
 interface BulkAssignDriverModalProps {
   packageCount: number;
+  cancelledCount?: number;   // cuántos de los seleccionados están CANCELADOS (solo pueden volver al conductor "Bodega")
   drivers: User[];
   onClose: () => void;
   onAssign: (driverId: string | null, newDeliveryDate: Date) => void;
@@ -17,7 +18,7 @@ const formatDateForInput = (date: Date): string => {
     return d.toISOString().split('T')[0];
 };
 
-const BulkAssignDriverModal: React.FC<BulkAssignDriverModalProps> = ({ packageCount, drivers, onClose, onAssign }) => {
+const BulkAssignDriverModal: React.FC<BulkAssignDriverModalProps> = ({ packageCount, cancelledCount = 0, drivers, onClose, onAssign }) => {
   const [selectedDriverId, setSelectedDriverId] = useState<string>('');
   const [deliveryDate, setDeliveryDate] = useState<string>(formatDateForInput(new Date()));
 
@@ -45,6 +46,13 @@ const BulkAssignDriverModal: React.FC<BulkAssignDriverModalProps> = ({ packageCo
             <p className="text-center font-semibold text-[var(--text-secondary)]">
               Vas a asignar <span className="text-[var(--brand-primary)] text-lg">{packageCount}</span> paquete(s) a un conductor.
             </p>
+            {cancelledCount > 0 && (
+              <p role="note" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {cancelledCount === 1
+                  ? '1 de los paquetes seleccionados está CANCELADO: solo puede volver al conductor «Bodega». Con cualquier otra opción se omitirá y el resto se asigna normalmente.'
+                  : `${cancelledCount} de los paquetes seleccionados están CANCELADOS: solo pueden volver al conductor «Bodega». Con cualquier otra opción se omitirán y el resto se asigna normalmente.`}
+              </p>
+            )}
             <div>
               <label htmlFor="bulk-driver-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Conductor</label>
               <SearchableSelect

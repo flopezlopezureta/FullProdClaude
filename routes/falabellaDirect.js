@@ -5,6 +5,7 @@ const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const falabellaDirectService = require('../services/falabellaDirectService');
 const { encrypt, decrypt } = require('../services/falabellaCrypto');
+const cancelledPackages = require('../services/cancelledPackages');
 
 const isSuperUser = (email) => email === 'admin' || email === 'admin@admin.cl';
 
@@ -106,6 +107,11 @@ router.post('/import-scanned', authMiddleware, requireFalabellaDirectAccess, asy
             const pkg = existing[0];
             if (['ENTREGADO', 'DEVUELTO'].includes(pkg.status)) {
                 return res.status(200).json({ message: `El paquete con LPN ${lpn} ya había sido escaneado y está ${pkg.status.toLowerCase()} — no se puede redespachar.`, pkg, alreadyImported: true });
+            }
+            // Un paquete CANCELADO no se redespacha (pasaría a EN_TRANSITO y se le avisaría a Falabella que va en reparto). Misma forma de respuesta
+            // que el caso anterior: el escáner la muestra como error.
+            if (cancelledPackages.isCancelled(pkg.status)) {
+                return res.status(200).json({ message: cancelledPackages.MESSAGES.falabellaRescan(lpn), pkg, alreadyImported: true });
             }
 
             const { rows: driverRows } = await db.query('SELECT id, name FROM users WHERE id = $1', [driverId]);

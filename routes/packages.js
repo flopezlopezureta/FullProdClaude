@@ -14,6 +14,7 @@ const { geocodeAddress, triggerBackgroundGeocoding } = require('../services/geoc
 const gisService = require('../services/gisService');
 const { buildSellerNameSql } = require('../services/falabellaDirectSellers');
 const rutValidator = require('../services/rutValidator');
+const cancelled = require('../services/cancelledPackages');
 const falabellaDirectClientNameSql = `CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / ' || ${buildSellerNameSql()} ELSE u.name END as "clientName"`;
 
 // [EMERGENCIA] Ruta para normalizar todas las comunas y ciudades del historial
@@ -1115,68 +1116,113 @@ router.post('/batch-assign-driver', authMiddleware, async (req, res) => {
             driverName = driverRows[0].name;
         }
         
-        const placeholders = packageIds.map((_, i) => `$${i + 6}`).join(', ');
-
         // Force status to ASIGNADO only if driverId is provided, otherwise RETIRADO (Available)
         const targetStatus = isUnassigning ? 'RETIRADO' : 'ASIGNADO';
         const finalDriverId = isUnassigning ? null : driverId;
 
-        const updateQuery = `
-            UPDATE packages 
-            SET "driverId" = $1, 
-                "estimatedDelivery" = $2, 
-                "updatedAt" = $3, 
-                status = $4, 
-                "assignedAt" = $5,
-                "isReassigned" = CASE 
-                    WHEN $1::text IS NULL THEN false 
-                    ELSE COALESCE("isReassigned", false) OR ("driverId" IS NOT NULL AND "driverId" != $1::text) 
-                END
-            WHERE id IN (${placeholders})
-        `;
-        
-        // Fetch current states before update to detect reassignments
+        // Fetch current states before update to detect reassignments (and CANCELADOS)
         const searchPlaceholders = packageIds.map((_, i) => `$${i + 1}`).join(', ');
-        const { rows: currentStates } = await client.query(`SELECT id, "driverId" FROM packages WHERE id IN (${searchPlaceholders})`, packageIds);
-        
-        await client.query(updateQuery, [finalDriverId, newDeliveryDate, new Date(), targetStatus, finalDriverId ? new Date() : null, ...packageIds]);
+        const { rows: currentStates } = await client.query(`SELECT id, "driverId", status FROM packages WHERE id IN (${searchPlaceholders})`, packageIds);
 
-        // Create tracking events for all updated packages using a single bulk insert
-        const eventValues = [];
-        const eventParams = [];
-        const timestamp = new Date();
+        // Los paquetes CANCELADOS no se asignan ni se dejan disponibles: solo pueden volver a la bodega (conductor "Bodega") y siguen CANCELADOS.
+        // Con cualquier otro destino se omiten y se informan; el resto del lote se procesa igual. Ver services/cancelledPackages.js.
+        const cancelledRows = currentStates.filter(p => cancelled.isCancelled(p.status));
+        const toWarehouse = !isUnassigning && cancelled.isWarehouseName(driverName);
+        const cancelledToMove = toWarehouse ? cancelledRows.filter(p => p.driverId !== driverId) : [];
+        const skippedCancelled = toWarehouse ? [] : cancelledRows.map(p => p.id);
+        const cancelledIds = new Set(cancelledRows.map(p => p.id));
+        const regularIds = packageIds.filter(id => !cancelledIds.has(id));
 
-        packageIds.forEach((packageId, index) => {
-            const pkgBefore = currentStates.find(p => p.id === packageId);
-            const isActuallyReassigning = !isUnassigning && pkgBefore?.driverId && pkgBefore?.driverId !== driverId;
+        if (skippedCancelled.length > 0) {
+            logAction(req.user.id, req.user.name, 'BATCH_ASSIGN_CANCELLED_BLOCKED', { count: skippedCancelled.length, packageIds: skippedCancelled.slice(0, 50), driverId: finalDriverId });
+        }
+        if (regularIds.length === 0 && cancelledToMove.length === 0) {
+            await client.query('ROLLBACK');
+            if (skippedCancelled.length > 0) {
+                return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.allCancelled(skippedCancelled.length), skippedCancelled });
+            }
+            return res.status(200).json({ message: 'Los paquetes seleccionados ya estaban en la bodega.', assigned: 0, movedToWarehouse: 0, skippedCancelled: [] });
+        }
+
+        let assignedCount = 0;
+        if (regularIds.length > 0) {
+            const placeholders = regularIds.map((_, i) => `$${i + 6}`).join(', ');
+            const updateQuery = `
+                UPDATE packages
+                SET "driverId" = $1,
+                    "estimatedDelivery" = $2,
+                    "updatedAt" = $3,
+                    status = $4,
+                    "assignedAt" = $5,
+                    "isReassigned" = CASE
+                        WHEN $1::text IS NULL THEN false
+                        ELSE COALESCE("isReassigned", false) OR ("driverId" IS NOT NULL AND "driverId" != $1::text)
+                    END
+                WHERE id IN (${placeholders})
+            `;
+
+            await client.query(updateQuery, [finalDriverId, newDeliveryDate, new Date(), targetStatus, finalDriverId ? new Date() : null, ...regularIds]);
+
+            // Create tracking events for all updated packages using a single bulk insert
+            const eventValues = [];
+            const eventParams = [];
+            const timestamp = new Date();
+
+            regularIds.forEach((packageId, index) => {
+                const pkgBefore = currentStates.find(p => p.id === packageId);
+                const isActuallyReassigning = !isUnassigning && pkgBefore?.driverId && pkgBefore?.driverId !== driverId;
             
-            const eventStatus = isUnassigning ? 'Creado' : (isActuallyReassigning ? 'Reasignado' : 'Asignado');
-            const details = isUnassigning 
-                ? 'Paquete puesto en disponibilidad (desasignado).' 
-                : (isActuallyReassigning 
-                    ? `Reasignado al conductor ${driverName}. Fecha de reasignación actualizada.` 
-                    : `Asignado a conductor ${driverName}. Estado actualizado a Asignado.`);
+                const eventStatus = isUnassigning ? 'Creado' : (isActuallyReassigning ? 'Reasignado' : 'Asignado');
+                const details = isUnassigning 
+                    ? 'Paquete puesto en disponibilidad (desasignado).' 
+                    : (isActuallyReassigning 
+                        ? `Reasignado al conductor ${driverName}. Fecha de reasignación actualizada.` 
+                        : `Asignado a conductor ${driverName}. Estado actualizado a Asignado.`);
 
-            const offset = index * 5;
-            eventValues.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`);
-            eventParams.push(packageId, eventStatus, 'Centro de Distribución', details, timestamp);
-        });
+                const offset = index * 5;
+                eventValues.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`);
+                eventParams.push(packageId, eventStatus, 'Centro de Distribución', details, timestamp);
+            });
 
-        if (eventValues.length > 0) {
-            await client.query(
-                `INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ${eventValues.join(', ')}`,
-                eventParams
-            );
+            if (eventValues.length > 0) {
+                await client.query(
+                    `INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ${eventValues.join(', ')}`,
+                    eventParams
+                );
+            }
+            assignedCount = regularIds.length;
+        }
+
+        // Cancelados que vuelven a la bodega: cambian de conductor pero siguen CANCELADOS, y no se avisa a nadie.
+        let movedCount = 0;
+        if (cancelledToMove.length > 0) {
+            const previousIds = [...new Set(cancelledToMove.map(p => p.driverId).filter(Boolean))];
+            const previousNames = new Map();
+            if (previousIds.length > 0) {
+                const { rows: previousRows } = await client.query('SELECT id, name FROM users WHERE id = ANY($1::text[])', [previousIds]);
+                previousRows.forEach(r => previousNames.set(r.id, r.name));
+            }
+            for (const p of cancelledToMove) {
+                const moved = await cancelled.moveCancelledToWarehouse((text, params) => client.query(text, params), p.id, { id: driverId, name: driverName }, p.driverId ? previousNames.get(p.driverId) : null);
+                if (moved) movedCount++;
+            }
+            logAction(req.user.id, req.user.name, 'BATCH_ASSIGN_CANCELLED_TO_WAREHOUSE', { count: movedCount, driverId });
         }
 
         await client.query('COMMIT');
-        
+
         // Notify recipients asynchronously in bulk (optimized to prevent DB slamming and connection leaks)
-        setImmediate(() => {
-            NotificationService.notifyRecipientsBulk(packageIds, targetStatus);
-        });
-        
-        res.status(200).json({ message: `${packageIds.length} paquetes asignados correctamente.` });
+        if (regularIds.length > 0) {
+            setImmediate(() => {
+                NotificationService.notifyRecipientsBulk(regularIds, targetStatus);
+            });
+        }
+
+        const summary = [];
+        if (assignedCount > 0) summary.push(`${assignedCount} paquetes asignados correctamente.`);
+        if (movedCount > 0) summary.push(`${movedCount} ${movedCount === 1 ? 'paquete cancelado devuelto' : 'paquetes cancelados devueltos'} a ${driverName}.`);
+        if (skippedCancelled.length > 0) summary.push(`${skippedCancelled.length} ${skippedCancelled.length === 1 ? 'paquete CANCELADO no se asignó' : 'paquetes CANCELADOS no se asignaron'}: solo pueden volver al conductor «Bodega».`);
+        res.status(200).json({ message: summary.join(' '), assigned: assignedCount, movedToWarehouse: movedCount, skippedCancelled });
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -1337,6 +1383,29 @@ router.post('/:id/assign-driver', authMiddleware, async (req, res) => {
             return res.status(400).json({ message: 'Los paquetes de Falabella Directo no pueden quedar sin conductor asignado. Reasígnalo a otro conductor en vez de dejarlo disponible.' });
         }
 
+        // Un paquete CANCELADO no se asigna ni se reasigna a un conductor de reparto, ni se deja "disponible" (eso lo volvería a poner como RETIRADO y
+        // lo haría reaparecer como pendiente): solo puede volver a la bodega (conductor "Bodega") y sigue CANCELADO. Ver services/cancelledPackages.js.
+        if (cancelled.isCancelled(currentPkgRows[0].status)) {
+            if (isUnassigning) {
+                logAction(req.user.id, req.user.name, 'ASSIGN_CANCELLED_BLOCKED', { packageId: id, driverId: null });
+                return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.unassign });
+            }
+            const { rows: targetRows } = await db.query('SELECT id, name FROM users WHERE id = $1', [driverId]);
+            if (targetRows.length === 0 || !cancelled.isWarehouseName(targetRows[0].name)) {
+                logAction(req.user.id, req.user.name, 'ASSIGN_CANCELLED_BLOCKED', { packageId: id, driverId });
+                return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.assign });
+            }
+            if (oldDriverId !== driverId) {
+                const previousName = oldDriverId ? await getCachedDriverName(oldDriverId) : null;
+                const moved = await cancelled.moveCancelledToWarehouse((text, params) => db.query(text, params), id, targetRows[0], previousName);
+                if (!moved) return res.status(409).json({ message: 'El paquete cambió de estado mientras se procesaba. Actualiza la lista e inténtalo de nuevo.' });
+                logAction(req.user.id, req.user.name, 'ASSIGN_CANCELLED_TO_WAREHOUSE', { packageId: id, driverId });
+            }
+            const { rows: warehousePkg } = await db.query('SELECT * FROM packages WHERE id = $1', [id]);
+            warehousePkg[0].history = await getHistory(id);
+            return res.json(warehousePkg[0]);
+        }
+
         // Force status to ASIGNADO only if driverId is provided, otherwise RETIRADO (Available)
         const targetStatus = driverId ? 'ASIGNADO' : 'RETIRADO';
         const { rows } = await db.query(
@@ -1412,6 +1481,26 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
         
         if (['ENTREGADO', 'DEVUELTO'].includes(currentPkg.status)) {
             return res.status(400).json({ message: `Paquete ya se encuentra ${currentPkg.status}.` });
+        }
+
+        // Un paquete CANCELADO no sale a ruta (el conductor perdería el viaje y el comprador recibiría un aviso de un envío que canceló): solo puede
+        // volver a la bodega, es decir, escanearse a nombre del conductor "Bodega", y sigue CANCELADO. Ver services/cancelledPackages.js.
+        if (cancelled.isCancelled(currentPkg.status)) {
+            const targetName = await getCachedDriverName(driverId);
+            if (!cancelled.isWarehouseName(targetName)) {
+                logAction(req.user.id, req.user.name, 'DISPATCH_CANCELLED_BLOCKED', { packageId: realId, driverId });
+                return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.dispatch });
+            }
+            if (currentPkg.driverId === driverId) {
+                return res.json({ message: cancelled.MESSAGES.alreadyInWarehouse(targetName), package: currentPkg });
+            }
+            const previousName = currentPkg.driverId ? await getCachedDriverName(currentPkg.driverId) : null;
+            const moved = await cancelled.moveCancelledToWarehouse((text, params) => db.query(text, params), realId, { id: driverId, name: targetName }, previousName);
+            if (!moved) return res.status(409).json({ message: 'El paquete cambió de estado mientras se procesaba. Escanéalo de nuevo.' });
+            logAction(req.user.id, req.user.name, 'DISPATCH_CANCELLED_TO_WAREHOUSE', { packageId: realId, driverId });
+            delete moved.flexLabelPhotoBase64;
+            delete moved.deliveryPhotosBase64;
+            return res.json({ message: `Paquete cancelado ${realId} devuelto a ${targetName}.`, package: moved });
         }
 
         // Falabella Directo requires real GPS coordinates with every status push (this route
@@ -1576,9 +1665,13 @@ router.post('/:id/flex', authMiddleware, async (req, res) => {
         
         const currentStatus = checkResult.rows[0].status;
         if (currentStatus === 'ENTREGADO' || currentStatus === 'DEVUELTO') {
-            return res.status(400).json({ 
-                message: `No se puede marcar como Flex un paquete que ya está ${currentStatus}.` 
+            return res.status(400).json({
+                message: `No se puede marcar como Flex un paquete que ya está ${currentStatus}.`
             });
+        }
+        // Marcar Flex pone el paquete EN_TRANSITO y le avisa al comprador: un paquete CANCELADO no debe reaparecer así.
+        if (isFlexed && cancelled.isCancelled(currentStatus)) {
+            return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.flex });
         }
 
         const { rows } = await db.query(
@@ -2722,11 +2815,17 @@ router.post('/:id/pickup', authMiddleware, async (req, res) => {
     const { flexCode } = req.body;
     const driverId = req.user.id;
     try {
+         // Un paquete CANCELADO no se retira: quedaría RETIRADO con conductor y dejaría de figurar como cancelado.
+         const { rows: currentRows } = await db.query('SELECT status FROM packages WHERE id = $1', [id]);
+         if (currentRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
+         if (cancelled.isCancelled(currentRows[0].status)) {
+             return res.status(400).json({ code: cancelled.CANCELLED_CODE, message: cancelled.MESSAGES.pickup });
+         }
          const { rows } = await db.query(
-            'UPDATE packages SET status = $1, "driverId" = $2, "updatedAt" = $3, "meliFlexCode" = $4, "assignedAt" = $3 WHERE id = $5 RETURNING *',
+            'UPDATE packages SET status = $1, "driverId" = $2, "updatedAt" = $3, "meliFlexCode" = $4, "assignedAt" = $3 WHERE id = $5 AND status <> \'CANCELADO\' RETURNING *',
             ['RETIRADO', driverId, new Date(), flexCode || null, id]
         );
-        if (rows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
+         if (rows.length === 0) return res.status(409).json({ message: 'El paquete cambió de estado mientras se procesaba. Inténtalo de nuevo.' });
         
         const driverName = (await db.query('SELECT name FROM users WHERE id = $1', [driverId])).rows[0]?.name;
         await addTrackingEvent(id, 'RETIRADO', rows[0].origin, `Retirado por conductor ${driverName}.`);

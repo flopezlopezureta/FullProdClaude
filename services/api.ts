@@ -351,7 +351,8 @@ export const api = {
   updatePackage: (pkgId: string, data: PackageUpdateData) => put<Package>(`/packages/${encodeURIComponent(pkgId)}`, data),
   deletePackage: (pkgId: string, password?: string) => request<void>(`/packages/${encodeURIComponent(pkgId)}`, { method: 'DELETE', body: JSON.stringify({ password }) }),
   assignDriverToPackage: (pkgId: string, driverId: string | null, newDeliveryDate: Date) => post<Package>(`/packages/${encodeURIComponent(pkgId)}/assign-driver`, { driverId, newDeliveryDate }),
-  batchAssignDriverToPackages: (packageIds: string[], driverId: string | null, newDeliveryDate: Date) => post<{message: string}>(`/packages/batch-assign-driver`, { packageIds, driverId, newDeliveryDate }),
+  // `skippedCancelled`: ids de paquetes CANCELADOS que no se asignaron (solo pueden volver al conductor "Bodega"); `movedToWarehouse`: cancelados devueltos a Bodega.
+  batchAssignDriverToPackages: (packageIds: string[], driverId: string | null, newDeliveryDate: Date) => post<{message: string; assigned?: number; movedToWarehouse?: number; skippedCancelled?: string[]}>(`/packages/batch-assign-driver`, { packageIds, driverId, newDeliveryDate }),
   markPackageForReturn: (pkgId: string) => post<Package>(`/packages/${encodeURIComponent(pkgId)}/mark-for-return`, {}),
   confirmDelivery: (pkgId: string, data: DeliveryConfirmationData) => post<Package>(`/packages/${encodeURIComponent(pkgId)}/deliver`, data),
   markPackageAsProblem: (pkgId: string, reason: string, photos: string[]) => post<Package>(`/packages/${encodeURIComponent(pkgId)}/problem`, { reason, photosBase64: photos }),

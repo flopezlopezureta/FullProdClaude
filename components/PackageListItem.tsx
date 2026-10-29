@@ -124,7 +124,9 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
   }, [pkg.createdAt]);
 
   const canModify = /PENDIENTE|ASIGNADO|RETIRADO/i.test(String(pkg.status || ''));
-  const canReassign = onAssign && pkg.status !== PackageStatus.Delivered && pkg.status !== PackageStatus.Returned;
+  // Un paquete CANCELADO no se asigna ni se reasigna: solo puede volver a la bodega (conductor "Bodega"), así que si ya está ahí no hay nada que hacer.
+  const isCancelledPkg = pkg.status === PackageStatus.Cancelled;
+  const canReassign = onAssign && pkg.status !== PackageStatus.Delivered && pkg.status !== PackageStatus.Returned && !(isCancelledPkg && /bodega/i.test(String(driverName || '')));
   const canMarkForReturn = onMarkForReturn && pkg.status === PackageStatus.Problem;
   const hasActions = onPrint || (canModify && (onEdit || onDelete)) || canReassign || canMarkForReturn;
 
@@ -406,7 +408,7 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                     )}
                     {canReassign && (
                         <button onClick={() => onAssign(pkg)} className="w-full text-left flex items-center px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--background-hover)]">
-                            <IconUserPlus className="w-4 h-4 mr-3" /> {driverName ? 'Reasignar' : 'Asignar'}
+                            <IconUserPlus className="w-4 h-4 mr-3" /> {isCancelledPkg ? 'Devolver a Bodega' : (driverName ? 'Reasignar' : 'Asignar')}
                         </button>
                     )}
                     {canMarkForReturn && (

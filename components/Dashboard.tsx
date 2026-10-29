@@ -461,10 +461,12 @@ const Dashboard: React.FC = () => {
     if (idsToAssign.length === 0) return;
 
     try {
-        await api.batchAssignDriverToPackages(idsToAssign, driverId, newDeliveryDate);
+        const result = await api.batchAssignDriverToPackages(idsToAssign, driverId, newDeliveryDate);
         fetchData(); // Refetch data to show changes
         setSelectedPackages(new Set()); // Clear selection
         setIsBulkAssignModalOpen(false); // Close modal
+        // Los CANCELADOS no se asignan a un conductor de reparto: el servidor los omite y lo informa para que nadie crea que quedaron asignados.
+        if (result?.skippedCancelled && result.skippedCancelled.length > 0) alert(result.message);
     } catch (error: any) {
         console.error("Failed to bulk assign driver", error);
         alert("Ocurrió un error al asignar los paquetes: " + (error.message || "Error desconocido"));
@@ -1252,6 +1254,7 @@ const Dashboard: React.FC = () => {
       {isBulkAssignModalOpen && (
         <BulkAssignDriverModal
             packageCount={selectedPackages.size}
+            cancelledCount={selectedPackageObjects.filter(p => p.status === PackageStatus.Cancelled).length}
             drivers={drivers}
             onClose={() => setIsBulkAssignModalOpen(false)}
             onAssign={handleBulkAssignDriver}

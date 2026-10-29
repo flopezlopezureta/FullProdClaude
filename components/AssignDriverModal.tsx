@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Package, User } from '../types';
+import { PackageStatus } from '../constants';
 import { IconX, IconCalendar } from './Icon';
 import SearchableSelect from './SearchableSelect';
 
@@ -17,7 +18,12 @@ const formatDateForInput = (date: Date): string => {
 };
 
 const AssignDriverModal: React.FC<AssignDriverModalProps> = ({ pkg, drivers, onClose, onAssign }) => {
-  const [selectedDriverId, setSelectedDriverId] = useState<string>(pkg.driverId || '');
+  // Un paquete CANCELADO no se asigna ni se reasigna a un conductor de reparto ni se deja disponible: solo puede volver a la bodega (conductor "Bodega").
+  const isCancelled = pkg.status === PackageStatus.Cancelled;
+  const warehouseDrivers = useMemo(() => drivers.filter(d => /bodega/i.test(d.name)), [drivers]);
+  // Con el selector vacío, un cancelado no debe leerse como "dejar sin asignar" (eso está prohibido): el texto vacío dice qué falta.
+  const emptyLabel = isCancelled ? 'Sin conductor «Bodega»' : '-- Sin Asignar --';
+  const [selectedDriverId, setSelectedDriverId] = useState<string>(isCancelled ? (warehouseDrivers[0]?.id || '') : (pkg.driverId || ''));
   const [deliveryDate, setDeliveryDate] = useState<string>(formatDateForInput(pkg.estimatedDelivery));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -39,7 +45,7 @@ const AssignDriverModal: React.FC<AssignDriverModalProps> = ({ pkg, drivers, onC
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between p-4 border-b border-[var(--border-primary)]">
-          <h3 className="text-lg font-bold text-[var(--text-primary)]">Asignar/Reasignar Paquete</h3>
+          <h3 className="text-lg font-bold text-[var(--text-primary)]">{isCancelled ? 'Devolver paquete cancelado a Bodega' : 'Asignar/Reasignar Paquete'}</h3>
           <button
             onClick={onClose}
             className="p-2 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)] hover:text-[var(--text-primary)] transition-colors"
@@ -51,19 +57,27 @@ const AssignDriverModal: React.FC<AssignDriverModalProps> = ({ pkg, drivers, onC
 
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-4">
+            {isCancelled && (
+              <p role="note" className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Este paquete está CANCELADO: no se puede asignar ni reasignar a un conductor de reparto. Solo puede volver a la bodega, que es el conductor «Bodega».
+                {warehouseDrivers.length === 0 && ' No hay un conductor «Bodega» en el sistema.'}
+              </p>
+            )}
             <div>
               <label htmlFor="driver-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                 Conductor
               </label>
               <SearchableSelect
-                items={drivers}
+                items={isCancelled ? warehouseDrivers : drivers}
                 selectedId={selectedDriverId || 'none'}
                 onSelect={(id) => setSelectedDriverId(id === 'none' ? '' : id)}
-                placeholder="-- Sin Asignar --"
+                placeholder={emptyLabel}
                 searchPlaceholder="Buscar conductor..."
-                noneLabel="-- Sin Asignar --"
+                noneLabel={emptyLabel}
+                showNoneOption={!isCancelled}
               />
             </div>
+            {!isCancelled && (
             <div>
               <label htmlFor="delivery-date" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
                 Nueva Fecha de Entrega
@@ -83,6 +97,7 @@ const AssignDriverModal: React.FC<AssignDriverModalProps> = ({ pkg, drivers, onC
                 />
               </div>
             </div>
+            )}
           </div>
 
           <footer className="px-6 py-4 bg-[var(--background-muted)] rounded-b-xl flex justify-end space-x-3">
@@ -95,9 +110,10 @@ const AssignDriverModal: React.FC<AssignDriverModalProps> = ({ pkg, drivers, onC
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-sm font-medium text-white bg-[var(--brand-primary)] border border-transparent rounded-md shadow-sm hover:bg-[var(--brand-secondary)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--brand-secondary)]"
+              disabled={isCancelled && !selectedDriverId}
+              className="px-4 py-2 text-sm font-medium text-white bg-[var(--brand-primary)] border border-transparent rounded-md shadow-sm hover:bg-[var(--brand-secondary)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--brand-secondary)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Guardar Cambios
+              {isCancelled ? 'Devolver a Bodega' : 'Guardar Cambios'}
             </button>
           </footer>
         </form>
