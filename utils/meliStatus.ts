@@ -3,12 +3,11 @@
  * Los grupos del filtro DEBEN coincidir con services/meliStatuses.js (GROUPS) del servidor.
  */
 
-export type MeliStatusFilter = 'all' | 'pending' | 'ready' | 'shipped' | 'delivered' | 'not_delivered' | 'cancelled' | 'unknown';
+// Estados que se pueden elegir en el filtro (se pueden elegir VARIOS a la vez). Sin ninguno elegido se muestran todos.
+export type MeliStatusKey = 'ready' | 'shipped' | 'not_delivered' | 'delivered' | 'cancelled' | 'unknown';
 
 // Opciones del selector, en el orden en que se leen: primero lo que hay que mover, después lo que ya terminó.
-export const MELI_STATUS_FILTER_OPTIONS: { value: MeliStatusFilter; label: string }[] = [
-  { value: 'all', label: 'TODOS' },
-  { value: 'pending', label: 'PENDIENTES EN ML' },
+export const MELI_STATUS_OPTIONS: { value: MeliStatusKey; label: string }[] = [
   { value: 'ready', label: 'LISTO PARA ENVIAR' },
   { value: 'shipped', label: 'EN CAMINO' },
   { value: 'not_delivered', label: 'NO ENTREGADO' },
@@ -16,6 +15,18 @@ export const MELI_STATUS_FILTER_OPTIONS: { value: MeliStatusFilter; label: strin
   { value: 'cancelled', label: 'CANCELADO EN ML' },
   { value: 'unknown', label: 'SIN CONSULTAR' },
 ];
+
+// Atajo: lo que Mercado Libre aún no da por entregado ni cancelado y se puede mover (listo para enviar + en camino).
+export const MELI_PENDING_PRESET: MeliStatusKey[] = ['ready', 'shipped'];
+
+/** Lo que dice el botón del selector: TODOS, PENDIENTES EN ML (si son exactamente listo + en camino), el nombre del único elegido, o "N ESTADOS". */
+export const meliFilterSummary = (value: MeliStatusKey[]): string => {
+  const set = new Set(value);
+  if (set.size === 0) return 'TODOS';
+  if (set.size === MELI_PENDING_PRESET.length && MELI_PENDING_PRESET.every(k => set.has(k))) return 'PENDIENTES EN ML';
+  if (set.size === 1) return MELI_STATUS_OPTIONS.find(o => o.value === value[0])?.label || String(value[0]);
+  return `${set.size} ESTADOS`;
+};
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pendiente',

@@ -2,7 +2,8 @@
 import React from 'react';
 import { User } from '../../types';
 import { IconSearch, IconPackage, IconCalendar, IconFileSpreadsheet, IconRefresh, IconAlertTriangle } from '../Icon';
-import { MELI_STATUS_FILTER_OPTIONS, MeliStatusFilter } from '../../utils/meliStatus';
+import type { MeliStatusKey } from '../../utils/meliStatus';
+import MeliStatusMultiSelect from './MeliStatusMultiSelect';
 
 interface PackageFiltersProps {
   onOpenCreateModal: () => void;
@@ -29,8 +30,8 @@ interface PackageFiltersProps {
   flexFilter: 'all' | 'flexed' | 'not_flexed';
   onFlexFilterChange: (filter: 'all' | 'flexed' | 'not_flexed') => void;
   // Estado del envío EN Mercado Libre (lo que ML informa, no el estado propio del paquete). Si no se pasa, el selector no se muestra.
-  meliStatusFilter?: MeliStatusFilter;
-  onMeliStatusFilterChange?: (filter: MeliStatusFilter) => void;
+  meliStatusFilter?: MeliStatusKey[];
+  onMeliStatusFilterChange?: (filter: MeliStatusKey[]) => void;
   sourceFilter: 'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo';
   onSourceFilterChange: (filter: 'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo') => void;
   quickFilter: 'all' | 'closed' | 'cancelled' | 'rescheduled';
@@ -72,7 +73,7 @@ const PackageFilters: React.FC<PackageFiltersProps> = ({
   onEndDateChange,
   flexFilter,
   onFlexFilterChange,
-  meliStatusFilter = 'all',
+  meliStatusFilter = [],
   onMeliStatusFilterChange,
   sourceFilter,
   onSourceFilterChange,
@@ -304,11 +305,9 @@ const PackageFilters: React.FC<PackageFiltersProps> = ({
           </select>
         </div>
         {onMeliStatusFilterChange && (
-          <div className="flex-shrink-0 w-44">
-            <label htmlFor="meli-status-filter" className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block" title="Estado del envío según Mercado Libre (se actualiza cada pocos minutos), distinto del estado propio del paquete">Estado ML</label>
-            <select id="meli-status-filter" value={meliStatusFilter} onChange={(e) => onMeliStatusFilterChange(e.target.value as MeliStatusFilter)} className={`${selectClasses} font-bold text-xs !py-1.5`} aria-label="Filtrar por estado en Mercado Libre">
-              {MELI_STATUS_FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+          <div className="flex-shrink-0 w-48">
+            <label id="meli-status-filter-label" className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block" title="Estado del envío según Mercado Libre (se actualiza cada pocos minutos), distinto del estado propio del paquete. Puedes elegir varios a la vez.">Estado ML</label>
+            <MeliStatusMultiSelect value={meliStatusFilter} onChange={onMeliStatusFilterChange} buttonClassName={`${selectClasses} font-bold text-xs !py-1.5`} />
           </div>
         )}
         <div className="flex-shrink-0 w-40">

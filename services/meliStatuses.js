@@ -28,13 +28,19 @@ const GROUPS = {
 const isGroup = (value) => typeof value === 'string' && (Object.prototype.hasOwnProperty.call(GROUPS, value) || value === 'unknown');
 
 /**
- * Condición SQL para el filtro `meliStatusFilter`, o null si el valor no es uno de los permitidos (se ignora, no se intenta interpretar).
+ * Condición SQL para el filtro `meliStatusFilter`, o null si no trae ningún valor permitido (se ignora, no se intenta interpretar).
+ * Acepta un grupo ("shipped") o varios a la vez separados por coma ("ready,shipped,not_delivered", o repetidos en la URL): se juntan con O, así que el panel
+ * puede mostrar varios estados de Mercado Libre juntos. Cada valor desconocido se descarta; la condición sale solo de constantes de este archivo.
  * "unknown" = paquetes de Mercado Libre que todavía no se han consultado.
  */
 function filterClause(value) {
-    if (!isGroup(value)) return null;
-    if (value === 'unknown') return `(p.source = 'MERCADO_LIBRE' AND p."meliStatus" IS NULL)`;
-    return `p."meliStatus" IN (${GROUPS[value].map(s => `'${s}'`).join(', ')})`;
+    const tokens = (Array.isArray(value) ? value : String(value == null ? '' : value).split(',')).map(t => (typeof t === 'string' ? t.trim() : t)).filter(isGroup);
+    if (tokens.length === 0) return null;
+    const statuses = [...new Set(tokens.filter(t => t !== 'unknown').flatMap(t => GROUPS[t]))];
+    const parts = [];
+    if (statuses.length > 0) parts.push(`p."meliStatus" IN (${statuses.map(s => `'${s}'`).join(', ')})`);
+    if (tokens.includes('unknown')) parts.push(`(p.source = 'MERCADO_LIBRE' AND p."meliStatus" IS NULL)`);
+    return parts.length === 1 ? parts[0] : `(${parts.join(' OR ')})`;
 }
 
 // Cada cuántos minutos conviene volver a preguntarle a ML por un envío según su último estado: los que van en camino cambian rápido (se entregan), los que

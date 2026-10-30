@@ -33,7 +33,7 @@ import ExportFormatModal from './modals/ExportFormatModal';
 import QuickStatusModal from './modals/QuickStatusModal';
 import { FleetControlCenter } from './FleetControlCenter';
 import { exportToExcel, exportToCSV } from '../services/exportService';
-import type { MeliStatusFilter } from '../utils/meliStatus';
+import type { MeliStatusKey } from '../utils/meliStatus';
 
 // Fix: declare Chart.js if needed
 
@@ -142,7 +142,7 @@ const Dashboard: React.FC = () => {
 
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [flexFilter, setFlexFilter] = useState<'all' | 'flexed' | 'not_flexed'>('all');
-  const [meliStatusFilter, setMeliStatusFilter] = useState<MeliStatusFilter>('all'); // estado del envío EN Mercado Libre
+  const [meliStatusFilter, setMeliStatusFilter] = useState<MeliStatusKey[]>([]); // estados del envío EN Mercado Libre (varios a la vez; vacío = todos)
   const [sourceFilter, setSourceFilter] = useState<'all' | 'ml' | 'web' | 'falabella_seller' | 'falabella_directo'>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'closed' | 'cancelled' | 'rescheduled'>('all');
   const [driverFilter, setDriverFilter] = useState<string>('');
@@ -329,7 +329,7 @@ const Dashboard: React.FC = () => {
             startDate,
             endDate,
             flexFilter,
-            meliStatusFilter: meliStatusFilter !== 'all' ? meliStatusFilter : null,
+            meliStatusFilter: meliStatusFilter.length > 0 ? meliStatusFilter.join(',') : null,
             quickFilter,
             sourceFilter,
             sortOrder,
@@ -592,7 +592,7 @@ const Dashboard: React.FC = () => {
         startDate, 
         endDate,
         flexFilter,
-        meliStatusFilter: meliStatusFilter !== 'all' ? meliStatusFilter : null,
+        meliStatusFilter: meliStatusFilter.length > 0 ? meliStatusFilter.join(',') : null,
         quickFilter,
         dateType,
         includeHistory: false
@@ -1230,7 +1230,7 @@ const Dashboard: React.FC = () => {
           }}
           onPrintLabel={(pkg) => setPrintingPackages([pkg])}
           onMarkForReturn={(auth?.user?.role === 'ADMIN' || (auth?.user?.role === Role.OperadorSistemas && auth?.user?.operatorPermissions?.canManagePackages)) ? handleMarkForReturn : undefined}
-          isFiltering={searchQuery !== '' || statusFilter.length > 0 || driverFilter !== '' || communeFilter !== '' || cityFilter !== '' || startDate !== '' || endDate !== '' || flexFilter !== 'all' || meliStatusFilter !== 'all' || quickFilter !== 'all'}
+          isFiltering={searchQuery !== '' || statusFilter.length > 0 || driverFilter !== '' || communeFilter !== '' || cityFilter !== '' || startDate !== '' || endDate !== '' || flexFilter !== 'all' || meliStatusFilter.length > 0 || quickFilter !== 'all'}
           isDateFiltering={isDateFiltering}
           selectedPackages={selectedPackages}
           onSelectionChange={handleSelectPackage}
