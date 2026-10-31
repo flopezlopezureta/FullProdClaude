@@ -3,9 +3,10 @@ import { MAP_TILE_URL } from '../constants';
 
 declare const L: any;
 
+// Lo que devuelve GET /api/packages/public/track/:id (services/publicTracking.js): sin sesión, así que el servidor solo envía iniciales
+// del comprador, comuna, estado, punto de entrega aproximado (~100 m) y un historial con frases fijas. No viene dirección.
 interface TrackingHistory {
   status: string;
-  location: string;
   details: string;
   timestamp: string;
 }
@@ -13,8 +14,7 @@ interface TrackingHistory {
 interface Package {
   id: string;
   status: string;
-  recipientName: string;
-  recipientAddress: string;
+  recipientName?: string | null;
   recipientCommune: string;
   recipientCity: string;
   estimatedDelivery: string;
@@ -104,16 +104,27 @@ const TrackingPage: React.FC = () => {
   const [pkg, setPkg] = useState<Package | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [rateLimited, setRateLimited] = useState(false);
   const [isDirectLink, setIsDirectLink] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  const fetchPackage = async (id: string) => {
+  // Hasta cuándo la consulta automática (cada 30 s) no debe insistir. El servidor limita las consultas por IP (muchas respuestas
+  // «no encontrado» seguidas bloquean a todos los que comparten esa IP), así que una pestaña olvidada de un paquete que ya no existe
+  // (404/403) deja de consultar, y ante un 429 se pausa unos minutos. Una búsqueda hecha por la persona vuelve a activarla.
+  const pollPausedUntil = useRef(0);
+
+  const fetchPackage = async (id: string, isPoll = false) => {
     if (!id) return;
+    if (isPoll && Date.now() < pollPausedUntil.current) return;
+    if (!isPoll) pollPausedUntil.current = 0;
     setLoading(true);
     setError('');
+    setRateLimited(false);
     try {
       const res = await fetch(`/api/packages/public/track/${id}`);
-      if (res.status === 403) { const d = await res.json(); throw new Error(d.message); }
+      if (res.status === 403) { pollPausedUntil.current = Infinity; const d = await res.json(); throw new Error(d.message); }
+      if (res.status === 429) { pollPausedUntil.current = Date.now() + 5 * 60 * 1000; setRateLimited(true); throw new Error('Demasiadas consultas seguidas. Espera unos minutos e inténtalo de nuevo.'); }
+      if (res.status === 404) pollPausedUntil.current = Infinity;
       if (!res.ok) throw new Error('No se encontró el código de seguimiento.');
       setPkg(await res.json());
       setLastUpdate(new Date());
@@ -137,7 +148,7 @@ const TrackingPage: React.FC = () => {
   // Poll every 30 s when driver is active
   useEffect(() => {
     if (!pkg || (pkg.status !== 'EN_TRANSITO' && pkg.status !== 'ASIGNADO')) return;
-    const t = setInterval(() => fetchPackage(pkg.id), 30000);
+    const t = setInterval(() => fetchPackage(pkg.id, true), 30000);
     return () => clearInterval(t);
   }, [pkg?.status, pkg?.id]);
 
@@ -199,8 +210,8 @@ const TrackingPage: React.FC = () => {
     return (
       <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', fontFamily: 'system-ui' }}>
         <div style={{ background: '#1e293b', borderRadius: '20px', padding: '40px', maxWidth: '380px', textAlign: 'center', color: 'white' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
-          <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>No encontrado</h2>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>{rateLimited ? '⏱️' : '❌'}</div>
+          <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>{rateLimited ? 'Demasiadas consultas' : 'No encontrado'}</h2>
           <p style={{ color: '#94a3b8', margin: '0 0 24px', fontSize: '14px' }}>{error}</p>
           <button onClick={() => { setIsDirectLink(false); setError(''); }} style={{ padding: '12px 24px', background: '#4338ca', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Intentar de nuevo</button>
         </div>
@@ -234,7 +245,7 @@ const TrackingPage: React.FC = () => {
           <div style={{ flex: 1 }}>
             <div style={{ color: '#94a3b8', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.8px' }}>Estado del pedido</div>
             <div style={{ color: 'white', fontSize: '18px', fontWeight: 800, marginTop: '2px' }}>{st.label}</div>
-            <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>{pkg.recipientName} · {pkg.recipientCommune}, {pkg.recipientCity}</div>
+            <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>{pkg.recipientName ? `${pkg.recipientName} · ` : ''}{pkg.recipientCommune}, {pkg.recipientCity}</div>
           </div>
           {lastUpdate && (
             <div style={{ textAlign: 'right' }}>

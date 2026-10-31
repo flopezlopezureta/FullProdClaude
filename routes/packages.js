@@ -17,6 +17,8 @@ const rutValidator = require('../services/rutValidator');
 const cancelled = require('../services/cancelledPackages');
 const shopifyOrders = require('../services/shopifyOrders');
 const meliStatuses = require('../services/meliStatuses');
+const publicTracking = require('../services/publicTracking');
+const { publicTrackingLimiters } = require('../middleware/publicTrackingLimiter');
 const falabellaDirectClientNameSql = `CASE WHEN p.source = 'FALABELLA_DIRECTO' THEN 'Falabella Directo / ' || ${buildSellerNameSql()} ELSE u.name END as "clientName"`;
 
 // [EMERGENCIA] Ruta para normalizar todas las comunas y ciudades del historial
@@ -3074,8 +3076,19 @@ router.post('/mark-billed', authMiddleware, async (req, res) => {
 });
 
 // GET /api/packages/public/track/:id
-router.get('/public/track/:id', async (req, res) => {
-    const { id } = req.params;
+//
+// SEGUIMIENTO PÚBLICO: no exige sesión (es el enlace que recibe el comprador), así que lo que esta ruta devuelva lo ve quien tenga el
+// código. Tres protecciones, todas necesarias:
+//  1. Qué se devuelve: solo la lista permitida de services/publicTracking.js (iniciales, comuna, estado, punto aproximado, historial
+//     con frases fijas). El historial se lee SOLO con `status` y `timestamp`: sus textos libres no salen de la base en este camino.
+//  2. Con qué códigos se busca: solo `id` y `trackingId`, que son los que el comprador recibe en su aviso (services/notificationService.js
+//     arma el enlace con el trackingId o, si no tiene, con el id; los botones "copiar enlace" de PackageListItem/PackageDetailModal usan
+//     el `id`). No se busca por meliFlexCode, meliOrderId, shopifyOrderId ni wooOrderId: son números de otras plataformas y ningún aviso
+//     los usa en el enlace.
+//  3. Límite de peticiones por IP (middleware/publicTrackingLimiter.js).
+// Cambiar la consulta o el formato de la respuesta exige actualizar tests/publicTracking.test.js, que prueba todo esto.
+router.get('/public/track/:id', publicTrackingLimiters, async (req, res) => {
+    const id = String(req.params.id ?? '').trim();
     try {
         // Check if public tracking is enabled
         const { rows: settings } = await db.query('SELECT "publicTrackingEnabled" FROM system_settings WHERE id = 1');
@@ -3085,29 +3098,29 @@ router.get('/public/track/:id', async (req, res) => {
             return res.status(403).json({ message: 'El seguimiento público está desactivado por el administrador.' });
         }
 
+        if (!publicTracking.isPlausibleTrackingKey(id)) return res.status(404).json({ message: 'Paquete no encontrado.' });
+
+        // Si el código coincide con el `id` de un paquete y con el `trackingId` de otro, gana el `id` exacto (antes se tomaba cualquiera).
         const { rows } = await db.query(
-            `SELECT p.id, p.status, p."recipientName", p."recipientAddress", p."recipientCommune", p."recipientCity", 
-                    p."estimatedDelivery", p."updatedAt", p."meliOrderId", p."trackingId", p."destLatitude", p."destLongitude",
+            `SELECT p.id, p.status, p."recipientName", p."recipientCommune", p."recipientCity",
+                    p."estimatedDelivery", p."updatedAt", p."destLatitude", p."destLongitude",
                     u.latitude AS "driverLatitude", u.longitude AS "driverLongitude", u."lastLocationUpdate" AS "driverLastUpdate"
              FROM packages p
              LEFT JOIN users u ON p."driverId" = u.id
-             WHERE p.id = $1 OR p."meliOrderId" = $1 OR p."shopifyOrderId" = $1 OR p."wooOrderId" = $1 OR p."trackingId" = $1 OR p."meliFlexCode" = $1`,
+             WHERE p.id = $1 OR p."trackingId" = $1
+             ORDER BY (p.id = $1) DESC, p."updatedAt" DESC
+             LIMIT 1`,
             [id]
         );
         if (rows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
-        
+
         const pkg = rows[0];
+        const { rows: events } = await db.query(
+            'SELECT status, timestamp FROM tracking_events WHERE "packageId" = $1 ORDER BY timestamp DESC LIMIT 200',
+            [pkg.id]
+        );
 
-        // Only share driver location if package is in transit or assigned
-        const sharableStatuses = ['EN_TRANSITO', 'ASIGNADO'];
-        if (!sharableStatuses.includes(pkg.status)) {
-            delete pkg.driverLatitude;
-            delete pkg.driverLongitude;
-            delete pkg.driverLastUpdate;
-        }
-
-        pkg.history = await getHistory(pkg.id);
-        res.json(pkg);
+        res.json(publicTracking.buildPublicTrackingView(pkg, events));
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Error al consultar el seguimiento.' });
