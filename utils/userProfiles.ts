@@ -1,8 +1,9 @@
 import type { User } from '../types';
 
 /**
- * Una persona puede tener un perfil por rol (por ejemplo administrador y conductor). Las listas "de conductores" incluyen a los administradores y a quien tenga
- * permiso de entregar para poder asignarles paquetes, y por eso quien tiene los dos perfiles salía dos veces. Aquí se decide quién queda en cada lista.
+ * Una persona puede tener un perfil por rol (por ejemplo administrador y conductor). Aquí se decide quién queda en cada lista de conductores del panel (los
+ * buscadores de conductor y las ventanas para asignar paquetes): los perfiles de CONDUCTOR y quien tenga permiso explícito de entregar. Los administradores NO
+ * entran solo por serlo: antes sí, y salían «Administrador Principal» y quien tenía los dos perfiles dos veces.
  */
 
 const ROLE_ALIASES: Record<string, string> = { ADMINISTRADOR: 'ADMIN', CHOFER: 'DRIVER', CONDUCTOR: 'DRIVER', CLIENTE: 'CLIENT' };
@@ -28,12 +29,15 @@ export function dropProfilesShadowedByRole<T extends ProfileLike>(profiles: T[],
   return profiles.filter(p => canonicalRole(p.role) === wanted || !peopleWithThatRole.has(personKey(p.name)));
 }
 
-/** A quién se le pueden asignar paquetes: conductores, administradores y quien tenga permiso de entregar, aprobados, y cada persona una sola vez. */
+/**
+ * A quién se le pueden asignar paquetes y se ofrece en los buscadores de conductor: los perfiles de conductor (y sus sinónimos) y quien tenga permiso explícito de
+ * entregar (driverPermissions.canDeliver), aprobados y cada persona una sola vez. Un administrador sin permiso de entregar no aparece: si una persona entrega, tiene
+ * su perfil de conductor.
+ */
 export function buildAssignableDrivers(users: User[], opts: { approvedStatuses?: string[] } = {}): User[] {
   const approved = (opts.approvedStatuses ?? ['APROBADO']).map(s => s.toUpperCase());
   const candidates = users.filter(u => {
-    const role = canonicalRole(u.role);
-    const isAssignable = role === 'ADMIN' || role === 'DRIVER' || u.driverPermissions?.canDeliver === true;
+    const isAssignable = canonicalRole(u.role) === 'DRIVER' || u.driverPermissions?.canDeliver === true;
     return isAssignable && approved.includes(String(u.status ?? '').toUpperCase());
   });
   return dropProfilesShadowedByRole(candidates, 'DRIVER').sort((a, b) => a.name.localeCompare(b.name));

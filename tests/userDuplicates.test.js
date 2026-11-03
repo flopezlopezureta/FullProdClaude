@@ -217,23 +217,25 @@ tA('A11 basura no rompe: listas nulas, perfiles nulos, rol sin definir', () => {
     if (util) {
         const U = (id, name, role, status = 'APROBADO', over = {}) => ({ id, name, role, status, email: id, ...over });
         const ids = (list) => list.map(u => u.id).join(',');
-        t('C1 quien tiene perfil de conductor y de administrador sale UNA vez, con su perfil de conductor', () => {
-            const list = util.buildAssignableDrivers([U('a1', 'Diego Ficticio', 'ADMIN'), U('d1', 'DIEGO FICTICIO', 'DRIVER', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('d2', 'Zoe Otra', 'DRIVER')]);
+        t('C1 quien tiene perfil de conductor Y un perfil de administrador con permiso de entregar sale UNA vez, con su perfil de conductor', () => {
+            const list = util.buildAssignableDrivers([U('a1', 'Diego Ficticio', 'ADMIN', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('d1', 'DIEGO FICTICIO', 'DRIVER', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('d2', 'Zoe Otra', 'DRIVER')]);
             assert.strictEqual(ids(list), 'd1,d2');
         });
-        t('C2 un administrador SIN perfil de conductor sigue apareciendo (puede recibir paquetes)', () => {
-            assert.strictEqual(ids(util.buildAssignableDrivers([U('a1', 'Admin Solo', 'ADMIN'), U('d1', 'Chofer Uno', 'DRIVER')])), 'a1,d1');
+        t('C2 un administrador SIN permiso de entregar NO aparece en las listas de conductores; con permiso explícito sí', () => {
+            assert.strictEqual(ids(util.buildAssignableDrivers([U('a1', 'Admin Solo', 'ADMIN'), U('d1', 'Chofer Uno', 'DRIVER')])), 'd1');
+            assert.strictEqual(ids(util.buildAssignableDrivers([U('a1', 'Admin Que Entrega', 'ADMIN', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('d1', 'Chofer Uno', 'DRIVER')])), 'a1,d1');
         });
-        t('C3 un perfil de conductor eliminado o no aprobado NO oculta al administrador', () => {
-            assert.strictEqual(ids(util.buildAssignableDrivers([U('a1', 'Ana Ficticia', 'ADMIN'), U('d1', 'Ana Ficticia', 'DRIVER', 'ELIMINADO')])), 'a1');
-            assert.strictEqual(ids(util.buildAssignableDrivers([U('a1', 'Ana Ficticia', 'ADMIN'), U('d1', 'Ana Ficticia', 'DRIVER', 'DESHABILITADO')])), 'a1');
+        t('C3 un perfil de conductor eliminado o no aprobado NO oculta al administrador que tiene permiso de entregar', () => {
+            const admin = U('a1', 'Ana Ficticia', 'ADMIN', 'APROBADO', { driverPermissions: { canDeliver: true } });
+            assert.strictEqual(ids(util.buildAssignableDrivers([admin, U('d1', 'Ana Ficticia', 'DRIVER', 'ELIMINADO')])), 'a1');
+            assert.strictEqual(ids(util.buildAssignableDrivers([admin, U('d1', 'Ana Ficticia', 'DRIVER', 'DESHABILITADO')])), 'a1');
         });
         t('C4 dos conductores distintos con el mismo nombre se conservan los dos (no se oculta a una persona real)', () => {
             assert.strictEqual(ids(util.buildAssignableDrivers([U('d1', 'Juan Homónimo', 'DRIVER'), U('d2', 'Juan Homónimo', 'DRIVER')])), 'd1,d2');
         });
         t('C5 roles sinónimos y quien solo tiene el permiso de entregar', () => {
-            const list = util.buildAssignableDrivers([U('a1', 'Admin Sinónimo', 'ADMINISTRADOR'), U('c1', 'Chofer Sinónimo', 'CHOFER'), U('x1', 'Auxiliar Que Entrega', 'AUXILIAR', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('x2', 'Auxiliar Sin Permiso', 'AUXILIAR')]);
-            assert.strictEqual(ids(list), 'a1,x1,c1');            // ordenados por nombre: Admin Sinónimo, Auxiliar Que Entrega, Chofer Sinónimo
+            const list = util.buildAssignableDrivers([U('a1', 'Admin Sinónimo', 'ADMINISTRADOR'), U('c1', 'Chofer Sinónimo', 'CHOFER'), U('k1', 'Conductor Sinónimo', 'CONDUCTOR'), U('x1', 'Auxiliar Que Entrega', 'AUXILIAR', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('x2', 'Auxiliar Sin Permiso', 'AUXILIAR')]);
+            assert.strictEqual(ids(list), 'x1,c1,k1');            // ordenados por nombre: Auxiliar Que Entrega, Chofer Sinónimo, Conductor Sinónimo (el administrador y el auxiliar sin permiso no entran)
         });
         t('C6 un auxiliar con permiso de entregar tampoco se repite si la persona ya tiene perfil de conductor', () => {
             assert.strictEqual(ids(util.buildAssignableDrivers([U('x1', 'Luis Doble', 'AUXILIAR', 'APROBADO', { driverPermissions: { canDeliver: true } }), U('d1', 'Luis Doble', 'DRIVER')])), 'd1');
@@ -246,6 +248,13 @@ tA('A11 basura no rompe: listas nulas, perfiles nulos, rol sin definir', () => {
         t('C8 las pestañas de administración: en la de auxiliares no se repite quien tiene perfil de auxiliar y de conductor con permiso', () => {
             const list = util.dropProfilesShadowedByRole([U('x1', 'Moni Doble', 'AUXILIAR'), U('d1', 'Moni Doble', 'DRIVER', 'APROBADO', { driverPermissions: { canDispatch: true } }), U('d2', 'Solo Conductor', 'DRIVER', 'APROBADO', { driverPermissions: { canDispatch: true } })], 'AUXILIAR');
             assert.strictEqual(ids(list), 'x1,d2');
+        });
+        t('C10 el caso del buscador de conductor: «Administrador Principal» y los demás administradores no aparecen, los conductores sí y en orden', () => {
+            const list = util.buildAssignableDrivers([
+                U('a0', 'Administrador Principal', 'ADMIN'), U('a1', 'Moisés Ficticio', 'ADMIN'), U('a2', 'Persona Doble', 'ADMIN'),
+                U('d3', 'Anais Inventada', 'DRIVER'), U('d1', 'Alejandro Falso', 'DRIVER'), U('d2', 'Persona Doble', 'DRIVER'), U('d9', 'Chofer Eliminado', 'DRIVER', 'ELIMINADO'),
+            ]);
+            assert.strictEqual(ids(list), 'd1,d3,d2');            // Alejandro Falso, Anais Inventada, Persona Doble
         });
         t('C9 no modifica la lista original y tolera datos incompletos', () => {
             const users = [U('a1', 'Admin Solo', 'ADMIN'), { id: 'z', name: undefined, role: undefined, status: undefined }];

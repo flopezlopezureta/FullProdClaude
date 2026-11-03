@@ -539,8 +539,8 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // A quién se le pueden asignar paquetes: conductores, administradores y quien tenga permiso de entregar (roles sinónimos y mayúsculas incluidos).
-  // Quien tiene perfil de conductor Y de administrador sale una sola vez, con su perfil de conductor.
+  // Lista de conductores (buscador de conductor y ventanas de asignar): los perfiles de conductor y quien tenga permiso explícito de entregar. Los administradores
+  // no entran solo por serlo, y cada persona sale una sola vez.
   const drivers = useMemo(() => buildAssignableDrivers(users), [users]);
     
   const clients = users

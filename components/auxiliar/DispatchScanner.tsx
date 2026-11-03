@@ -442,8 +442,8 @@ const DispatchScanner: React.FC = () => {
             setIsLoading(true);
             try {
                 const allUsers = await api.getUsers();
-                // Conductores, administradores y quien tenga permiso de entregar (roles sinónimos y mayúsculas incluidos), aprobados;
-                // quien tiene perfil de conductor Y de administrador sale una sola vez, con su perfil de conductor.
+                // Los perfiles de conductor y quien tenga permiso explícito de entregar (roles sinónimos y mayúsculas incluidos), aprobados.
+                // Los administradores no entran solo por serlo, y cada persona sale una sola vez.
                 setDrivers(buildAssignableDrivers(allUsers, { approvedStatuses: ['APROBADO', 'APPROVED', 'ACTIVO'] }));
             } catch (error) {
                 console.error("Failed to fetch drivers", error);
