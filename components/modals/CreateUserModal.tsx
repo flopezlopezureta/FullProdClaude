@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { IconX, IconEye, IconEyeOff } from '../Icon';
-import { UserCreationData } from '../../services/api';
+import { api, ApiError, UserCreationData, UserProfileConflict } from '../../services/api';
 import { Role } from '../../constants';
 import type { UserPricing, OperatorPermissions } from '../../types';
 import OperatorPermissionsForm from './OperatorPermissionsForm';
@@ -10,6 +10,11 @@ interface CreateUserModalProps {
   onCreate: (data: UserCreationData) => void;
   defaultRole: Role;
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  [Role.Admin]: 'Administrador', [Role.Driver]: 'Conductor', [Role.Client]: 'Cliente', [Role.Auxiliar]: 'Auxiliar',
+  [Role.Retiros]: 'Retiros', [Role.Facturacion]: 'Facturación', [Role.OperadorSistemas]: 'Operador de sistemas',
+};
 
 const validateRut = (rutCompleto: string): boolean => {
     if (!rutCompleto) return true; // Allow empty
@@ -71,8 +76,39 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
   });
 
   const [error, setError] = useState('');
+  // Los mensajes salen arriba del formulario: si quien lo llena está abajo (contraseña, botón), el formulario sube solo para que los vea.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const showError = (message: string) => { setError(message); bodyRef.current?.scrollTo({ top: 0, behavior: 'smooth' }); };
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Perfiles que ya existen y se parecen a este: "blocking" impide crearlo (mismo nombre o RUT en el mismo rol, correo en uso); "warnings" es la misma persona en otro rol
+  // (o un perfil eliminado) y se puede crear si quien lo hace lo confirma.
+  const [blocking, setBlocking] = useState<UserProfileConflict[]>([]);
+  const [warnings, setWarnings] = useState<UserProfileConflict[]>([]);
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+
+  const warningsKey = useRef('');
+  const applyConflicts = (nextBlocking: UserProfileConflict[], nextWarnings: UserProfileConflict[]) => {
+    setBlocking(nextBlocking);
+    // La casilla de confirmación solo se conserva mientras los avisos sean los mismos.
+    const nextKey = nextWarnings.map(c => `${c.type}:${c.profile.id}`).join('|');
+    if (nextKey !== warningsKey.current) { warningsKey.current = nextKey; setWarnings(nextWarnings); setConfirmDuplicate(false); }
+  };
+
+  // Mientras se escribe, revisa si ya existe un perfil parecido (el servidor lo vuelve a revisar al crear). Si la consulta falla no estorba: se ignora.
+  useEffect(() => {
+    const hasSomethingToCheck = name.trim().length >= 3 || /.+@.+/.test(email) || personalRut.replace(/[^0-9kK]/g, '').length >= 7;
+    if (!hasSomethingToCheck) { applyConflicts([], []); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.checkUserDuplicates({ name, role: defaultRole, email: email || undefined, personalRut: personalRut || undefined });
+        if (!cancelled) applyConflicts(result.blocking, result.warnings);
+      } catch (e) { /* sin aviso previo; al crear el servidor decide */ }
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [name, email, personalRut, defaultRole]);
 
   const passwordRequirements = [
     { label: "Mínimo 8 caracteres", test: (p: string) => p.length >= 8 },
@@ -106,32 +142,42 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
     
     // Base validation
     if (!name || !email || !password || !phone) {
-        setError("Nombre, correo, teléfono y contraseña son obligatorios.");
+        showError("Nombre, correo, teléfono y contraseña son obligatorios.");
         return;
     }
 
     if (!isPasswordValid) {
-        setError("La contraseña no cumple con los requisitos mínimos de seguridad.");
+        showError("La contraseña no cumple con los requisitos mínimos de seguridad.");
+        return;
+    }
+
+    // Perfil repetido: lo que ya existe en el mismo rol no se crea otra vez; la misma persona en otro rol (o un perfil eliminado) se crea solo si se confirma.
+    if (blocking.length > 0) {
+        showError(blocking[0].message);
+        return;
+    }
+    if (warnings.length > 0 && !confirmDuplicate) {
+        showError("Marca la casilla «Crear este perfil de todos modos» si es otro perfil de la misma persona; si no, revisa los avisos de arriba.");
         return;
     }
 
     // Role-specific validation
     if (defaultRole === Role.Driver) {
         if (!personalRut) {
-            setError("El RUT personal es obligatorio para los conductores.");
+            showError("El RUT personal es obligatorio para los conductores.");
             return;
         }
         if (personalRut && !validateRut(personalRut)) {
-            setError("El RUT personal ingresado no es válido.");
+            showError("El RUT personal ingresado no es válido.");
             return;
         }
     } else if (defaultRole === Role.Client) {
         if (!billingName || !billingRut || !billingAddress || !billingCommune || !billingGiro) {
-            setError("Todos los campos de facturación son obligatorios para clientes.");
+            showError("Todos los campos de facturación son obligatorios para clientes.");
             return;
         }
         if (billingRut && !validateRut(billingRut)) {
-            setError("El RUT de facturación ingresado no es válido.");
+            showError("El RUT de facturación ingresado no es válido.");
             return;
         }
     }
@@ -169,12 +215,21 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
     if (defaultRole === Role.OperadorSistemas) {
         creationData.operatorPermissions = operatorPermissions;
     }
+    if (warnings.length > 0 && confirmDuplicate) creationData.confirmDuplicateWarning = true;
 
     setIsSubmitting(true);
     try {
         await onCreate(creationData);
     } catch (err: any) {
-        setError(err.message || "Ocurrió un error al crear el usuario.");
+        // El servidor revisa otra vez al crear: si apareció un perfil parecido que la consulta previa no vio, se muestra igual que arriba.
+        const body = err instanceof ApiError ? err.body : null;
+        if (body && Array.isArray(body.conflicts)) {
+            if (body.code === 'DUPLICATE_PROFILE') applyConflicts(body.conflicts, []);
+            if (body.code === 'CONFIRM_DUPLICATE') applyConflicts([], body.conflicts);
+        }
+        showError(body && body.code === 'CONFIRM_DUPLICATE'
+            ? "Antes de crearlo, confirma con la casilla de arriba que es otro perfil de la misma persona."
+            : (err.message || "Ocurrió un error al crear el usuario."));
         setIsSubmitting(false);
     }
   };
@@ -223,12 +278,26 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
         </header>
 
         <form onSubmit={handleSubmit}>
-          <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+          <div ref={bodyRef} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
             {error && <p className="text-sm text-[var(--error-text)] bg-[var(--error-bg)] p-3 rounded-md">{error}</p>}
             <div>
               <label htmlFor="userName" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Nombre Completo</label>
               <input type="text" id="userName" value={name} onChange={(e) => setName(e.target.value.toUpperCase())} required className={`${inputClasses} uppercase`} />
             </div>
+            {blocking.length > 0 && (
+              <div role="alert" data-testid="duplicate-blocking" className="text-sm text-[var(--error-text)] bg-[var(--error-bg)] border border-[var(--error-border)] p-3 rounded-md space-y-1">
+                {blocking.map((c, i) => <p key={`${c.type}-${c.profile.id}-${i}`}>{c.message}</p>)}
+              </div>
+            )}
+            {warnings.length > 0 && (
+              <div role="status" data-testid="duplicate-warning" className="text-sm text-amber-800 bg-amber-50 border border-amber-200 p-3 rounded-md space-y-2">
+                {warnings.map((c, i) => <p key={`${c.type}-${c.profile.id}-${i}`}>{c.message}</p>)}
+                <label className="flex items-start gap-2 font-semibold cursor-pointer">
+                  <input type="checkbox" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} className="mt-0.5 h-4 w-4" />
+                  <span>Crear este perfil de {ROLE_LABELS[defaultRole] || defaultRole} de todos modos</span>
+                </label>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label htmlFor="userEmail" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Correo Electrónico</label>
@@ -337,7 +406,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
           </div>
           <footer className="px-6 py-4 bg-[var(--background-muted)] rounded-b-xl flex justify-end space-x-3">
             <button type="button" onClick={onClose} disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)] disabled:opacity-50">Cancelar</button>
-            <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-white bg-[var(--brand-primary)] border border-transparent rounded-md shadow-sm hover:bg-[var(--brand-secondary)] disabled:opacity-50 flex items-center">
+            <button type="submit" disabled={isSubmitting || blocking.length > 0} className="px-4 py-2 text-sm font-medium text-white bg-[var(--brand-primary)] border border-transparent rounded-md shadow-sm hover:bg-[var(--brand-secondary)] disabled:opacity-50 flex items-center">
                 {isSubmitting ? (
                     <>
                         <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

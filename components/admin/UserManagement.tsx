@@ -15,6 +15,7 @@ import DriverRatesModal from '../modals/DriverRatesModal';
 import ClientInvoiceHistoryModal from '../modals/ClientInvoiceHistoryModal';
 import ExternalImportModal from '../modals/ExternalImportModal';
 import RevealPasswordModal from '../modals/RevealPasswordModal';
+import { dropProfilesShadowedByRole } from '../../utils/userProfiles';
 
 
 interface UserManagementProps {
@@ -363,7 +364,11 @@ const wb = XLSX.utils.book_new();
     XLSX.writeFile(wb, `Reporte_Usuarios_${roleFilter}_${new Date().toLocaleDateString('es-CL').replace(/\//g, '-')}.xlsx`);
   };
 
-  const filteredUsers = users.filter(u => {
+  // En las pestañas que también listan a quien solo tiene el permiso (conductor, auxiliar, retiros), la persona que ya tiene un perfil de ESE rol no se repite
+  // con su otro perfil (p. ej. su perfil de administrador con permiso de entregar).
+  const listedUsers = (roleFilter === Role.Driver || roleFilter === Role.Auxiliar || roleFilter === Role.Retiros) ? dropProfilesShadowedByRole(users, roleFilter) : users;
+
+  const filteredUsers = listedUsers.filter(u => {
     const role = String(u.role || '').toUpperCase();
     const searchTermLower = searchTerm.toLowerCase();
     

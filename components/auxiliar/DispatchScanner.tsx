@@ -5,6 +5,7 @@ import { IconCheckCircle, IconAlertTriangle, IconChevronRight, IconSearch, IconT
 import type { User } from '../../types';
 import { Role } from '../../constants';
 import { AuthContext } from '../../contexts/AuthContext';
+import { buildAssignableDrivers } from '../../utils/userProfiles';
 
 const playBeep = () => {
     if (window.AudioContext || (window as any).webkitAudioContext) {
@@ -441,22 +442,9 @@ const DispatchScanner: React.FC = () => {
             setIsLoading(true);
             try {
                 const allUsers = await api.getUsers();
-                setDrivers(allUsers.filter(u => {
-                    const role = String(u.role || '').toUpperCase();
-                    const status = String(u.status || '').toUpperCase();
-                    
-                    // Robust check for roles (includes synonyms and different cases)
-                    const isAdmin = role === 'ADMIN' || role === 'ADMINISTRADOR';
-                    const isDriver = role === 'DRIVER' || role === 'CONDUCTOR' || role === 'CHOFER';
-                    
-                    // Check for explicit delivery permission if available
-                    const hasDeliveryPermission = u.driverPermissions?.canDeliver === true;
-                    
-                    // Status check (Approved)
-                    const isApproved = status === 'APROBADO' || status === 'APPROVED' || status === 'ACTIVO';
-                    
-                    return (isAdmin || isDriver || hasDeliveryPermission) && isApproved;
-                }));
+                // Conductores, administradores y quien tenga permiso de entregar (roles sinónimos y mayúsculas incluidos), aprobados;
+                // quien tiene perfil de conductor Y de administrador sale una sola vez, con su perfil de conductor.
+                setDrivers(buildAssignableDrivers(allUsers, { approvedStatuses: ['APROBADO', 'APPROVED', 'ACTIVO'] }));
             } catch (error) {
                 console.error("Failed to fetch drivers", error);
             } finally {

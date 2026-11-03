@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { logAction } = require('../services/logger');
+const userDuplicates = require('../services/userDuplicates');
 
 // Middleware to check for Admin or Retiros role
 const adminOrRetirosOnly = (req, res, next) => {
@@ -90,15 +91,62 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 });
 
+// Perfiles repetidos (ver services/userDuplicates.js): solo lo que identifica a un perfil, sin contraseñas ni integraciones.
+const loadProfilesForDuplicateCheck = async () => (await db.query('SELECT id, name, role, status, email, "personalRut", rut FROM users')).rows;
+const publicConflict = (c) => ({ type: c.type, message: c.message, matchedBy: c.matchedBy, profile: c.profile });
+
+// POST /api/users/check-duplicates - ¿Ya existe un perfil como el que se va a crear? (Admin only, solo lee; lo usa el formulario mientras se escribe)
+router.post('/check-duplicates', authMiddleware, adminOnly, async (req, res) => {
+    const { name, role, email, personalRut, rut, excludeId } = req.body || {};
+    if (!role) return res.status(400).json({ message: 'El rol es obligatorio.' });
+    try {
+        const { blocking, warnings } = userDuplicates.findProfileConflicts({ name, role, email, personalRut, rut }, await loadProfilesForDuplicateCheck(), { excludeId: excludeId || null });
+        res.json({ blocking: blocking.map(publicConflict), warnings: warnings.map(publicConflict) });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error al revisar si el perfil ya existe.' });
+    }
+});
+
+// Al editar, solo se bloquea lo que el cambio provoca: renombrar o cambiar el rol, el correo o el RUT hasta dejar dos perfiles iguales.
+// Si lo que identifica al perfil no cambió (p. ej. solo se tocan permisos o teléfono) no se vuelve a juzgar, así un repetido que ya existía no queda intocable.
+async function blockingConflictOnEdit(id, incoming) {
+    const { personKey, canonicalRole, emailKey, staffRutKey, findProfileConflicts } = userDuplicates;
+    if (!['name', 'role', 'email', 'personalRut', 'rut'].some(f => incoming[f] !== undefined)) return null;
+    const profiles = await loadProfilesForDuplicateCheck();
+    const current = profiles.find(p => p.id === id);
+    if (!current) return null;                                  // el 404 lo da la propia actualización
+    const next = { ...current };
+    for (const f of ['name', 'role', 'email', 'personalRut', 'rut']) if (incoming[f] !== undefined) next[f] = incoming[f];
+    const changed = {
+        name: personKey(next.name) !== personKey(current.name),
+        role: canonicalRole(next.role) !== canonicalRole(current.role),
+        email: emailKey(next.email) !== emailKey(current.email),
+        rut: staffRutKey(next) !== staffRutKey(current),
+    };
+    if (!changed.name && !changed.role && !changed.email && !changed.rut) return null;
+    const relevant = { SAME_ROLE_NAME: changed.name || changed.role, SAME_ROLE_RUT: changed.rut || changed.role, EMAIL: changed.email };
+    return findProfileConflicts(next, profiles, { excludeId: id }).blocking.find(c => relevant[c.type]) || null;
+}
+
 // POST /api/users - Create a new user (Admin only)
 router.post('/', authMiddleware, adminOnly, async (req, res) => {
-    const { name, email, password, role, ...otherData } = req.body;
+    // confirmDuplicateWarning: la confirmación de quien crea cuando ya existe un perfil de la misma persona en otro rol (o uno eliminado). No es una columna.
+    const { name, email, password, role, confirmDuplicateWarning, ...otherData } = req.body;
 
      if (!name || !email || !password || !role) {
         return res.status(400).json({ message: 'Nombre, email, password y rol son obligatorios.' });
     }
 
     try {
+        const conflicts = userDuplicates.findProfileConflicts({ name, role, email, personalRut: otherData.personalRut, rut: otherData.rut }, await loadProfilesForDuplicateCheck());
+        if (conflicts.blocking.length > 0) {
+            return res.status(409).json({ code: 'DUPLICATE_PROFILE', message: conflicts.blocking[0].message, conflicts: conflicts.blocking.map(publicConflict) });
+        }
+        if (conflicts.warnings.length > 0 && confirmDuplicateWarning !== true) {
+            return res.status(409).json({ code: 'CONFIRM_DUPLICATE', message: conflicts.warnings.map(w => w.message).join(' '), conflicts: conflicts.warnings.map(publicConflict) });
+        }
+
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -153,6 +201,8 @@ router.put('/:id', authMiddleware, async (req, res) => {
         if (req.user.role === 'ADMIN') {
             // Admins can update everything
             updateData = { ...incomingData };
+            const conflict = await blockingConflictOnEdit(id, incomingData);
+            if (conflict) return res.status(409).json({ code: 'DUPLICATE_PROFILE', message: conflict.message, conflicts: [publicConflict(conflict)] });
         } else {
             // Non-admins (Clients/Drivers) can only update specific safe fields
             const safeFields = ['name', 'phone', 'address', 'pickupAddress', 'integrations', 'rut', 'logoBase64'];

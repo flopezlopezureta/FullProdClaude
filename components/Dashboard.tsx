@@ -34,6 +34,7 @@ import QuickStatusModal from './modals/QuickStatusModal';
 import { FleetControlCenter } from './FleetControlCenter';
 import { exportToExcel, exportToCSV } from '../services/exportService';
 import type { MeliStatusKey } from '../utils/meliStatus';
+import { buildAssignableDrivers } from '../utils/userProfiles';
 
 // Fix: declare Chart.js if needed
 
@@ -538,20 +539,9 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const drivers = users
-    .filter(u => {
-        // [REFAC v2.5.1] Lógica de filtrado unificada y robusta
-        // Soporta roles sinónimos (ADMINISTRADOR, CHOFER), permisos explícitos y es insensible a mayúsculas
-        const role = String(u.role || '').toUpperCase();
-        const status = String(u.status || '').toUpperCase();
-        
-        const isAdmin = role === 'ADMIN' || role === 'ADMINISTRADOR';
-        const isDriver = role === 'DRIVER' || role === 'CHOFER' || role === 'CONDUCTOR';
-        const hasDeliveryPermission = u.driverPermissions?.canDeliver === true;
-        
-        return (isAdmin || isDriver || hasDeliveryPermission) && status === 'APROBADO';
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // A quién se le pueden asignar paquetes: conductores, administradores y quien tenga permiso de entregar (roles sinónimos y mayúsculas incluidos).
+  // Quien tiene perfil de conductor Y de administrador sale una sola vez, con su perfil de conductor.
+  const drivers = useMemo(() => buildAssignableDrivers(users), [users]);
     
   const clients = users
     .filter(u => u.role === Role.Client && u.status === UserStatus.Approved)

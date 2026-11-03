@@ -202,7 +202,18 @@ export interface UserCreationData extends RegisterData {
     pricing?: any;
     driverPermissions?: DriverPermissions;
     operatorPermissions?: OperatorPermissions;
+    /** Confirmación de quien crea cuando ya existe un perfil de la misma persona en otro rol (o uno eliminado): sin ella el servidor responde 409 CONFIRM_DUPLICATE. */
+    confirmDuplicateWarning?: boolean;
 }
+
+/** Un perfil que ya existe y se parece al que se va a crear (ver services/userDuplicates.js). */
+export interface UserProfileConflict {
+    type: 'EMAIL' | 'SAME_ROLE_NAME' | 'SAME_ROLE_RUT' | 'OTHER_ROLE' | 'DELETED_SAME_ROLE';
+    message: string;
+    matchedBy: string[];
+    profile: { id: string; name: string; role: string; status: string };
+}
+export interface UserDuplicateCheck { blocking: UserProfileConflict[]; warnings: UserProfileConflict[]; }
 
 export interface UserUpdateData extends Partial<UserCreationData> {
     logoBase64?: string;
@@ -316,6 +327,7 @@ export const api = {
   // Users
   getUsers: () => get<User[]>('/users'),
   createUser: (data: UserCreationData) => post<User>('/users', data),
+  checkUserDuplicates: (data: { name: string; role: string; email?: string; personalRut?: string; excludeId?: string }) => post<UserDuplicateCheck>('/users/check-duplicates', data),
   updateUser: (userId: string, data: UserUpdateData) => put<User>(`/users/${encodeURIComponent(userId)}`, data),
   impersonateUser: (userId: string) => post<{token: string, user: User}>(`/users/${encodeURIComponent(userId)}/impersonate`, {}),
   revealUserPassword: (userId: string, adminPassword: string) => post<{plainPassword: string | null}>(`/users/${encodeURIComponent(userId)}/reveal-password`, { adminPassword }),
