@@ -27,6 +27,8 @@ const mk = (id, name, role, status = 'APROBADO', over = {}) => ({ id, name, role
 const R = (rows) => ({ rows, rowCount: rows.length });
 async function run(text, params = []) {
     const q = norm(text); let m;
+    // La revisión solo lee lo que identifica al perfil: nombre, rol, estado y correo (el RUT no cuenta). La consulta con RUT es la del código anterior: se acepta para poder correr la prueba contra él.
+    if (q === 'SELECT id, name, role, status, email FROM users') { S.profileSelects++; return R(S.users.map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status, email: u.email }))); }
     if (q === 'SELECT id, name, role, status, email, "personalRut", rut FROM users') { S.profileSelects++; return R(S.users.map(u => ({ id: u.id, name: u.name, role: u.role, status: u.status, email: u.email, personalRut: u.personalRut, rut: u.rut }))); }
     if ((m = q.match(/^INSERT INTO users \((.+)\) VALUES \((.+)\)$/))) {
         const cols = m[1].split(',').map(c => c.trim().replace(/"/g, ''));
@@ -83,12 +85,23 @@ tA('A6 deshabilitado y pendiente SÍ cuentan como existentes', () => {
         assert.strictEqual(rules.findProfileConflicts({ name: 'Luis Falso', role: 'DRIVER' }, [mk('d1', 'Luis Falso', 'DRIVER', status)]).blocking.length, 1, status);
     }
 });
-tA('A7 mismo RUT personal en el mismo rol del personal → bloquea aunque el nombre sea otro; en otro rol → avisa', () => {
-    const existing = [mk('d1', 'Ana Primera', 'DRIVER', 'APROBADO', { personalRut: '12.345.678-5' })];
-    const same = rules.findProfileConflicts({ name: 'Ana Segunda', role: 'DRIVER', personalRut: '123456785' }, existing);
-    assert.strictEqual(same.blocking[0].type, 'SAME_ROLE_RUT');
-    const other = rules.findProfileConflicts({ name: 'Ana Segunda', role: 'ADMIN', personalRut: '12345678-5' }, existing);
-    assert.deepStrictEqual([other.blocking.length, other.warnings[0].type, other.warnings[0].matchedBy], [0, 'OTHER_ROLE', ['RUT']]);
+tA('A7 el RUT es texto libre: ni bloquea ni avisa, aunque lo compartan muchos conductores (el «19» genérico), lo tenga un administrador o un perfil eliminado', () => {
+    const existing = [];
+    for (let i = 0; i < 22; i++) existing.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19' }));
+    for (let i = 0; i < 18; i++) existing.push(mk('h' + i, `Conductor Contratado ${i}`, 'DRIVER', 'APROBADO', { personalRut: '12.345.678-5' }));
+    existing.push(mk('a1', 'Admin Ficticio', 'ADMIN', 'APROBADO', { personalRut: '12.345.678-5' }), mk('e1', 'Chofer Eliminado', 'DRIVER', 'ELIMINADO', { personalRut: '19' }));
+    for (const personalRut of ['19', '1-9', ' 19 ', '12345678-5', '12.345.678-5', 'sin rut', '']) {
+        for (const role of ['DRIVER', 'ADMIN', 'AUXILIAR']) {
+            assert.deepStrictEqual(rules.findProfileConflicts({ name: 'Hilsmary Nueva', role, personalRut, rut: personalRut }, existing), { blocking: [], warnings: [] }, `${role} · «${personalRut}»`);
+        }
+    }
+});
+tA('A7b con el mismo nombre se bloquea por el NOMBRE, con un solo mensaje, y el mensaje nunca habla del RUT aunque el RUT también coincida', () => {
+    const existing = [mk('d1', 'Ana Primera', 'DRIVER', 'APROBADO', { personalRut: '19' }), mk('a1', 'Ana Primera', 'ADMIN', 'APROBADO', { personalRut: '19' })];
+    for (let i = 0; i < 22; i++) existing.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19' }));
+    const r = rules.findProfileConflicts({ name: 'ANA PRIMERA', role: 'DRIVER', personalRut: '19' }, existing);
+    assert.deepStrictEqual([r.blocking.length, r.blocking[0].type, r.blocking[0].matchedBy, r.warnings.length, r.warnings[0].type, r.warnings[0].matchedBy], [1, 'SAME_ROLE_NAME', ['nombre'], 1, 'OTHER_ROLE', ['nombre']]);
+    assert.ok(!/RUT/.test(r.blocking[0].message + r.warnings[0].message), r.blocking[0].message + ' ' + r.warnings[0].message);
 });
 tA('A8 los clientes comparten RUT (varias sucursales del mismo dueño): el RUT no los bloquea, el nombre idéntico sí', () => {
     const existing = [mk('c1', 'Sucursal Uno', 'CLIENT', 'APROBADO', { rut: '76.000.000-0', billingRut: '76.000.000-0' })];
@@ -158,10 +171,19 @@ tA('A11 basura no rompe: listas nulas, perfiles nulos, rol sin definir', () => {
         S.users.push(mk('d1', 'Alguien Más', 'DRIVER', 'APROBADO', { email: 'Nueva@Ejemplo.invalid' }));
         const r = await create(); assert.strictEqual(r.status, 409); assert.strictEqual(r.body.code, 'DUPLICATE_PROFILE'); assert.strictEqual(r.body.conflicts[0].type, 'EMAIL'); assert.strictEqual(S.inserted.length, 0);
     });
-    t('B7 mismo RUT personal en otro conductor: 409 aunque el nombre cambie', async () => {
-        S.users.push(mk('d1', 'Ana Primera', 'DRIVER', 'APROBADO', { personalRut: '12.345.678-5' }));
-        const r = await create({ name: 'ANA SEGUNDA', personalRut: '12345678-5' });
-        assert.strictEqual(r.status, 409); assert.strictEqual(r.body.conflicts[0].type, 'SAME_ROLE_RUT'); assert.strictEqual(S.inserted.length, 0);
+    t('B7 crear un conductor con un RUT que ya usan otros conductores (el «19» genérico, 22 conductores) se crea y el RUT queda tal cual', async () => {
+        for (let i = 0; i < 22; i++) S.users.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19', email: `g${i}@ejemplo.invalid` }));
+        const r = await create({ name: 'HILSMARY NUEVA', personalRut: '19' });
+        assert.strictEqual(r.status, 201, JSON.stringify(r.body) + S.unknown.join('|')); assert.strictEqual(S.inserted.length, 1); assert.strictEqual(S.inserted[0].personalRut, '19');
+        // y con el RUT de otro conductor escrito de otra forma, también
+        const again = await create({ name: 'OTRA PERSONA', email: 'otra@ejemplo.invalid', personalRut: '1-9' }); assert.strictEqual(again.status, 201, JSON.stringify(again.body)); assert.strictEqual(S.inserted.length, 2);
+    });
+    t('B7b quien ya existe se rechaza por su NOMBRE con un solo mensaje, no con uno por cada conductor que comparte su RUT', async () => {
+        for (let i = 0; i < 22; i++) S.users.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19', email: `g${i}@ejemplo.invalid` }));
+        S.users.push(mk('d1', 'Hilsmary Existente', 'DRIVER', 'APROBADO', { personalRut: '19' }));
+        const r = await create({ name: 'HILSMARY EXISTENTE', personalRut: '19' });
+        assert.strictEqual(r.status, 409); assert.strictEqual(r.body.code, 'DUPLICATE_PROFILE'); assert.strictEqual(r.body.conflicts.length, 1); assert.strictEqual(r.body.conflicts[0].type, 'SAME_ROLE_NAME');
+        assert.ok(!/RUT/.test(r.body.message), r.body.message); assert.strictEqual(S.inserted.length, 0);
     });
     t('B8 un cliente nuevo que comparte RUT con otras sucursales se crea', async () => {
         S.users.push(mk('c1', 'Sucursal Uno', 'CLIENT', 'APROBADO', { rut: '76000000-0' }));
@@ -195,10 +217,23 @@ tA('A11 basura no rompe: listas nulas, perfiles nulos, rol sin definir', () => {
         const phone = await call('PUT', '/d2', { phone: '+56911111111' }); assert.strictEqual(phone.status, 200); assert.strictEqual(S.profileSelects, 0, 'cambiar solo el teléfono no debe revisar duplicados');
         const same = await call('PUT', '/d2', { name: 'GEMELO UNO', phone: '+56922222222' }); assert.strictEqual(same.status, 200, 'mismo nombre con otras mayúsculas = no cambió');
     });
-    t('B14 editar: cambiar solo el RUT a uno ya usado por otro conductor → 409; un nombre repetido heredado no estorba ese cambio', async () => {
-        S.users.push(mk('d1', 'Ana Primera', 'DRIVER', 'APROBADO', { personalRut: '12345678-5' }), mk('d2', 'Ana Segunda', 'DRIVER'), mk('d3', 'Gemelo', 'DRIVER'), mk('d4', 'Gemelo', 'DRIVER'));
-        assert.strictEqual((await call('PUT', '/d2', { personalRut: '12.345.678-5' })).status, 409);
-        assert.strictEqual((await call('PUT', '/d4', { personalRut: '9.999.999-9' })).status, 200);
+    t('B14 editar: cambiar solo el RUT a uno que ya usan otros conductores se guarda, sin revisar duplicados; un nombre repetido heredado no estorba', async () => {
+        S.users.push(mk('d1', 'Ana Primera', 'DRIVER', 'APROBADO', { personalRut: '12345678-5' }), mk('d2', 'Ana Segunda', 'DRIVER', 'APROBADO', { personalRut: '19' }), mk('d3', 'Gemelo', 'DRIVER'), mk('d4', 'Gemelo', 'DRIVER'));
+        S.profileSelects = 0;
+        assert.strictEqual((await call('PUT', '/d2', { personalRut: '12.345.678-5' })).status, 200, 'otro conductor ya tiene ese RUT');
+        assert.strictEqual((await call('PUT', '/d4', { personalRut: '19' })).status, 200);
+        assert.strictEqual(S.profileSelects, 0, 'cambiar solo el RUT no revisa duplicados');
+    });
+    t('B14b editar a un conductor operativo que comparte el RUT «19» con otros: renombrarlo o cambiarle el correo funciona, y repetir un nombre sigue bloqueando', async () => {
+        for (let i = 0; i < 22; i++) S.users.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19', email: `g${i}@ejemplo.invalid` }));
+        assert.strictEqual((await call('PUT', '/g1', { name: 'NOMBRE CORREGIDO', personalRut: '19' })).status, 200);
+        assert.strictEqual((await call('PUT', '/g2', { email: 'nuevo2@ejemplo.invalid', personalRut: '19' })).status, 200);
+        const dup = await call('PUT', '/g3', { name: 'conductor generico 4', personalRut: '19' }); assert.strictEqual(dup.status, 409); assert.strictEqual(dup.body.conflicts[0].type, 'SAME_ROLE_NAME');
+    });
+    t('B16 revisar antes de crear ignora el RUT que mande un formulario antiguo: con 22 conductores con el mismo RUT no hay bloqueos ni avisos', async () => {
+        for (let i = 0; i < 22; i++) S.users.push(mk('g' + i, `Conductor Generico ${i}`, 'DRIVER', 'APROBADO', { personalRut: '19' }));
+        const r = await call('POST', '/check-duplicates', { name: 'HILSMARY NUEVA', role: 'DRIVER', personalRut: '19', rut: '19' });
+        assert.strictEqual(r.status, 200); assert.deepStrictEqual(r.body, { blocking: [], warnings: [] });
     });
     t('B15 un usuario que no es administrador solo edita lo suyo y no pasa por la revisión', async () => {
         S.users.push(mk('d1', 'José Pérez', 'DRIVER'), mk('d2', 'Otro Distinto', 'DRIVER'));

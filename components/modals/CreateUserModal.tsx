@@ -82,8 +82,8 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Perfiles que ya existen y se parecen a este: "blocking" impide crearlo (mismo nombre o RUT en el mismo rol, correo en uso); "warnings" es la misma persona en otro rol
-  // (o un perfil eliminado) y se puede crear si quien lo hace lo confirma.
+  // Perfiles que ya existen y se parecen a este: "blocking" impide crearlo (mismo nombre en el mismo rol, correo en uso); "warnings" es la misma persona en otro rol
+  // (o un perfil eliminado) y se puede crear si quien lo hace lo confirma. El RUT no cuenta: varios conductores comparten el mismo y se trata como texto libre.
   const [blocking, setBlocking] = useState<UserProfileConflict[]>([]);
   const [warnings, setWarnings] = useState<UserProfileConflict[]>([]);
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
@@ -98,17 +98,17 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onCreate, de
 
   // Mientras se escribe, revisa si ya existe un perfil parecido (el servidor lo vuelve a revisar al crear). Si la consulta falla no estorba: se ignora.
   useEffect(() => {
-    const hasSomethingToCheck = name.trim().length >= 3 || /.+@.+/.test(email) || personalRut.replace(/[^0-9kK]/g, '').length >= 7;
+    const hasSomethingToCheck = name.trim().length >= 3 || /.+@.+/.test(email);
     if (!hasSomethingToCheck) { applyConflicts([], []); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const result = await api.checkUserDuplicates({ name, role: defaultRole, email: email || undefined, personalRut: personalRut || undefined });
+        const result = await api.checkUserDuplicates({ name, role: defaultRole, email: email || undefined });
         if (!cancelled) applyConflicts(result.blocking, result.warnings);
       } catch (e) { /* sin aviso previo; al crear el servidor decide */ }
     }, 600);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [name, email, personalRut, defaultRole]);
+  }, [name, email, defaultRole]);
 
   const passwordRequirements = [
     { label: "Mínimo 8 caracteres", test: (p: string) => p.length >= 8 },

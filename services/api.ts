@@ -208,7 +208,7 @@ export interface UserCreationData extends RegisterData {
 
 /** Un perfil que ya existe y se parece al que se va a crear (ver services/userDuplicates.js). */
 export interface UserProfileConflict {
-    type: 'EMAIL' | 'SAME_ROLE_NAME' | 'SAME_ROLE_RUT' | 'OTHER_ROLE' | 'DELETED_SAME_ROLE';
+    type: 'EMAIL' | 'SAME_ROLE_NAME' | 'OTHER_ROLE' | 'DELETED_SAME_ROLE';
     message: string;
     matchedBy: string[];
     profile: { id: string; name: string; role: string; status: string };
@@ -327,7 +327,7 @@ export const api = {
   // Users
   getUsers: () => get<User[]>('/users'),
   createUser: (data: UserCreationData) => post<User>('/users', data),
-  checkUserDuplicates: (data: { name: string; role: string; email?: string; personalRut?: string; excludeId?: string }) => post<UserDuplicateCheck>('/users/check-duplicates', data),
+  checkUserDuplicates: (data: { name: string; role: string; email?: string; excludeId?: string }) => post<UserDuplicateCheck>('/users/check-duplicates', data),
   updateUser: (userId: string, data: UserUpdateData) => put<User>(`/users/${encodeURIComponent(userId)}`, data),
   impersonateUser: (userId: string) => post<{token: string, user: User}>(`/users/${encodeURIComponent(userId)}/impersonate`, {}),
   revealUserPassword: (userId: string, adminPassword: string) => post<{plainPassword: string | null}>(`/users/${encodeURIComponent(userId)}/reveal-password`, { adminPassword }),
