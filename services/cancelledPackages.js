@@ -128,7 +128,29 @@ async function reviveIfOpenInMeli(run, pkgId, ml) {
     return rows.length > 0 ? rows[0] : null;
 }
 
+/**
+ * Mercado Libre a veces CANCELA un envío y crea OTRO para la misma orden (por ejemplo cuando se divide un pack): el envío nuevo es el que lleva la etiqueta que llega
+ * al paquete. El importador daba por ya importado todo envío cuya ORDEN ya tuviera paquete, así que el nuevo nunca entraba y, al escanear su etiqueta, aparecía el
+ * paquete viejo —CANCELADO— y se bloqueaba aunque en Mercado Libre estuviera abierto.
+ * `rows` = lo que ya hay en la base para esa orden o ese envío ({ id, status, meliFlexCode }). Devuelve:
+ *   { duplicate: true, id }        → ya está importado: se devuelve el paquete de ESE envío si existe y, si no, el primero de la orden. No se importa de nuevo.
+ *   { duplicate: false, replaces } → no hay nada de este envío y TODO lo que hay de esa orden está CANCELADO con OTRO envío conocido: es un envío de REEMPLAZO y se importa
+ *                                    como paquete aparte; `replaces` = ids de los paquetes viejos (vacío si la orden es nueva).
+ * Ante la duda (el paquete viejo sigue abierto, no tiene código de envío…) cuenta como ya importado: no se crean paquetes de más.
+ */
+const classifyExistingForShipment = (rows, shipmentId) => {
+    const ship = String(shipmentId);
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) return { duplicate: false, replaces: [] };
+    const sameShipment = list.find(r => String(r.id) === ship || (r.meliFlexCode != null && String(r.meliFlexCode) === ship));
+    if (sameShipment) return { duplicate: true, id: sameShipment.id };
+    const allReplaced = list.every(r => isCancelled(r.status) && r.meliFlexCode != null && String(r.meliFlexCode) !== '' && String(r.meliFlexCode) !== ship);
+    if (allReplaced) return { duplicate: false, replaces: list.map(r => r.id) };
+    return { duplicate: true, id: list[0].id };
+};
+
 module.exports = {
     CANCELLED_STATUS, CANCELLED_CODE, MESSAGES, isCancelled, isWarehouseName, userName, warehouseReturnDetails, moveCancelledToWarehouse,
     problemTargetStatus, ML_OPEN_STATUSES, isOpenInMeli, DRIVER_CANCEL_CANDIDATE_SQL, reviveDetails, reviveIfOpenInMeli,
+    classifyExistingForShipment,
 };

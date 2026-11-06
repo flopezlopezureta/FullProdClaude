@@ -1048,11 +1048,14 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                         continue;
                                     }
 
-                                    // 3. Check if already imported
-                                    const { rows: existing } = await db.query('SELECT id, status FROM packages WHERE "meliOrderId" = $1 OR "meliFlexCode" = $2 OR "id" = $2', [orderId, shipmentId.toString()]);
-                                    if (existing.length > 0) {
+                                    // 3. Check if already imported. Si lo único que hay de esa orden son paquetes CANCELADOS con OTRO envío, el envío de la orden es el de REEMPLAZO que creó
+                                    // Mercado Libre: se importa como paquete aparte (antes la orden se daba por importada para siempre y el envío nuevo nunca entraba).
+                                    const { rows: existing } = await db.query('SELECT id, status, "meliFlexCode" FROM packages WHERE "meliOrderId" = $1 OR "meliFlexCode" = $2 OR "id" = $2', [orderId, shipmentId.toString()]);
+                                    const dup = cancelled.classifyExistingForShipment(existing, shipmentId);
+                                    if (dup.duplicate) {
                                         continue;
                                     }
+                                    const replacesIds = dup.replaces || [];
 
                                     console.log(`[MeliPolling] Order ${orderId} is NEW. Fetching shipment details...`);
 
@@ -1134,13 +1137,13 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                         recipientAddress: shipment.receiver_address?.address_line || 'N/A',
                                         recipientCommune: normalizeCommune(shipment.receiver_address?.city?.name || 'N/A'),
                                         recipientCity: normalizeCity(stateName),
-                                        notes: `Auto-Import ML Order: ${orderId}`,
+                                        notes: replacesIds.length > 0 ? `Auto-Import ML Order: ${orderId} (envío de reemplazo)` : `Auto-Import ML Order: ${orderId}`,
                                         estimatedDelivery: now,
                                         createdAt: now,
                                         updatedAt: now,
                                         creatorId: clientId,
                                         source: 'MERCADO_LIBRE',
-                                        meliOrderId: orderId.toString(),
+                                        meliOrderId: replacesIds.length > 0 ? null : orderId.toString(),   // en un reemplazo la orden sigue en el paquete viejo (la base no admite repetirla)
                                         meliFlexCode: shipmentId.toString(),
                                         meliSellerId: meliIntegration.userId?.toString(),
                                         sourceAccountId: account.id,
@@ -1154,9 +1157,15 @@ async function autoImportMeliPackages(activeCommunes = []) {
                                     const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
 
                                     await db.query(`INSERT INTO packages (${columns}) VALUES (${placeholders}) ON CONFLICT ("meliOrderId") DO NOTHING`, values);
-                                    await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)', 
-                                        [newPackage.id, 'Creado', newPackage.origin, 'Auto-importado vía integración ML.', now]);
-                                    
+                                    await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                                        [newPackage.id, 'Creado', newPackage.origin, replacesIds.length > 0 ? 'Auto-importado vía integración ML. Envío de reemplazo: Mercado Libre canceló el anterior y creó este para la misma orden.' : 'Auto-importado vía integración ML.', now]);
+
+                                    if (replacesIds.length > 0) {
+                                        const finalId = await linkReplacementPackage(newPackage.id, shipmentId, replacesIds);
+                                        if (finalId !== newPackage.id) continue;     // otra importación del mismo envío se adelantó: se quedó esa y esta se retiró
+                                        console.log(`[MeliPolling] Envío de reemplazo ${shipmentId} importado como ${newPackage.id} (reemplaza a ${replacesIds.join(', ')}).`);
+                                    }
+
                                     importedThisCycle++;
                                     console.log(`[MeliPolling] Auto-imported order ${orderId} for client ${clientId} (Account: ${account.nickname})`);
                                     
@@ -1342,6 +1351,25 @@ async function cleanupDuplicates() {
 }
 
 
+// Un envío de REEMPLAZO (Mercado Libre canceló el anterior y creó este para la misma orden, ver services/cancelledPackages.js → classifyExistingForShipment) se importa como
+// paquete APARTE y sin número de orden (la base exige que cada orden aparezca una sola vez: la orden sigue en el paquete viejo; se encuentra por el código de envío).
+// Aquí se deja constancia en el historial de cada paquete viejo y se evita un duplicado si dos importaciones del mismo envío coinciden: como la base ya no lo impide
+// por la orden, se queda el paquete más antiguo de ese envío. Devuelve el id que quedó.
+async function linkReplacementPackage(newPackageId, shipmentId, replacedIds) {
+    const ahora = new Date();
+    for (const oldId of replacedIds) {
+        await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+            [oldId, 'COMENTARIO', 'Sistema', `Mercado Libre canceló este envío y creó uno nuevo para la misma orden (${shipmentId}): se importó como paquete aparte ${newPackageId}.`, ahora]);
+    }
+    const { rows: sameShipment } = await db.query('SELECT id FROM packages WHERE "meliFlexCode" = $1 ORDER BY "createdAt" ASC, id ASC', [String(shipmentId)]);
+    if (sameShipment.length > 1 && sameShipment[0].id !== newPackageId) {
+        await db.query('DELETE FROM tracking_events WHERE "packageId" = $1', [newPackageId]);
+        await db.query('DELETE FROM packages WHERE id = $1', [newPackageId]);
+        return sameShipment[0].id;
+    }
+    return newPackageId;
+}
+
 // [NUEVO] Función para importar un paquete específico en tiempo real (Just-In-Time)
 async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter = false, accountId = null) {
     // [NUEVO] Si shipmentId es un JSON (etiqueta oficial), extraer solo el ID
@@ -1384,9 +1412,12 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
             return null;
         }
 
-        // 2. Double-check if already in DB (to avoid race conditions)
-        const { rows: existing } = await db.query('SELECT id FROM packages WHERE "meliFlexCode" = $1 OR "meliOrderId" = $2 OR "id" = $1', [shipmentId.toString(), orderId]);
-        if (existing.length > 0) return existing[0].id;
+        // 2. Double-check if already in DB (to avoid race conditions). Si lo único que hay de esa orden son paquetes CANCELADOS con OTRO envío, este es el envío de REEMPLAZO
+        // que creó Mercado Libre: se importa como paquete aparte (antes se devolvía el paquete viejo, cancelado, y el escáner bloqueaba una etiqueta que en ML está abierta).
+        const { rows: existing } = await db.query('SELECT id, status, "meliFlexCode" FROM packages WHERE "meliFlexCode" = $1 OR "meliOrderId" = $2 OR "id" = $1', [shipmentId.toString(), orderId]);
+        const dup = cancelled.classifyExistingForShipment(existing, shipmentId);
+        if (dup.duplicate) return dup.id;
+        const replacesIds = dup.replaces || [];
 
         // 3. Region Filter (Santiago/RM) - Only check if skipRegionFilter is false
         if (!skipRegionFilter) {
@@ -1443,13 +1474,13 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
             recipientAddress: shipment.receiver_address?.address_line || 'N/A',
             recipientCommune: normalizeCommune(shipment.receiver_address?.city?.name || 'N/A'),
             recipientCity: normalizeCity('Región Metropolitana'),
-            notes: `Just-In-Time Import ML: ${shipmentId}`,
+            notes: replacesIds.length > 0 ? `Just-In-Time Import ML: ${shipmentId} (envío de reemplazo; orden ${orderId})` : `Just-In-Time Import ML: ${shipmentId}`,
             estimatedDelivery: now,
             createdAt: now,
             updatedAt: now,
             creatorId: clientId,
             source: 'MERCADO_LIBRE',
-            meliOrderId: orderId,
+            meliOrderId: replacesIds.length > 0 ? null : orderId,   // en un reemplazo la orden sigue en el paquete viejo (la base no admite repetirla)
             meliFlexCode: shipmentId.toString(),
             trackingId: shipment.tracking_id ? String(shipment.tracking_id) : null,
             recipientRut: shipment.receiver_address?.federal_id || null,
@@ -1472,10 +1503,14 @@ async function importSpecificMeliPackage(clientId, shipmentId, skipRegionFilter 
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
 
         await db.query(`INSERT INTO packages (${columns}) VALUES (${placeholders})`, values);
-        await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)', 
-            [newPackage.id, 'Creado', newPackage.origin, 'Importado bajo demanda (escaneado).', now]);
+        await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+            [newPackage.id, 'Creado', newPackage.origin, replacesIds.length > 0 ? 'Importado bajo demanda (escaneado). Envío de reemplazo: Mercado Libre canceló el anterior y creó este para la misma orden.' : 'Importado bajo demanda (escaneado).', now]);
 
-        console.log(`[MeliPolling] Successfully imported package ${newPackage.id} for shipment ${shipmentId}`);
+        if (replacesIds.length > 0) {
+            const finalId = await linkReplacementPackage(newPackage.id, shipmentId, replacesIds);
+            if (finalId !== newPackage.id) return finalId;
+        }
+        console.log(`[MeliPolling] Successfully imported package ${newPackage.id} for shipment ${shipmentId}${replacesIds.length > 0 ? ' (reemplazo de ' + replacesIds.join(', ') + ')' : ''}`);
         return newPackage.id;
 
     } catch (err) {
