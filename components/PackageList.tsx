@@ -15,6 +15,7 @@ interface PackageListProps {
   onDeletePackage?: (pkg: Package) => void;
   onPrintLabel?: (pkg: Package) => void;
   onMarkForReturn?: (pkg: Package) => void;
+  onChangeClosedStatus?: (pkg: Package) => void;
   isFiltering?: boolean;
   isDateFiltering?: boolean;
   hideDriverName?: boolean;
@@ -41,7 +42,7 @@ const statusPriority: { [key in PackageStatus]: number } = {
   [PackageStatus.Rescheduled]: 10,
 };
 
-const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, onSelectPackage, onAssignPackage, onEditPackage, onDeletePackage, onPrintLabel, onMarkForReturn, isFiltering, isDateFiltering, hideDriverName, selectedPackages, onSelectionChange, onSelectAll, disableSorting, isSelectionDisabled, queuedNoteFor }) => {
+const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, onSelectPackage, onAssignPackage, onEditPackage, onDeletePackage, onPrintLabel, onMarkForReturn, onChangeClosedStatus, isFiltering, isDateFiltering, hideDriverName, selectedPackages, onSelectionChange, onSelectAll, disableSorting, isSelectionDisabled, queuedNoteFor }) => {
   const userMap = React.useMemo(() => {
     const map: Record<string, User> = {};
     users.forEach(u => {
@@ -134,6 +135,7 @@ const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, o
                 onDelete={onDeletePackage}
                 onPrint={onPrintLabel}
                 onMarkForReturn={onMarkForReturn}
+                onChangeClosedStatus={onChangeClosedStatus}
                 hideDriverName={hideDriverName}
                 isSelected={selectedPackages?.has(pkg.id)}
                 onSelectionChange={onSelectionChange}

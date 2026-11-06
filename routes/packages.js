@@ -15,6 +15,8 @@ const gisService = require('../services/gisService');
 const { buildSellerNameSql } = require('../services/falabellaDirectSellers');
 const rutValidator = require('../services/rutValidator');
 const cancelled = require('../services/cancelledPackages');
+const closedChange = require('../services/closedStatusChange');
+const bcrypt = require('bcryptjs');
 const shopifyOrders = require('../services/shopifyOrders');
 const meliStatuses = require('../services/meliStatuses');
 const publicTracking = require('../services/publicTracking');
@@ -1284,9 +1286,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
         }
 
         // Fetch current data to compare and for geocoding
-        const { rows: currentPkgRows } = await db.query('SELECT "recipientAddress", "recipientCommune", "recipientCity" FROM packages WHERE id = $1', [id]);
+        const { rows: currentPkgRows } = await db.query('SELECT "recipientAddress", "recipientCommune", "recipientCity", status FROM packages WHERE id = $1', [id]);
         if (currentPkgRows.length === 0) return res.status(404).json({ message: 'Paquete no encontrado.' });
         const currentPkg = currentPkgRows[0];
+
+        // Un paquete CERRADO (entregado, devuelto o cancelado) no cambia de estado por esta ruta genérica: cambiarlo es una corrección que hace un administrador con su
+        // clave (POST /:id/change-closed-status). Mandar el MISMO estado (lo que hacen los formularios de edición con el paquete tal como está) sigue funcionando.
+        if (updateData.status !== undefined && String(updateData.status) !== String(currentPkg.status) && closedChange.isClosedStatus(currentPkg.status)) {
+            return res.status(403).json({ code: closedChange.CODES.CLOSED_REQUIRES_AUTH, message: closedChange.MESSAGES.closedNeedsAuth });
+        }
 
         if (updateData.recipientCommune) {
             updateData.recipientCommune = normalizeCommune(updateData.recipientCommune);
@@ -1389,6 +1397,82 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Error in DELETE /api/packages/:id:', err);
         res.status(500).json({ message: 'Error al eliminar el paquete.' });
+    }
+});
+
+// POST /api/packages/:id/change-closed-status
+// Un ADMINISTRADOR corrige el estado de un paquete CERRADO (entregado, devuelto o cancelado). Para autorizarlo reingresa SU PROPIA clave (igual que «Ver contraseña») y
+// escribe el motivo; la clave se verifica siempre. Queda en el historial del paquete y en la auditoría; no se avisa al comprador. Reglas y textos: services/closedStatusChange.js.
+const closedStatusLimiter = closedChange.createAttemptLimiter();
+router.post('/:id/change-closed-status', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const { status: target, reason, adminPassword } = req.body || {};
+    const refuse = (httpStatus, code, message) => res.status(httpStatus).json({ code, message });
+    try {
+        if (req.user.role !== 'ADMIN') return refuse(403, closedChange.CODES.NOT_ADMIN, closedChange.MESSAGES.notAdmin);
+        if (typeof target !== 'string' || target === '') return refuse(400, closedChange.CODES.BAD_REQUEST, closedChange.MESSAGES.needTarget);
+        const reasonCheck = closedChange.checkReason(reason);
+        if (!reasonCheck.ok) return refuse(400, reasonCheck.code, reasonCheck.message);
+        if (typeof adminPassword !== 'string' || adminPassword === '') return refuse(400, closedChange.CODES.PASSWORD_REQUIRED, closedChange.MESSAGES.needPassword);
+
+        const lock = closedStatusLimiter.check(req.user.id);
+        if (lock.locked) {
+            res.set('Retry-After', String(lock.retryAfterSec));
+            return refuse(429, closedChange.CODES.LOCKED, closedChange.MESSAGES.locked(Math.ceil(lock.retryAfterSec / 60)));
+        }
+
+        // Quien autoriza es el administrador de esta sesión, con su perfil activo: una sesión abierta de un perfil eliminado o deshabilitado no autoriza nada.
+        const { rows: adminRows } = await db.query('SELECT password, name, status FROM users WHERE id = $1', [req.user.id]);
+        const admin = adminRows[0];
+        if (!admin || String(admin.status || '').toUpperCase() !== 'APROBADO') return refuse(403, closedChange.CODES.INACTIVE_ADMIN, closedChange.MESSAGES.inactiveAdmin);
+        if (!(await bcrypt.compare(adminPassword, admin.password))) {
+            closedStatusLimiter.fail(req.user.id);
+            await logAction(req.user.id, req.user.name, 'CHANGE_CLOSED_STATUS_DENIED', { packageId: id, requestedStatus: target });
+            // 403 y NO 401: el cliente de la app (services/api.ts) cierra la sesión ante cualquier 401, y escribir mal la clave no debe sacar al administrador del sistema.
+            return refuse(403, closedChange.CODES.BAD_PASSWORD, closedChange.MESSAGES.badPassword);
+        }
+        closedStatusLimiter.reset(req.user.id);
+
+        const client = await db.getClient();
+        let updated = null;
+        let from = null;
+        try {
+            await client.query('BEGIN');
+            const { rows } = await client.query('SELECT id, status, source, billed, "driverId" FROM packages WHERE id = $1 FOR UPDATE', [id]);
+            if (rows.length === 0) { await client.query('ROLLBACK'); return refuse(404, closedChange.CODES.NOT_FOUND, closedChange.MESSAGES.notFound); }
+            const pkg = rows[0];
+            const verdict = closedChange.checkChange(pkg, target);
+            if (!verdict.ok) { await client.query('ROLLBACK'); return refuse(verdict.httpStatus, verdict.code, verdict.message); }
+
+            const change = closedChange.updateFor(target);
+            const now = new Date();
+            from = pkg.status;
+            // El estado se vuelve a exigir en el propio UPDATE: si otro cambio lo movió entre la lectura y la escritura, no se pisa.
+            const { rows: updatedRows } = change.clearsDriver
+                ? await client.query(`UPDATE packages SET status = $1, "driverId" = NULL, "assignedAt" = NULL, "updatedAt" = $2 WHERE id = $3 AND status = $4 RETURNING *`, [change.status, now, id, pkg.status])
+                : await client.query(`UPDATE packages SET status = $1, "updatedAt" = $2 WHERE id = $3 AND status = $4 RETURNING *`, [change.status, now, id, pkg.status]);
+            if (updatedRows.length === 0) { await client.query('ROLLBACK'); return refuse(409, closedChange.CODES.CHANGED, closedChange.MESSAGES.changed); }
+
+            const clearedDriverName = change.clearsDriver && pkg.driverId ? await cancelled.userName((text, params) => client.query(text, params), pkg.driverId) : null;
+            await client.query(
+                'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                [id, change.status, 'Operaciones', closedChange.eventDetails({ from: pkg.status, to: change.status, adminName: admin.name, reason: reasonCheck.reason, clearedDriverName }), now]
+            );
+            await client.query('COMMIT');
+            updated = updatedRows[0];
+        } catch (txError) {
+            try { await client.query('ROLLBACK'); } catch (_) { /* la conexión ya se perdió */ }
+            throw txError;
+        } finally {
+            client.release();
+        }
+
+        await logAction(req.user.id, req.user.name, 'CHANGE_CLOSED_STATUS', { packageId: id, from, to: target, reason: reasonCheck.reason });
+        updated.history = await getHistory(id);
+        res.json(withoutHeavyPhotos(updated));
+    } catch (err) {
+        console.error('Error in POST /api/packages/:id/change-closed-status:', err);
+        if (!res.headersSent) res.status(500).json({ message: 'Error al cambiar el estado del paquete.' });
     }
 });
 
@@ -3263,22 +3347,32 @@ router.post('/bulk-update-status', authMiddleware, async (req, res) => {
             assignedAtClause = ', "assignedAt" = NOW()';
         }
 
-        await db.query(`
-            UPDATE packages 
-            SET status = $1, 
-                billed = $2, 
-                "updatedAt" = NOW() 
+        // Un paquete cerrado (entregado, devuelto o cancelado) no pasa a OTRO estado por esta vía masiva: eso lo autoriza un administrador con su clave, paquete por paquete
+        // («Cambiar estado»). Repetir el mismo estado sí se permite (p. ej. marcar como facturados paquetes que ya están ENTREGADOS).
+        const { rows: updatedRows } = await db.query(`
+            UPDATE packages
+            SET status = $1,
+                billed = $2,
+                "updatedAt" = NOW()
                 ${assignedAtClause}
             WHERE id IN (${placeholders})
+              AND (status NOT IN ('ENTREGADO', 'DEVUELTO', 'CANCELADO') OR status = $1)
+            RETURNING id
         `, [status, billed, ...packageIds]);
+        const updatedIds = updatedRows.map(r => r.id);
 
-        // Add tracking events
-        for (const pkgId of packageIds) {
-            await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, NOW())', 
+        // Add tracking events (solo de los paquetes que sí cambiaron)
+        for (const pkgId of updatedIds) {
+            await db.query('INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, NOW())',
                 [pkgId, status, 'Operaciones', `Estado actualizado masivamente por el administrador a ${status}.`]);
         }
 
-        res.json({ message: `Se actualizaron ${packageIds.length} paquetes a ${status}.` });
+        const skippedClosed = packageIds.length - updatedIds.length;
+        res.json({
+            message: `Se actualizaron ${updatedIds.length} paquetes a ${status}.` + (skippedClosed > 0 ? ` ${skippedClosed} no se modificaron (cerrados o inexistentes): para cambiar un paquete cerrado usa «Cambiar estado» con tu contraseña de administrador.` : ''),
+            updated: updatedIds.length,
+            skippedClosed,
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Error al actualizar paquetes masivamente.' });

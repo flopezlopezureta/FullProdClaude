@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect, Children, cloneElement, isValidElement } from 'react';
 import { PackageStatus, ShippingType, PackageSource } from '../constants';
 import type { Package } from '../types';
-import { IconAlertTriangle, IconCheckCircle, IconClock, IconTruck, IconPackage, IconUserPlus, IconDotsVertical, IconPencil, IconTrash, IconArchive, IconChevronRight, IconPrinter, IconSun, IconZap, IconMoon, IconMercadoLibre, IconWoocommerce, IconArrowUturnLeft, IconUser, IconMapPin, IconQrcode, IconX, IconCopy, IconMail, IconPlugConnected, IconShopify, IconJumpseller, IconFalabella } from './Icon';
+import { IconAlertTriangle, IconCheckCircle, IconClock, IconTruck, IconPackage, IconUserPlus, IconDotsVertical, IconPencil, IconTrash, IconArchive, IconChevronRight, IconPrinter, IconSun, IconZap, IconMoon, IconMercadoLibre, IconWoocommerce, IconArrowUturnLeft, IconUser, IconMapPin, IconQrcode, IconX, IconCopy, IconMail, IconPlugConnected, IconShopify, IconJumpseller, IconFalabella, IconLock } from './Icon';
+import { isClosedStatus } from '../utils/closedStatusChange';
 import QRCodeModal from './client/QRCodeModal';
 import { meliStatusLabel, meliSubstatusLabel, meliStatusTone, meliCheckedAgo, MeliStatusTone } from '../utils/meliStatus';
 
@@ -16,6 +17,8 @@ interface PackageListItemProps {
   onDelete?: (pkg: Package) => void;
   onPrint?: (pkg: Package) => void;
   onMarkForReturn?: (pkg: Package) => void;
+  /** Solo administradores: cambia el estado de un paquete CERRADO pidiendo su contraseña (ver ChangeClosedStatusModal). */
+  onChangeClosedStatus?: (pkg: Package) => void;
   hideDriverName?: boolean;
   isSelected?: boolean;
   onSelectionChange?: (pkg: Package) => void;
@@ -119,7 +122,7 @@ const ActionsMenu: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
 };
 
-const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, creatorName, onSelect, onAssign, onEdit, onDelete, onPrint, onMarkForReturn, hideDriverName, isSelected, onSelectionChange, index, isSelectionDisabled, queuedNote }) => {
+const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, creatorName, onSelect, onAssign, onEdit, onDelete, onPrint, onMarkForReturn, onChangeClosedStatus, hideDriverName, isSelected, onSelectionChange, index, isSelectionDisabled, queuedNote }) => {
   const [showQRCode, setShowQRCode] = useState(false);
   const [showNewLabel, setShowNewLabel] = useState(false);
 
@@ -139,7 +142,9 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
   const isCancelledPkg = pkg.status === PackageStatus.Cancelled;
   const canReassign = onAssign && pkg.status !== PackageStatus.Delivered && pkg.status !== PackageStatus.Returned && !(isCancelledPkg && /bodega/i.test(String(driverName || '')));
   const canMarkForReturn = onMarkForReturn && pkg.status === PackageStatus.Problem;
-  const hasActions = onPrint || (canModify && (onEdit || onDelete)) || canReassign || canMarkForReturn;
+  // Un paquete cerrado (entregado, devuelto o cancelado) no tiene «Editar»: solo un administrador lo cambia, con su contraseña.
+  const canChangeClosed = !!onChangeClosedStatus && isClosedStatus(pkg.status);
+  const hasActions = onPrint || (canModify && (onEdit || onDelete)) || canReassign || canMarkForReturn || canChangeClosed;
 
   const isUrgent = (pkg.shippingType === ShippingType.Express && pkg.status === PackageStatus.Pending && !pkg.driverId) || pkg.status === PackageStatus.ReturnPending;
   const customCheckboxClass = "appearance-none h-4 w-4 border border-[var(--border-secondary)] rounded bg-[var(--background-secondary)] checked:bg-[var(--brand-primary)] checked:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--brand-secondary)] checked:bg-[url(\"data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e\")]";
@@ -446,6 +451,11 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                     {canMarkForReturn && (
                          <button onClick={() => onMarkForReturn(pkg)} className="w-full text-left flex items-center px-4 py-2 text-sm text-amber-600 hover:bg-amber-50">
                             <IconArrowUturnLeft className="w-4 h-4 mr-3" /> Marcar para Devolución
+                        </button>
+                    )}
+                    {canChangeClosed && (
+                        <button onClick={() => onChangeClosedStatus!(pkg)} className="w-full text-left flex items-center px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--background-hover)]" data-testid="change-closed-status-action">
+                            <IconLock className="w-4 h-4 mr-3" /> Cambiar estado (cerrado)
                         </button>
                     )}
                     {onDelete && canModify && (

@@ -9,6 +9,7 @@ import PackageDetailModal from './PackageDetailModal';
 import AssignDriverModal from './AssignDriverModal';
 import CreatePackageModal from './modals/CreatePackageModal';
 import EditPackageModal from './modals/EditPackageModal';
+import ChangeClosedStatusModal from './modals/ChangeClosedStatusModal';
 import { AuthContext } from '../contexts/AuthContext';
 import PackageFilters from './admin/PackageFilters';
 import ShippingLabelModal from './client/ShippingLabelModal';
@@ -78,6 +79,8 @@ const Dashboard: React.FC = () => {
 
   const [assigningPackage, setAssigningPackage] = useState<Package | null>(null);
   const [editingPackage, setEditingPackage] = useState<Package | null>(null);
+  // Paquete CERRADO cuyo estado un administrador está corrigiendo (pide su contraseña; ver ChangeClosedStatusModal).
+  const [changingClosedPackage, setChangingClosedPackage] = useState<Package | null>(null);
   const [isDeletePasswordModalOpen, setIsDeletePasswordModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -178,8 +181,9 @@ const Dashboard: React.FC = () => {
       
       try {
           const packageIds = Array.from(selectedPackages);
-          await api.bulkUpdatePackageStatus(packageIds, PackageStatus.Delivered);
-          alert('Paquetes actualizados con éxito.');
+          const bulkResult = await api.bulkUpdatePackageStatus(packageIds, PackageStatus.Delivered);
+          // El servidor avisa si dejó sin tocar paquetes cerrados (cambiarlos exige «Cambiar estado» con la contraseña de administrador).
+          alert(((bulkResult?.skippedClosed ?? 0) > 0) ? bulkResult.message : 'Paquetes actualizados con éxito.');
           setSelectedPackages(new Set());
           fetchData();
       } catch (err: any) {
@@ -1220,6 +1224,7 @@ const Dashboard: React.FC = () => {
           }}
           onPrintLabel={(pkg) => setPrintingPackages([pkg])}
           onMarkForReturn={(auth?.user?.role === 'ADMIN' || (auth?.user?.role === Role.OperadorSistemas && auth?.user?.operatorPermissions?.canManagePackages)) ? handleMarkForReturn : undefined}
+          onChangeClosedStatus={auth?.user?.role === 'ADMIN' ? setChangingClosedPackage : undefined}
           isFiltering={searchQuery !== '' || statusFilter.length > 0 || driverFilter !== '' || communeFilter !== '' || cityFilter !== '' || startDate !== '' || endDate !== '' || flexFilter !== 'all' || meliStatusFilter.length > 0 || quickFilter !== 'all'}
           isDateFiltering={isDateFiltering}
           selectedPackages={selectedPackages}
@@ -1276,6 +1281,17 @@ const Dashboard: React.FC = () => {
             users={users}
             onClose={() => setEditingPackage(null)}
             onUpdate={handleUpdatePackage}
+        />
+      )}
+      {changingClosedPackage && (
+        <ChangeClosedStatusModal
+            pkg={changingClosedPackage}
+            onClose={() => setChangingClosedPackage(null)}
+            onChanged={async (updated) => {
+                setChangingClosedPackage(null);
+                if (selectedPackage && selectedPackage.id === updated.id) setSelectedPackage({ ...selectedPackage, ...updated });
+                await fetchData(); // la lista vuelve a pedir los paquetes con el estado nuevo
+            }}
         />
       )}
       {isDeletePasswordModalOpen && (

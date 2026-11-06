@@ -222,6 +222,13 @@ export interface UserProfileConflict {
 }
 export interface UserDuplicateCheck { blocking: UserProfileConflict[]; warnings: UserProfileConflict[]; }
 
+/** Datos para cambiar el estado de un paquete CERRADO: el nuevo estado, el motivo y la contraseña del administrador que lo autoriza. */
+export interface ClosedStatusChangeData {
+    status: string;
+    reason: string;
+    adminPassword: string;
+}
+
 export interface UserUpdateData extends Partial<UserCreationData> {
     logoBase64?: string;
     companyName?: string;
@@ -387,7 +394,9 @@ export const api = {
   confirmBulkPickup: (clientId: string) => post<{count: number, message: string}>('/packages/bulk-pickup-client', { clientId }),
   scanPackageByAdmin: (packageId: string) => post<{message: string}>(`/packages/${encodeURIComponent(packageId)}/scan-admin`, {}),
   checkAlert: (packageId: string, checked: boolean) => post<Package>(`/packages/${encodeURIComponent(packageId)}/check-alert`, { checked }),
-  bulkUpdatePackageStatus: (packageIds: string[], status: PackageStatus) => post<{message: string}>('/packages/bulk-update-status', { packageIds, status }),
+  bulkUpdatePackageStatus: (packageIds: string[], status: PackageStatus) => post<{message: string; updated?: number; skippedClosed?: number}>('/packages/bulk-update-status', { packageIds, status }),
+  /** Un administrador corrige el estado de un paquete CERRADO reingresando su propia contraseña (ver services/closedStatusChange.js). */
+  changeClosedPackageStatus: (pkgId: string, data: ClosedStatusChangeData) => post<Package>(`/packages/${encodeURIComponent(pkgId)}/change-closed-status`, data),
 
   // Settings
   getSystemSettings: () => get<SystemSettings>('/settings/system'),
