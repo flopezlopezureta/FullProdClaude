@@ -6,6 +6,7 @@ const { triggerBackgroundGeocoding, geocodeAddress } = require('./geocodingServi
 const gisService = require('./gisService');
 const { emitDriverEvent } = require('./driverEvents');
 const meliStatuses = require('./meliStatuses');
+const cancelled = require('./cancelledPackages');
 
 // --- MELI API HELPERS (Duplicated from integrations.js for independence) ---
 const makeMeliRequest = (options, postData = null) => {
@@ -702,7 +703,72 @@ async function pollRecentMeliStatuses() {
     return stats;
 }
 
+// Rescate de los CANCELADOS que un conductor dejó así («Cliente canceló el pedido») mientras Mercado Libre sigue mostrando el envío vivo: el cliente reprogramó o pidió otro día,
+// ML no canceló nada, y el paquete quedaba cerrado y sin poder volver a ruta (ver services/cancelledPackages.js). Se reabren (CANCELADO → PROBLEMA) con su evento.
+// Consulta APARTE de la del sondeo frecuente a propósito: esa es un barrido por índices de fecha (~6 ms) y esta condición no tiene índice de fecha propio; sola, con el índice
+// de estado, tarda ~5 ms y devuelve unos pocos paquetes. Un envío que ML da por cancelado, entregado o devuelto no se reabre nunca.
+async function reviveWronglyCancelled() {
+    const stats = { due: 0, polled: 0, revived: 0, errors: 0, noToken: 0, rateLimited: false };
+    try {
+        const terminal = meliStatuses.TERMINAL.map(s => `'${s}'`).join(', ');
+        const { rows: due } = await db.query(`
+            SELECT id, "meliOrderId", "meliFlexCode", "creatorId", "sourceAccountId"
+            FROM packages
+            WHERE ${cancelled.DRIVER_CANCEL_CANDIDATE_SQL}
+              AND ("meliOrderId" IS NOT NULL OR "meliFlexCode" IS NOT NULL)
+              AND ("meliStatus" IS NULL OR "meliStatus" NOT IN (${terminal}))
+              AND ("meliStatusCheckedAt" IS NULL OR "meliStatusCheckedAt" < now() - interval '2 minutes')
+            ORDER BY "updatedAt" DESC
+            LIMIT 200
+        `);
+        stats.due = due.length;
+        if (due.length === 0) return stats;
+
+        const byAccount = new Map();
+        for (const p of due) {
+            const key = `${p.creatorId}|${p.sourceAccountId || ''}`;
+            if (!byAccount.has(key)) byAccount.set(key, []);
+            byAccount.get(key).push(p);
+        }
+
+        for (const items of byAccount.values()) {
+            if (stats.rateLimited) break;
+            let token = null;
+            try { token = await getValidMeliToken(items[0].creatorId, items[0].sourceAccountId || null); } catch (e) { token = null; }
+            if (!token) { stats.noToken += items.length; continue; }
+
+            let tokenRejected = false;
+            await runWithLimit(2, items, async (p) => {
+                if (stats.rateLimited || tokenRejected) return;
+                try {
+                    const shipment = await makeMeliGetRequest(`/shipments/${p.meliFlexCode || p.meliOrderId}`, token);
+                    stats.polled++;
+                    await saveMeliStatus(p.id, shipment.status, shipment.substatus, new Date(), 0);   // el estado guardado queda al día (y lo terminado deja de consultarse)
+                    const reopened = await cancelled.reviveIfOpenInMeli((text, params) => db.query(text, params), p.id, shipment);
+                    if (reopened) {
+                        stats.revived++;
+                        console.log(`[MeliPolling] ${p.id} estaba CANCELADO por un reporte del conductor y Mercado Libre lo mantiene activo (${shipment.status}${shipment.substatus ? '/' + shipment.substatus : ''}): reabierto como PROBLEMA.`);
+                    }
+                } catch (err) {
+                    const code = err && err.statusCode;
+                    if (code === 404) await saveMeliStatus(p.id, 'not_found', null, new Date(), 0);      // ML no conoce ese envío: no se reabre nada y se deja de consultar
+                    else if (code === 429) stats.rateLimited = true;
+                    else if (code === 401 || code === 403) tokenRejected = true;
+                    else stats.errors++;
+                }
+            });
+        }
+    } catch (err) {
+        console.error('[MeliPolling] Error al revisar los CANCELADOS puestos por conductores:', err.message || err);
+        stats.errors++;
+    }
+    return stats;
+}
+
 async function recentStatusCycle() {
+    // El rescate va ANTES del sondeo frecuente: ese refresca el estado de lo reciente en el mismo ciclo y el rescate lo vería "recién consultado" (y no lo revisaría nunca).
+    try { await reviveWronglyCancelled(); }
+    catch (err) { console.error('[MeliPolling] Error en el rescate de CANCELADOS mal puestos:', err); }
     try { await pollRecentMeliStatuses(); }
     catch (err) { console.error('[MeliPolling] Error en la vuelta de estados ML recientes:', err); }
     finally { if (recentTimeoutId !== null) recentTimeoutId = setTimeout(recentStatusCycle, RECENT_STATUS_POLL_MS); }
@@ -1708,6 +1774,7 @@ module.exports = {
     pollMeliPackages,
     pollPackageStatuses,
     pollRecentMeliStatuses,
+    reviveWronglyCancelled,
     saveMeliStatus,
     syncPackage,
     getValidMeliToken,

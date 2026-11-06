@@ -2798,9 +2798,9 @@ router.post('/:id/problem', authMiddleware, async (req, res) => {
             }
         }
 
-        const isReschedule = reason.toLowerCase().includes('reagendar') || reason.toLowerCase().includes('reprogramar');
-        const isCancelled = reason.toLowerCase().includes('cancel');
-        const targetStatus = isReschedule ? 'REPROGRAMADO' : (isCancelled ? 'CANCELADO' : 'PROBLEMA');
+        // Reagendar → REPROGRAMADO, cancelación → CANCELADO, el resto → PROBLEMA. En Mercado Libre lo que el cliente le diga al conductor no cancela el envío:
+        // queda PROBLEMA (abierto, reasignable) y el sondeo de estados lo pasa a CANCELADO solo si Mercado Libre de verdad lo cancela. Ver services/cancelledPackages.js.
+        const targetStatus = cancelled.problemTargetStatus(reason, sourceCheckRows.length > 0 ? sourceCheckRows[0].source : null);
 
         const { rows } = await db.query(
             'UPDATE packages SET status = $1, "deliveryPhotosBase64" = $2, "updatedAt" = $3 WHERE id = $4 RETURNING *',

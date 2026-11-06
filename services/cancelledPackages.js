@@ -66,4 +66,69 @@ async function moveCancelledToWarehouse(run, pkgId, warehouse, previousDriverNam
     return rows[0];
 }
 
-module.exports = { CANCELLED_STATUS, CANCELLED_CODE, MESSAGES, isCancelled, isWarehouseName, userName, warehouseReturnDetails, moveCancelledToWarehouse };
+/**
+ * Estado en que queda un paquete cuando un conductor reporta un problema, según el motivo que eligió o escribió:
+ *   «reagendar» / «reprogramar»  → REPROGRAMADO
+ *   «cancel…»                    → CANCELADO  (salvo en Mercado Libre, ver abajo)
+ *   cualquier otro               → PROBLEMA
+ *
+ * En Mercado Libre la cancelación la decide Mercado Libre, no lo que el cliente le diga al conductor en la puerta («cancelé», «hoy no»): el envío sigue
+ * vivo, el comprador puede reprogramar desde su app y el paquete se entrega días después (en 60 días, 8 de 30 reportes «Cliente canceló el pedido» terminaron
+ * entregados). Marcarlo CANCELADO lo cerraba, y un CANCELADO no vuelve a ruta (ver arriba). Por eso aquí queda PROBLEMA —abierto, reasignable—; cuando Mercado
+ * Libre cancela de verdad, el sondeo de estados lo pasa a CANCELADO solo. En el resto de los orígenes (manual, tiendas) no hay otra fuente de verdad: se mantiene.
+ * Igual que antes, un motivo que no sea texto falla (el llamador lo informa como error), en vez de crear un problema «undefined».
+ */
+const problemTargetStatus = (reason, source) => {
+    const text = reason.toLowerCase();
+    if (text.includes('reagendar') || text.includes('reprogramar')) return 'REPROGRAMADO';
+    if (text.includes('cancel')) return source === 'MERCADO_LIBRE' ? 'PROBLEMA' : CANCELLED_STATUS;
+    return 'PROBLEMA';
+};
+
+/** Estados de un envío de Mercado Libre en los que SIGUE VIVO y se puede entregar. Entregado, cancelado, no entregado/devuelto o no encontrado no cuentan. */
+const ML_OPEN_STATUSES = Object.freeze(['pending', 'handling', 'ready_to_ship', 'shipped']);
+const isOpenInMeli = (mlStatus) => ML_OPEN_STATUSES.includes(mlStatus);
+
+/**
+ * Condición SQL (sobre la tabla `packages`, sin alias) de los paquetes que un CONDUCTOR dejó CANCELADOS en Mercado Libre y que vale la pena volver a mirar allá:
+ *   - origen Mercado Libre, sin facturar, tocados en los últimos 14 días;
+ *   - hay un reporte de problema del conductor con «cancel» en el motivo (así llegaron a CANCELADO);
+ *   - ni Mercado Libre confirmó la cancelación (evento «Cancelado» del sondeo) ni ya se reabrió una vez (evento «Reabierto:…»): se reabre a lo más UNA vez, para que
+ *     una cancelación que el equipo decida después a mano no se deshaga sola en bucle.
+ * Los CANCELADOS por el administrador o por Mercado Libre no cumplen la condición: no tienen el reporte del conductor / sí tienen el evento «Cancelado».
+ */
+const DRIVER_CANCEL_CANDIDATE_SQL = `(packages.status = 'CANCELADO' AND packages.source = 'MERCADO_LIBRE' AND packages.billed IS NOT TRUE
+    AND packages."updatedAt" >= now() - interval '14 days'
+    AND EXISTS (SELECT 1 FROM tracking_events d WHERE d."packageId" = packages.id AND d.status = 'PROBLEMA' AND d.details ILIKE '%cancel%')
+    AND NOT EXISTS (SELECT 1 FROM tracking_events c WHERE c."packageId" = packages.id AND (c.status IN ('Cancelado', 'CANCELADO') OR (c.status = 'COMENTARIO' AND c.details LIKE 'Reabierto:%'))))`;
+
+/** Texto del evento (interno: «COMENTARIO» no se publica en el seguimiento del comprador) que explica por qué un CANCELADO volvió a estar abierto. */
+const reviveDetails = (ml) =>
+    `Reabierto: Mercado Libre mantiene este envío activo (${ml.status}${ml.substatus ? '/' + ml.substatus : ''}) y no lo canceló. El estado CANCELADO venía de un reporte del conductor; el paquete vuelve a quedar disponible para asignar.`;
+
+/**
+ * Reabre (CANCELADO → PROBLEMA) un paquete que un conductor dejó cancelado mientras Mercado Libre sigue mostrando su envío vivo. `ml` = { status, substatus } del envío
+ * en Mercado Libre, recién consultado. La condición se vuelve a comprobar dentro del UPDATE (DRIVER_CANCEL_CANDIDATE_SQL), así que no pisa un cambio hecho entre la
+ * lectura y la escritura. No cambia conductor ni fechas de asignación, no avisa al comprador y no toca los facturados.
+ * `run(text, params)` ejecuta una consulta (db.query o, dentro de una transacción, client.query). Devuelve la fila reabierta, o null si no correspondía.
+ */
+async function reviveIfOpenInMeli(run, pkgId, ml) {
+    if (!ml || !isOpenInMeli(ml.status)) return null;
+    const now = new Date();
+    // Una sola sentencia: el cambio de estado y su evento se guardan juntos o no se guarda nada.
+    const { rows } = await run(
+        `WITH reopened AS (
+             UPDATE packages SET status = 'PROBLEMA', "updatedAt" = $1 WHERE id = $2 AND ${DRIVER_CANCEL_CANDIDATE_SQL} RETURNING *
+         ), logged AS (
+             INSERT INTO tracking_events ("packageId", status, location, details, timestamp) SELECT id, 'COMENTARIO', 'Sistema', $3, $1 FROM reopened
+         )
+         SELECT * FROM reopened`,
+        [now, pkgId, reviveDetails(ml)]
+    );
+    return rows.length > 0 ? rows[0] : null;
+}
+
+module.exports = {
+    CANCELLED_STATUS, CANCELLED_CODE, MESSAGES, isCancelled, isWarehouseName, userName, warehouseReturnDetails, moveCancelledToWarehouse,
+    problemTargetStatus, ML_OPEN_STATUSES, isOpenInMeli, DRIVER_CANCEL_CANDIDATE_SQL, reviveDetails, reviveIfOpenInMeli,
+};
