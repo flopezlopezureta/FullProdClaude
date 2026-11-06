@@ -3,8 +3,11 @@ import { getLogicalDateString, formatLocalDisplayDate, getLocalDateString } from
 import { storageUtils } from '../../utils/storageUtils';
 import { PackageStatus, PackageSource, MessagingPlan } from '../../constants';
 import type { Package, User } from '../../types';
-import { api, ApiError, DeliveryConfirmationData, isUnreadableResponse } from '../../services/api';
+import { api, ApiError, DeliveryConfirmationData, isMeliNotConfirmed, isUnreadableResponse } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
+import { processOfflineQueue } from '../../services/offlineQueueProcessor';
+import { MESSAGES as MELI_MESSAGES, startWaiting } from '../../services/meliDeferredClose';
+import { MeliWaitingBanner, MeliSavedToast, MeliNotice } from './MeliDeferredNotices';
 import PackageList from '../PackageList';
 import PackageDetailModal from '../PackageDetailModal';
 import DeliveryConfirmationModal from './DeliveryConfirmationModal';
@@ -68,6 +71,17 @@ const DriverDashboard: React.FC = () => {
   const [isEndOfDayModalOpen, setIsEndOfDayModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [offlinePendingCount, setOfflinePendingCount] = useState(0);
+  // Entregas guardadas que esperan a que Mercado Libre las registre como cerradas (ver services/meliDeferredClose.ts) y, aparte, todos los paquetes con una
+  // entrega guardada (por falta de conexión o por esa espera). Reflejan la cola del teléfono; no son estado del servidor.
+  const [waitingMeliIds, setWaitingMeliIds] = useState<string[]>([]);
+  const [queuedDeliveryIds, setQueuedDeliveryIds] = useState<string[]>([]);
+  const [meliNotice, setMeliNotice] = useState<MeliNotice | null>(null);
+  const showMeliNotice = (text: string) => setMeliNotice({ id: Date.now(), text });
+  const refreshQueueState = () => {
+    setOfflinePendingCount(offlineQueue.getOfflineCount());
+    setWaitingMeliIds(offlineQueue.getWaitingMeliPackageIds());
+    setQueuedDeliveryIds(offlineQueue.getQueuedDeliveryPackageIds());
+  };
 
   const auth = useContext(AuthContext);
   const isInitialLoad = useRef(true);
@@ -225,7 +239,7 @@ const DriverDashboard: React.FC = () => {
         const pendingId = localStorage.getItem(`pending_delivering_id_${auth?.user?.id}`);
         if (pendingId) {
             const pkg = myPackages.find(p => p.id === pendingId);
-            if (pkg && pkg.status !== PackageStatus.Delivered && pkg.status !== PackageStatus.Problem) {
+            if (pkg && pkg.status !== PackageStatus.Delivered && pkg.status !== PackageStatus.Problem && !offlineQueue.getWaitingMeliPackageIds().includes(pkg.id)) {
                 setDeliveringPackages([pkg]);
             } else {
                 localStorage.removeItem(`pending_delivering_id_${auth?.user?.id}`);
@@ -243,9 +257,11 @@ const DriverDashboard: React.FC = () => {
     if (deliveringPackages && deliveringPackages.length > 0) return;
     if (reportingProblemPackage) return;
 
+    // Un paquete cuya entrega ya quedó guardada en el teléfono (esperando a Mercado Libre o a la conexión) no vuelve a pedir nombre y fotos: se envía sola.
     const needsPhotosPackage = [...myPackages, ...stalePackages].find(
       p => p.meliDeliveredNeedsPhotos === true && p.status !== PackageStatus.Delivered && p.status !== PackageStatus.Problem
           && !dismissedMeliPromptIds.has(p.id)
+          && !queuedDeliveryIds.includes(p.id)
     );
     if (needsPhotosPackage) {
       if (navigator.vibrate) {
@@ -253,7 +269,7 @@ const DriverDashboard: React.FC = () => {
       }
       setDeliveringPackages([needsPhotosPackage]);
     }
-  }, [myPackages, stalePackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage, dismissedMeliPromptIds]);
+  }, [myPackages, stalePackages, auth?.systemSettings?.meliAutoPromptPhotos, auth?.user?.driverPermissions?.meliAutoPromptPhotos, deliveringPackages, reportingProblemPackage, dismissedMeliPromptIds, queuedDeliveryIds]);
 
   const fetchData = async (silent = false) => {
       if (!auth?.user) return;
@@ -396,7 +412,15 @@ const DriverDashboard: React.FC = () => {
   // Real-time push: when Meli reports a shipment closed, refetch immediately instead of
   // waiting for the next 15s poll. The auto-open-modal effect above reacts to the refetched
   // data exactly as it already does today - this only shortens how soon that data arrives.
-  useDriverSSE(!!auth?.user, () => fetchData(true));
+  // Además, si hay entregas guardadas esperando a Mercado Libre, este aviso es justo la respuesta que esperaban: se reintentan ya (en silencio).
+  useDriverSSE(!!auth?.user, () => {
+    fetchData(true);
+    if (offlineQueue.getWaitingMeliCount() > 0) {
+      processOfflineQueue({ force: true })
+        .then(({ synced }) => { if (synced.length > 0) tryAutoCloseRoute(); })
+        .catch((err) => console.warn('[MeliDeferredClose] Reintento tras aviso de Mercado Libre falló.', err));
+    }
+  });
 
   // Reflect the offline queue's pending count here for the banner below. The actual draining
   // (retry against the API) happens once, in DriverMobileLayout.tsx — a persistent parent
@@ -405,8 +429,17 @@ const DriverDashboard: React.FC = () => {
   // Listening for the same custom event that processor dispatches keeps this in sync.
   useEffect(() => {
     if (!auth?.user) return;
-    setOfflinePendingCount(offlineQueue.getPendingCount());
-    const onQueueChange = () => setOfflinePendingCount(offlineQueue.getPendingCount());
+    refreshQueueState();
+    const onQueueChange = () => {
+      refreshQueueState();
+      // A queued delivery/problem/return that synced in the background never
+      // touched myPackages (the offline branch above only enqueues — it doesn't
+      // optimistically update local state), so without this the package kept
+      // showing as pending/open indefinitely even after it was actually
+      // confirmed on the server — reported as "the delivery reappears open"
+      // once the driver gets signal back. Silent refetch picks up the real state.
+      fetchData(true);
+    };
     window.addEventListener('offline-queue-changed', onQueueChange);
     return () => window.removeEventListener('offline-queue-changed', onQueueChange);
   }, [auth?.user]);
@@ -589,6 +622,11 @@ const DriverDashboard: React.FC = () => {
   };
 
   const handleStartDelivery = (pkg: Package) => {
+    // Una entrega que ya quedó guardada esperando a Mercado Libre no se vuelve a cargar: se envía sola apenas ML la confirme.
+    if (waitingMeliIds.includes(pkg.id)) {
+      showMeliNotice(MELI_MESSAGES.alreadySaved);
+      return;
+    }
     const blocker = findMeliBlocker([pkg.id]);
     if (blocker) {
       alertMeliBlocker(blocker);
@@ -597,7 +635,8 @@ const DriverDashboard: React.FC = () => {
     // Si la opción de selección múltiple está habilitada en el setup, pre-seleccionamos
     // automáticamente los paquetes que tengan el mismo destinatario y dirección.
     if (auth?.systemSettings?.multiSelectEnabled) {
-      const sameRecipientPkgs = pendingPackages.filter(p => 
+      const sameRecipientPkgs = pendingPackages.filter(p =>
+          !waitingMeliIds.includes(p.id) &&
           p.recipientAddress.trim().toLowerCase() === pkg.recipientAddress.trim().toLowerCase() &&
           p.recipientName.trim().toLowerCase() === pkg.recipientName.trim().toLowerCase()
       );
@@ -612,8 +651,12 @@ const DriverDashboard: React.FC = () => {
   };
 
   const handleStartBatchDelivery = () => {
-    const selectedList = pendingPackages.filter(p => selectedPackages.has(p.id));
-    if (selectedList.length === 0) return;
+    // Los que ya quedaron guardados esperando a Mercado Libre no se cargan de nuevo (ver handleStartDelivery).
+    const selectedList = pendingPackages.filter(p => selectedPackages.has(p.id) && !waitingMeliIds.includes(p.id));
+    if (selectedList.length === 0) {
+      if (selectedPackages.size > 0) showMeliNotice(MELI_MESSAGES.alreadySaved);
+      return;
+    }
     const blocker = findMeliBlocker(selectedList.map(p => p.id));
     if (blocker) {
       alertMeliBlocker(blocker);
@@ -630,9 +673,15 @@ const DriverDashboard: React.FC = () => {
   };
 
   const handleConfirmDelivery = async (pkgIds: string[], data: DeliveryConfirmationData) => {
-    let updatedPackages: Package[];
-    try {
-      updatedPackages = await Promise.all(pkgIds.map(async (pkgId) => {
+    // Cada paquete se resuelve por separado: uno puede cerrarse, otro quedar guardado esperando a Mercado Libre o a la conexión y otro fallar,
+    // sin perder a los demás.
+    type Outcome =
+      | { pkgId: string; kind: 'closed'; pkg: Package }
+      | { pkgId: string; kind: 'waitingMeli' }
+      | { pkgId: string; kind: 'offline' }
+      | { pkgId: string; kind: 'error'; error: any };
+    const outcomes: Outcome[] = await Promise.all(pkgIds.map(async (pkgId): Promise<Outcome> => {
+      try {
         let updatedPackage: Package;
         try {
           updatedPackage = await api.confirmDelivery(pkgId, data);
@@ -651,38 +700,64 @@ const DriverDashboard: React.FC = () => {
         if (!updatedPackage || !updatedPackage.id) {
             throw new Error("La respuesta del servidor no es válida.");
         }
-        return updatedPackage;
-      }));
-    } catch (error: any) {
-      if (isNetworkFailure(error)) {
+        return { pkgId, kind: 'closed', pkg: updatedPackage };
+      } catch (error: any) {
+        // Mercado Libre aún no muestra la entrega como cerrada: queda guardada y se envía sola, en segundo plano, apenas lo confirme.
+        // Sin cuenta regresiva ni pantalla ocupada: el conductor sigue con las demás entregas (ver services/meliDeferredClose.ts).
+        if (isMeliNotConfirmed(error)) return { pkgId, kind: 'waitingMeli' };
         // No connection (or the request never reached the server): save the delivery locally
         // instead of losing it. The queue is drained automatically once the connection returns
         // (see the 'online' listener + poll effect below) — the driver doesn't need to redo anything.
-        pkgIds.forEach(pkgId => offlineQueue.enqueue('DELIVER', pkgId, data));
-        setDeliveringPackages(null);
-        setSelectedPackages(new Set());
-        if (auth?.user) {
-            localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
-        }
-        setOfflinePendingCount(offlineQueue.getPendingCount());
-        return;
+        if (isNetworkFailure(error)) return { pkgId, kind: 'offline' };
+        return { pkgId, kind: 'error', error };
       }
-      console.error("Failed to confirm delivery", error);
-      throw error;
+    }));
+
+    const closed = outcomes.filter((o): o is Extract<Outcome, { kind: 'closed' }> => o.kind === 'closed');
+    const waiting = outcomes.filter(o => o.kind === 'waitingMeli');
+    const offline = outcomes.filter(o => o.kind === 'offline');
+    const failed = outcomes.filter((o): o is Extract<Outcome, { kind: 'error' }> => o.kind === 'error');
+    const updatedPackages: Package[] = closed.map(o => o.pkg);
+
+    // Los paquetes cerrados se reflejan en la lista de inmediato, pase lo que pase con el resto.
+    if (updatedPackages.length > 0) {
+      setMyPackages(prev => {
+        let next = [...prev];
+        updatedPackages.forEach(up => {
+          next = next.map(p => p.id === up.id ? up : p);
+        });
+        return next;
+      });
     }
 
-    setMyPackages(prev => {
-      let next = [...prev];
-      updatedPackages.forEach(up => {
-        next = next.map(p => p.id === up.id ? up : p);
-      });
-      return next;
-    });
+    // Lo que no se pudo cerrar ahora queda guardado en el teléfono, con su nombre y sus fotos, y se envía solo.
+    if (waiting.length > 0 || offline.length > 0) {
+      try {
+        waiting.forEach(o => offlineQueue.enqueue('DELIVER', o.pkgId, data, startWaiting(Date.now())));
+        offline.forEach(o => offlineQueue.enqueue('DELIVER', o.pkgId, data));
+      } catch (queueErr) {
+        // enqueue() itself failed to save (almost certainly localStorage full — a delivery
+        // with photos can be a few MB). Re-throwing here (instead of proceeding as if it
+        // worked) keeps the modal open and its draft intact, so the driver doesn't lose the
+        // delivery silently — see the comment on writeQueue in services/offlineQueue.ts.
+        throw new Error(waiting.length > 0
+          ? MELI_MESSAGES.storageFull
+          : 'No se pudo guardar la entrega sin conexión: el almacenamiento del teléfono está lleno. Libera espacio (o borra fotos/apps que no uses) e inténtalo de nuevo.');
+      } finally {
+        refreshQueueState();
+      }
+    }
+
+    // El servidor rechazó la entrega de algún paquete (p. ej. ya no está disponible): se muestra en la pantalla de confirmación, que sigue abierta con su borrador.
+    if (failed.length > 0) {
+      console.error("Failed to confirm delivery", failed[0].error);
+      throw failed[0].error;
+    }
 
     // Igual que driver-app (la app nativa): dispara el chequeo de cierre automático justo
     // aquí, no solo desde el efecto que mira la lista completa — así el cierre no depende
     // de que ningún otro código "vea" el cambio a tiempo.
-    tryAutoCloseRoute();
+    if (updatedPackages.length > 0) tryAutoCloseRoute();
 
     setDeliveringPackages(null);
     setSelectedPackages(new Set()); // Limpiar selección después de entregar
@@ -690,6 +765,9 @@ const DriverDashboard: React.FC = () => {
     if (auth?.user) {
         localStorage.removeItem(`pending_delivering_id_${auth.user.id}`);
     }
+
+    // Aviso (no bloquea nada): la entrega quedó guardada y se enviará sola en unos minutos, apenas Mercado Libre la confirme.
+    if (waiting.length > 0) showMeliNotice(MELI_MESSAGES.saved(waiting.length, updatedPackages.length));
 
     // --- WhatsApp/Email notifications logic ---
     if (auth?.systemSettings.messagingPlan && auth.systemSettings.messagingPlan !== MessagingPlan.None) {
@@ -719,17 +797,35 @@ const DriverDashboard: React.FC = () => {
     }
   };
 
+  // Si el conductor reporta un problema de un paquete que tenía una entrega guardada (esperando a Mercado Libre o a la conexión), manda su decisión más
+  // nueva: la entrega guardada se descarta para que no se envíe después y pise el problema.
+  const dropQueuedDelivery = (pkgId: string) => {
+    try {
+      offlineQueue.removeForPackage(pkgId, 'DELIVER');
+    } catch (e) {
+      console.warn('[OfflineQueue] No se pudo quitar la entrega guardada del paquete', pkgId, e);
+    }
+    refreshQueueState();
+  };
+
   const handleConfirmProblem = async (pkgId: string, reason: string, photos: string[]) => {
     try {
         const updatedPackage = await api.markPackageAsProblem(pkgId, reason, photos);
+        dropQueuedDelivery(pkgId);
         setMyPackages(prev => prev.map(p => p.id === pkgId ? updatedPackage : p));
         tryAutoCloseRoute();
         setReportingProblemPackage(null);
     } catch (error: any) {
         if (isNetworkFailure(error)) {
-          offlineQueue.enqueue('PROBLEM', pkgId, { reason, photos });
+          try {
+            offlineQueue.enqueue('PROBLEM', pkgId, { reason, photos });
+          } catch (queueErr) {
+            // Same reasoning as handleConfirmDelivery above — don't pretend it saved if it didn't.
+            throw new Error('No se pudo guardar el reporte sin conexión: el almacenamiento del teléfono está lleno. Libera espacio e inténtalo de nuevo.');
+          }
+          dropQueuedDelivery(pkgId);
           setReportingProblemPackage(null);
-          setOfflinePendingCount(offlineQueue.getPendingCount());
+          setOfflinePendingCount(offlineQueue.getOfflineCount());
           return;
         }
         console.error("Failed to report problem", error);
@@ -916,6 +1012,7 @@ const DriverDashboard: React.FC = () => {
           </div>
         </div>
       )}
+      <MeliWaitingBanner count={waitingMeliIds.length} />
       {unflexedCount > 0 && auth?.systemSettings?.flexDiscrepancyReportEnabled && (
         <div className="mb-6 mx-4 p-4 bg-orange-50 border-2 border-orange-200 rounded-xl shadow-sm animate-pulse-subtle">
           <div className="flex items-start">
@@ -1066,6 +1163,7 @@ const DriverDashboard: React.FC = () => {
               onSelectAll={undefined}
               disableSorting={activeTab === 'pending'}
               isSelectionDisabled={isSelectionDisabledForDriver}
+              queuedNoteFor={(p) => (waitingMeliIds.includes(p.id) ? 'Guardada · esperando a Mercado Libre' : undefined)}
           />
         </div>
       )}
@@ -1162,6 +1260,8 @@ const DriverDashboard: React.FC = () => {
             users={users}
         />
       )}
+
+      <MeliSavedToast notice={meliNotice} onClose={() => setMeliNotice(null)} />
     </div>
   );
 };

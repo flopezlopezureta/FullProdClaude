@@ -2492,8 +2492,10 @@ async function handleDeliver(req, res) {
         // El cierre en Full Envíos exige que Mercado Libre ya muestre el envío como entregado (se cierra primero en la
         // app de Flex). Dos consultas con 1,5 s de por medio cubren el desfase de unos segundos de ML sin dejar al
         // conductor esperando con la pantalla congelada. Si ML aún no lo muestra, se responde con un código y la app
-        // espera sola hasta 60 s consultando /meli-ready (ver DeliveryConfirmationModal), reenviando el cierre en
-        // cuanto ML lo confirma — sin volver a pedirle al conductor que reintente a mano.
+        // deja el cierre guardado en el teléfono y lo reenvía sola, en segundo plano, cuando una consulta liviana a
+        // /meli-ready indica que ML ya lo muestra (ver services/meliDeferredClose.ts y services/offlineQueueProcessor.ts)
+        // — sin volver a pedirle al conductor que reintente a mano. El mensaje de abajo se mantiene igual para las
+        // versiones anteriores de la app, que todavía lo muestran tal cual.
         if (meliFlexValidation) {
             try {
                 const { rows: pkgRows } = await db.query('SELECT "meliFlexCode", "creatorId", "source", "sourceAccountId" FROM packages WHERE id = $1', [id]);

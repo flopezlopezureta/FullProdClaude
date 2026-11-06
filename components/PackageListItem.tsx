@@ -21,6 +21,8 @@ interface PackageListItemProps {
   onSelectionChange?: (pkg: Package) => void;
   index: number;
   isSelectionDisabled?: boolean;
+  /** Etiqueta cuando la entrega de este paquete ya quedó guardada en el teléfono y se enviará sola (p. ej. esperando a que Mercado Libre la registre). */
+  queuedNote?: string;
 }
 
 const statusIcons: { [key in PackageStatus]: React.ReactNode } = {
@@ -117,7 +119,7 @@ const ActionsMenu: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
 };
 
-const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, creatorName, onSelect, onAssign, onEdit, onDelete, onPrint, onMarkForReturn, hideDriverName, isSelected, onSelectionChange, index, isSelectionDisabled }) => {
+const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, creatorName, onSelect, onAssign, onEdit, onDelete, onPrint, onMarkForReturn, hideDriverName, isSelected, onSelectionChange, index, isSelectionDisabled, queuedNote }) => {
   const [showQRCode, setShowQRCode] = useState(false);
   const [showNewLabel, setShowNewLabel] = useState(false);
 
@@ -243,7 +245,17 @@ const PackageListItem: React.FC<PackageListItemProps> = ({ pkg, driverName, crea
                                 </span>
                             )}
                         </div>
-                        
+
+                        {/* Entrega guardada en el teléfono que espera a Mercado Libre: en su propia línea para no apretar el nombre en una pantalla angosta. */}
+                        {queuedNote && (
+                            <div className="flex">
+                                <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold leading-tight bg-sky-100 text-sky-800 border border-sky-300">
+                                    <IconClock className="w-3 h-3 mr-1 shrink-0" />
+                                    {queuedNote}
+                                </span>
+                            </div>
+                        )}
+
                         {/* 2. Secondary Text: Address (Smaller, different color, new line) */}
                         <div className="flex items-start gap-1.5 text-xs text-[var(--text-secondary)] w-full">
                             <IconMapPin className="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0 mt-0.5" />

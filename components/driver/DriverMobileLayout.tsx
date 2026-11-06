@@ -15,7 +15,9 @@ import ZoningScanner from './ZoningScanner';
 import { DriverPermissions, Notification } from '../../types';
 import { api } from '../../services/api';
 import { offlineQueue } from '../../services/offlineQueue';
-import { processOfflineQueue } from '../../services/offlineQueueProcessor';
+import { processOfflineQueue, QUEUE_DISCARDED_EVENT } from '../../services/offlineQueueProcessor';
+import { tryAutoCloseRoute } from '../../services/autoClosure';
+import { MESSAGES as MELI_MESSAGES } from '../../services/meliDeferredClose';
 import { storageUtils } from '../../utils/storageUtils';
 
 type DriverView = 'my-packages' | 'scan-dispatch' | 'scan-dispatch-auxiliar' | 'scan-pickups' | 'colectas' | 'returns' | 'delivery-history' | 'meli-flex-test' | 'zona';
@@ -239,18 +241,42 @@ const DriverMobileLayout: React.FC = () => {
 
         const syncQueue = async () => {
             if (offlineQueue.getPendingCount() === 0) return;
-            await processOfflineQueue();
+            const { synced } = await processOfflineQueue();
             // Individual dashboards listen for 'offline-queue-changed' (dispatched by
             // offlineQueue itself on every enqueue/remove) to refresh their own package lists
             // and pending-count banners — no direct coupling needed from here.
+            // Si se envió algo, puede haber sido lo último que faltaba del día (p. ej. una entrega que esperaba a Mercado Libre): se revisa el cierre automático
+            // desde acá porque esta capa sigue montada aunque el conductor esté en otra pestaña.
+            if (synced.length > 0) tryAutoCloseRoute();
+        };
+
+        // Un cierre guardado que el servidor rechazó para siempre, o que Mercado Libre nunca confirmó en 24 horas, sale de la cola y el paquete sigue abierto
+        // en la lista del conductor: se le avisa una sola vez, llame a quien llame al procesador (ciclo periódico, cierre de jornada…).
+        const onDiscarded = (ev: Event) => {
+            const items: { pkgId: string; message: string }[] = (ev as CustomEvent).detail?.items || [];
+            if (items.length === 0) return;
+            alert(`${MELI_MESSAGES.discardedTitle(items.length)}\n\n${items.map(d => `• ${d.pkgId}: ${d.message}`).join('\n')}\n\n${MELI_MESSAGES.discardedFooter}`);
+        };
+
+        // El conductor vuelve a la app (típicamente desde Mercado Libre Flex, donde acaba de cerrar la entrega): si hay entregas esperando a ML, se reintentan ya.
+        // No repite un intento de hace segundos, así que cambiar de app seguido no satura nada.
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible' || offlineQueue.getWaitingMeliCount() === 0) return;
+            processOfflineQueue({ force: true })
+                .then(({ synced }) => { if (synced.length > 0) tryAutoCloseRoute(); })
+                .catch((err) => console.warn('[MeliDeferredClose] Reintento al volver a la app falló.', err));
         };
 
         syncQueue();
         window.addEventListener('online', syncQueue);
+        window.addEventListener(QUEUE_DISCARDED_EVENT, onDiscarded);
+        document.addEventListener('visibilitychange', onVisible);
         const intervalId = setInterval(syncQueue, 30000);
 
         return () => {
             window.removeEventListener('online', syncQueue);
+            window.removeEventListener(QUEUE_DISCARDED_EVENT, onDiscarded);
+            document.removeEventListener('visibilitychange', onVisible);
             clearInterval(intervalId);
         };
     }, [user]);

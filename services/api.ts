@@ -130,6 +130,13 @@ export const MELI_NOT_CONFIRMED = 'MELI_NOT_CONFIRMED';
 export const isMeliNotConfirmed = (err: any): boolean =>
   err instanceof ApiError && !!(err.body && err.body.code === MELI_NOT_CONFIRMED);
 
+// Códigos que devuelve POST /packages/:id/deliver (HTTP 400) cuando el nombre de quien recibe no sirve (un «.», una sola letra…) o las fotos de evidencia son la misma
+// imagen repetida. Reintentar el mismo envío nunca los arregla: hay que cerrar de nuevo con datos buenos.
+export const INVALID_RECEIVER_NAME = 'INVALID_RECEIVER_NAME';
+export const DUPLICATE_PHOTOS = 'DUPLICATE_PHOTOS';
+export const isCloseDataRejected = (err: any): boolean =>
+  err instanceof ApiError && !!(err.body && (err.body.code === INVALID_RECEIVER_NAME || err.body.code === DUPLICATE_PHOTOS));
+
 const get = <T>(endpoint: string) => request<T>(endpoint, { method: 'GET' });
 const post = <T>(endpoint: string, body: any) => request<T>(endpoint, { method: 'POST', body: JSON.stringify(body) });
 const put = <T>(endpoint: string, body: any) => request<T>(endpoint, { method: 'PUT', body: JSON.stringify(body) });

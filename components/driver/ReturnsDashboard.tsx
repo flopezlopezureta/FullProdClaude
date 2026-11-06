@@ -35,8 +35,9 @@ const ReturnsDashboard: React.FC = () => {
   // happens in DriverMobileLayout.tsx (see DriverDashboard.tsx for the full rationale).
   useEffect(() => {
     if (!auth?.user) return;
-    setOfflinePendingCount(offlineQueue.getPendingCount());
-    const onQueueChange = () => setOfflinePendingCount(offlineQueue.getPendingCount());
+    // Solo las acciones guardadas por falta de conexión: las entregas que esperan a Mercado Libre tienen su propio aviso en "Entregas".
+    setOfflinePendingCount(offlineQueue.getOfflineCount());
+    const onQueueChange = () => setOfflinePendingCount(offlineQueue.getOfflineCount());
     window.addEventListener('offline-queue-changed', onQueueChange);
     return () => window.removeEventListener('offline-queue-changed', onQueueChange);
   }, [auth?.user]);
@@ -104,7 +105,12 @@ const ReturnsDashboard: React.FC = () => {
       setReturningPackage(null);
     } catch (error: any) {
         if (isNetworkFailure(error)) {
-          offlineQueue.enqueue('RETURN', pkgId, data);
+          try {
+            offlineQueue.enqueue('RETURN', pkgId, data);
+          } catch (queueErr) {
+            // La cola ahora avisa cuando no pudo guardar (casi seguro el almacenamiento del teléfono está lleno): no se aparenta que se guardó.
+            throw new Error('No se pudo guardar la devolución sin conexión: el almacenamiento del teléfono está lleno. Libera espacio e inténtalo de nuevo.');
+          }
           setReturnPackages(prev => prev.filter(p => p.id !== pkgId));
           setReturningPackage(null);
           return;

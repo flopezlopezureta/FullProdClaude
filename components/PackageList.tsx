@@ -23,6 +23,8 @@ interface PackageListProps {
   onSelectAll?: () => void;
   disableSorting?: boolean;
   isSelectionDisabled?: (pkg: Package) => boolean;
+  /** Etiqueta que se muestra junto al paquete cuando su entrega quedó guardada en el teléfono esperando a Mercado Libre (solo la pantalla del conductor la usa). */
+  queuedNoteFor?: (pkg: Package) => string | undefined;
 }
 
 const statusPriority: { [key in PackageStatus]: number } = {
@@ -39,7 +41,7 @@ const statusPriority: { [key in PackageStatus]: number } = {
   [PackageStatus.Rescheduled]: 10,
 };
 
-const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, onSelectPackage, onAssignPackage, onEditPackage, onDeletePackage, onPrintLabel, onMarkForReturn, isFiltering, isDateFiltering, hideDriverName, selectedPackages, onSelectionChange, onSelectAll, disableSorting, isSelectionDisabled }) => {
+const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, onSelectPackage, onAssignPackage, onEditPackage, onDeletePackage, onPrintLabel, onMarkForReturn, isFiltering, isDateFiltering, hideDriverName, selectedPackages, onSelectionChange, onSelectAll, disableSorting, isSelectionDisabled, queuedNoteFor }) => {
   const userMap = React.useMemo(() => {
     const map: Record<string, User> = {};
     users.forEach(u => {
@@ -136,6 +138,7 @@ const PackageList: React.FC<PackageListProps> = ({ packages, users, isLoading, o
                 isSelected={selectedPackages?.has(pkg.id)}
                 onSelectionChange={onSelectionChange}
                 isSelectionDisabled={isSelectionDisabled?.(pkg)}
+                queuedNote={queuedNoteFor?.(pkg)}
             />
         );
       })}
