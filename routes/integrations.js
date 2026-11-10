@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 
 const meliPollingService = require('../services/meliPollingService');
 const { normalizeCommune } = require('../utils/normUtil');
+const { withCacheBuster } = require('../utils/wooCacheBuster');
 const shopifyOrders = require('../services/shopifyOrders');
 
 // --- MULTI-ACCOUNT HELPERS ---
@@ -509,7 +510,8 @@ const makeWooCommerceRequest = (wooUrl, consumerKey, consumerSecret, path, metho
             cleanUrl = 'https://' + cleanUrl;
         }
 
-        const url = new URL(`${cleanUrl}/wp-json/wc/v3${path}`);
+        // La tienda puede tener la respuesta en caché por URL y entregarla vieja: ver utils/wooCacheBuster.js
+        const url = new URL(`${cleanUrl}/wp-json/wc/v3${withCacheBuster(path, method)}`);
         const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
         const options = {

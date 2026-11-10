@@ -3,6 +3,7 @@ const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
+const { withCacheBuster } = require('../utils/wooCacheBuster');
 
 // --- WOOCOMMERCE API HELPERS ---
 const makeWooCommerceRequest = (wooUrl, consumerKey, consumerSecret, path, method = 'GET', postData = null) => {
@@ -17,7 +18,8 @@ const makeWooCommerceRequest = (wooUrl, consumerKey, consumerSecret, path, metho
             cleanUrl = 'https://' + cleanUrl;
         }
 
-        const url = new URL(`${cleanUrl}/wp-json/wc/v3${path}`);
+        // La tienda puede tener la respuesta en caché por URL y entregarla vieja: ver utils/wooCacheBuster.js
+        const url = new URL(`${cleanUrl}/wp-json/wc/v3${withCacheBuster(path, method)}`);
         const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
 
         const options = {
