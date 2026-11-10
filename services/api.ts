@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { PackageStatus, ShippingType, Role } from '../constants';
 import type { PerformanceReport } from '../utils/performanceTypes';
+import type { ClosureReviewReport, ClosureDriverCases } from '../utils/closureReviewTypes';
 import type { DriverDayRoute } from '../utils/routePlanning';
 
 const API_URL = '/api';
@@ -546,6 +547,11 @@ export const api = {
   },
   getDriverPerformance: (startDate: string, endDate: string, driverIds: string[]) =>
     get<PerformanceReport>(`/users/driver-performance?startDate=${startDate}&endDate=${endDate}${driverIds.length ? `&driverIds=${encodeURIComponent(driverIds.join(','))}` : ''}`),
+  // Calidad de cierres: nombres de quien recibe sin sentido y fotos de evidencia repetidas, por conductor (services/closureReview.js).
+  getClosureQuality: (startDate: string, endDate: string, refresh: boolean = false) =>
+    get<ClosureReviewReport>(`/reports/closure-quality?startDate=${startDate}&endDate=${endDate}${refresh ? '&refresh=1' : ''}`),
+  getClosureQualityCases: (startDate: string, endDate: string, driverId: string) =>
+    get<ClosureDriverCases>(`/reports/closure-quality/cases?startDate=${startDate}&endDate=${endDate}&driverId=${encodeURIComponent(driverId)}`),
   notifyDriverClosure: (driverId: string) => post<{ message: string }>('/users/notify-driver-closure', { driverId }),
 
   // Cierre de Jornada del Conductor (Auditoría de Cierres del Centro de Control)

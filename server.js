@@ -468,6 +468,10 @@ async function startServer() {
         require('./services/closureSafetyNetService').start(10 * 60 * 1000);
         console.log('Background Service: Closure Safety Net scheduled (10min interval).');
 
+        // Saca las huellas de las fotos de los cierres de conductor para el informe «Calidad de cierres» (los cierres nuevos y, al instalarse, los últimos 31 días).
+        require('./services/closurePhotoScanService').start(60 * 1000);
+        console.log('Background Service: Closure Photo Scan scheduled (starts in 60s).');
+
       } catch (initErr) {
         console.error('Failed to initialize database during startup:', initErr);
       }
@@ -1556,6 +1560,20 @@ async function initializeDatabase() {
             );
         `);
         console.log('Table "daily_closures" is ready.');
+
+        // Huellas de las fotos de cada cierre de conductor (SHA-256 de los bytes y huella visual de cada foto), para el informe «Calidad de cierres».
+        // Una fila por paquete; las llena services/closurePhotoScanService.js. Solo guarda huellas, nunca las fotos.
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS closure_photo_prints (
+                "packageId" TEXT PRIMARY KEY,
+                "scannedAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                "photoCount" INTEGER NOT NULL DEFAULT 0,
+                shas TEXT[] NOT NULL DEFAULT '{}',
+                hashes TEXT[] NOT NULL DEFAULT '{}'
+            );
+        `);
+        await db.query('CREATE INDEX IF NOT EXISTS idx_closure_photo_prints_scannedat ON closure_photo_prints ("scannedAt")');
+        console.log('Table "closure_photo_prints" is ready.');
 
         // --- INDEXES FOR PERFORMANCE OPTIMIZATION ---
         console.log('Ensuring database indexes exist...');

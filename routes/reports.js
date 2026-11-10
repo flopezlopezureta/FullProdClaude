@@ -4,6 +4,7 @@ const db = require('../db');
 const authMiddleware = require('../middleware/auth');
 const timeService = require('../services/timeService');
 const meliWeekly = require('../services/meliWeeklyDelivery');
+const closureReview = require('../services/closureReview');
 
 /**
  * GET /api/reports/activity-audit
@@ -233,6 +234,82 @@ router.get('/meli-weekly-delivery/detail', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Error in meli-weekly-delivery/detail report:', err);
         res.status(500).json({ message: 'Error al obtener el detalle de paquetes de Mercado Libre.' });
+    }
+});
+
+// ───────────── Calidad de cierres (nombre de quien recibe y fotos de evidencia repetidas, por conductor) ─────────────
+// Quién puede verlo: administradores y operadores con permiso de reportes. Es una evaluación individual de conductores, así que el perfil se lee de nuevo en la base
+// (la sesión solo trae id y rol): un perfil eliminado o deshabilitado con una sesión todavía vigente no la ve.
+async function canViewClosureReview(req) {
+    const role = req.user && req.user.role;
+    if (role !== 'ADMIN' && role !== 'OPERADOR_SISTEMAS') return false;
+    const { rows } = await db.query('SELECT status, "operatorPermissions" FROM users WHERE id = $1', [req.user.id]);
+    if (!rows[0] || rows[0].status !== 'APROBADO') return false;
+    if (role === 'ADMIN') return true;
+    const permissions = rows[0].operatorPermissions;
+    return !permissions || permissions.canViewReports !== false;   // sin permisos guardados = los de siempre (reportes habilitados)
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** Valida ?startDate=&endDate= (días lógicos, inclusive). Devuelve { startDate, endDate } o { error }. */
+function closureReviewRange(query) {
+    const { startDate, endDate } = query;
+    if (!ISO_DATE.test(String(startDate || '')) || !ISO_DATE.test(String(endDate || ''))) return { error: 'Se requieren startDate y endDate con formato YYYY-MM-DD.' };
+    const days = Math.round((new Date(`${endDate}T12:00:00Z`) - new Date(`${startDate}T12:00:00Z`)) / 86400000) + 1;
+    if (!(days >= 1)) return { error: 'La fecha de inicio debe ser anterior o igual a la de término.' };
+    if (days > closureReview.MAX_RANGE_DAYS) return { error: `El período máximo del informe es de ${closureReview.MAX_RANGE_DAYS} días.` };
+    return { startDate: String(startDate), endDate: String(endDate) };
+}
+
+// Las filas de un período se comparten entre el resumen y el detalle de un conductor (se piden seguidas) y se guardan 60 s, con una sola consulta en vuelo por período.
+const closureRowsCache = new Map();
+const CLOSURE_ROWS_TTL_MS = 60 * 1000;
+function closureRows(startDate, endDate, refresh) {
+    const key = `${startDate}|${endDate}`;
+    const hit = closureRowsCache.get(key);
+    if (!refresh && hit && Date.now() - hit.at < CLOSURE_ROWS_TTL_MS) return hit.promise;
+    const promise = (async () => {
+        const { start } = await timeService.getLogicalRange(startDate, startDate);
+        const { nextDayStart } = await timeService.getLogicalRange(endDate, endDate);
+        return closureReview.fetchClosures((text, params) => db.query(text, params), start, nextDayStart);
+    })();
+    closureRowsCache.set(key, { at: Date.now(), promise });
+    if (closureRowsCache.size > 4) closureRowsCache.delete(closureRowsCache.keys().next().value);
+    promise.catch(() => closureRowsCache.delete(key));   // un error no se queda en el cache
+    return promise;
+}
+
+// GET /api/reports/closure-quality?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD[&refresh=1]
+// Resumen por conductor: cierres, nombres sin sentido y fotos repetidas (ver services/closureReview.js). Solo lectura.
+router.get('/closure-quality', authMiddleware, async (req, res) => {
+    try {
+        if (!(await canViewClosureReview(req))) return res.status(403).json({ message: 'Acceso denegado.' });
+        const range = closureReviewRange(req.query);
+        if (range.error) return res.status(400).json({ message: range.error });
+        const rows = await closureRows(range.startDate, range.endDate, !!req.query.refresh);
+        res.json({ startDate: range.startDate, endDate: range.endDate, generatedAt: new Date().toISOString(), thresholds: closureReview.THRESHOLDS, ...closureReview.buildReport(rows) });
+    } catch (err) {
+        console.error('Error in closure-quality report:', err);
+        res.status(500).json({ message: 'Error al generar el informe de calidad de cierres.' });
+    }
+});
+
+// GET /api/reports/closure-quality/cases?startDate=&endDate=&driverId=
+// Los cierres con hallazgos de UN conductor (nombre sin sentido, misma foto, fotos muy parecidas, foto reutilizada en otra dirección), del más reciente al más antiguo.
+router.get('/closure-quality/cases', authMiddleware, async (req, res) => {
+    try {
+        if (!(await canViewClosureReview(req))) return res.status(403).json({ message: 'Acceso denegado.' });
+        const range = closureReviewRange(req.query);
+        if (range.error) return res.status(400).json({ message: range.error });
+        const driverId = req.query.driverId;
+        if (typeof driverId !== 'string' || !driverId || driverId.length > 200) return res.status(400).json({ message: 'driverId es obligatorio.' });
+        const rows = await closureRows(range.startDate, range.endDate, false);
+        const result = closureReview.buildDriverCases(rows, driverId);
+        if (!result) return res.status(404).json({ message: 'Ese conductor no tiene cierres en el período.' });
+        res.json({ startDate: range.startDate, endDate: range.endDate, thresholds: closureReview.THRESHOLDS, ...result });
+    } catch (err) {
+        console.error('Error in closure-quality/cases report:', err);
+        res.status(500).json({ message: 'Error al obtener los cierres del conductor.' });
     }
 });
 

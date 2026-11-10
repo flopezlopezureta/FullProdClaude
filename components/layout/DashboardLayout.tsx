@@ -28,6 +28,7 @@ import LogisticsBIDashboard from '../admin/LogisticsBIDashboard';
 import LateDeliveriesAnalysis from '../admin/LateDeliveriesAnalysis';
 import MeliConfirmedStuckReport from '../admin/MeliConfirmedStuckReport';
 import MeliWeeklyDeliveryReport from '../admin/MeliWeeklyDeliveryReport';
+import ClosureQualityReport from '../admin/ClosureQualityReport';
 import DispatchScanner from '../auxiliar/DispatchScanner';
 import { PickupDashboard } from '../admin/PickupDashboard';
 import PickupReportPage from '../admin/PickupReportPage';
@@ -255,6 +256,10 @@ const DashboardLayout: React.FC = () => {
 
       case 'driver-performance':
         if (isAdmin || (isOp && user?.operatorPermissions?.canViewReports)) return { title: 'Rendimiento por Conductor', content: <DriverPerformanceReportPage /> };
+        break;
+
+      case 'closure-quality':
+        if (isAdmin || (isOp && permissions?.canViewReports)) return { title: 'Calidad de Cierres', content: <ClosureQualityReport /> };
         break;
 
       // Client

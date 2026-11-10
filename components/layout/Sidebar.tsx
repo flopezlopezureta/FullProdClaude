@@ -2,7 +2,7 @@
 import React, { useContext, useState, useEffect } from 'react';
 import { AuthContext } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
-import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconFileUpload, IconWifi, IconSearch } from '../Icon';
+import { IconPackage, IconUsers, IconUser, IconLogOut, IconLayoutDashboard, IconX, IconChevronDown, IconTruck, IconUserCheck, IconSettings, IconQrcode, IconFileText, IconMapPin, IconChartBar, IconBarChart, IconPieChart, IconTarget, IconClock, IconFileInvoice, IconPlugConnected, IconDownload, IconMap, IconAlertTriangle, IconFileUpload, IconWifi, IconSearch, IconCamera } from '../Icon';
 import { Role, DEFAULT_OPERATOR_PERMISSIONS } from '../../constants';
 
 interface SidebarProps {
@@ -49,7 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
     if (activeView.startsWith('users-')) menus.add('users');
     if (['assign-pickups', 'pickup-report'].includes(activeView)) menus.add('pickups');
     if (['settings', 'integrations'].includes(activeView)) menus.add('configuration');
-    if (['delivery-analytics', 'late-deliveries', 'activity-audit', 'fleet-control', 'meli-weekly-delivery'].includes(activeView)) menus.add('reports');
+    if (['delivery-analytics', 'late-deliveries', 'activity-audit', 'fleet-control', 'meli-weekly-delivery', 'closure-quality'].includes(activeView)) menus.add('reports');
     if (['geolocate', 'zone-settings', 'live-map', 'sector-editor', 'projection-map'].includes(activeView)) menus.add('logistics');
     return menus;
   });
@@ -145,6 +145,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         { id: 'delivery-analytics', label: 'Análisis Logístico (BI)', icon: <IconBarChart className="h-5 w-5" /> },
         { id: 'activity-audit', label: 'Auditoría de Actividad', icon: <IconFileText className="h-5 w-5 text-amber-600" /> },
         { id: 'late-deliveries', label: 'Auditoría Nocturna (>21h)', icon: <IconClock className="h-5 w-5 text-red-500" /> },
+        { id: 'closure-quality', label: 'Calidad de Cierres', icon: <IconCamera className="h-5 w-5 text-rose-600" /> },
         { id: 'meli-weekly-delivery', label: 'Cumplimiento Meli (Semanal)', icon: <IconTarget className="h-5 w-5 text-indigo-600" /> },
         { id: 'meli-confirmed-stuck', label: 'Pendientes Confirmados Meli', icon: <IconAlertTriangle className="h-5 w-5 text-amber-600" /> },
       ]
@@ -228,6 +229,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, onNavigate, isOpen, onClo
         { id: 'delivery-analytics', label: 'Análisis Logístico (BI)', icon: <IconBarChart className="h-5 w-5" /> },
         { id: 'activity-audit', label: 'Auditoría de Actividad', icon: <IconFileText className="h-5 w-5 text-amber-600" /> },
         { id: 'late-deliveries', label: 'Auditoría Nocturna (>21h)', icon: <IconClock className="h-5 w-5 text-red-500" /> },
+        { id: 'closure-quality', label: 'Calidad de Cierres', icon: <IconCamera className="h-5 w-5 text-rose-600" /> },
       ]
     },
     { id: 'driver-performance', label: 'Reporte Conductores', icon: <IconChartBar className="h-6 w-6" />, permission: 'canViewReports' },
