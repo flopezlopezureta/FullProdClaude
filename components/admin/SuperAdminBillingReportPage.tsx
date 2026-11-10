@@ -2,8 +2,13 @@ import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { api } from '../../services/api';
 import { AuthContext } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { IconPrinter, IconCalendar, IconPackage, IconDollarSign, IconFileSpreadsheet, IconTrendingUp, IconLock, IconCube, IconUsers, IconPlus, IconTrash, IconPencil, IconX, IconFileInvoice } from '../Icon';
+import { IconPrinter, IconCalendar, IconPackage, IconDollarSign, IconFileSpreadsheet, IconTrendingUp, IconLock, IconCube, IconUsers, IconPlus, IconTrash, IconPencil, IconX, IconFileInvoice, IconCheckCircle, IconAlertTriangle } from '../Icon';
 import { exportSuperAdminBillingToExcel } from '../../services/exportService';
+
+const MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const monthYearLabel = (y: number, m: number) => `${MONTHS_ES[m - 1]} ${y}`;
+const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const fmtDateTime = (iso?: string | null) => (iso ? new Date(iso).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
 
 const KpiCard: React.FC<{ icon: React.ReactNode, title: string, value: string | number, subtext?: string, colorClass: string }> = ({ icon, title, value, subtext, colorClass }) => (
     <div className="bg-[var(--background-secondary)] rounded-lg p-4 shadow-sm border border-[var(--border-primary)] flex items-center">
@@ -36,6 +41,16 @@ const SuperAdminBillingReportPage: React.FC = () => {
     const [reportData, setReportData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+
+    // Facturas registradas del Reporte de Cobro UF (ver services/billingInvoices.js): «Facturar» guarda lo facturado, marca los envíos cobrados y congela el mes.
+    const [invoices, setInvoices] = useState<any[]>([]);
+    const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+    const [invoiceDoc, setInvoiceDoc] = useState('');
+    const [invoiceNotes, setInvoiceNotes] = useState('');
+    const [isInvoicing, setIsInvoicing] = useState(false);
+    const [isVoidModalOpen, setIsVoidModalOpen] = useState(false);
+    const [voidReason, setVoidReason] = useState('');
+    const [isVoiding, setIsVoiding] = useState(false);
 
     // Total facturado real (todos los clientes) para comparar contra los gastos en la pestaña
     // de Gastos — independiente de cual cliente este seleccionado en la pestaña de Reporte por
@@ -430,6 +445,194 @@ const SuperAdminBillingReportPage: React.FC = () => {
 
     const inputClasses = "w-full px-3 py-2 border border-[var(--border-secondary)] rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-secondary)] bg-[var(--background-secondary)] text-[var(--text-primary)]";
     const formatCLP = (val: number | null) => val !== null ? val.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' }) : '-';
+
+    // ── Facturación del mes: estado, facturar y anular ──
+    const billing = reportData?.billing;
+    const carryOver = reportData?.carryOver;
+    const carryOverText = carryOver?.count > 0 ? carryOver.byMonth.map((b: any) => `${capitalize(b.label)}: ${b.count.toLocaleString('es-CL')}`).join(' · ') : '';
+    const combinedNet = (reportData?.summary?.totalCostClpNet || 0) + licenseCostClpNet;
+    const combinedIva = (reportData?.summary?.totalCostClpIva || 0) + licenseCostClpIva;
+    const combinedGross = (reportData?.summary?.totalCostClpGross || 0) + licenseCostClpGross;
+
+    const fetchInvoices = async () => {
+        try {
+            const response = await fetch('/api/billing/invoices', { headers: { 'Authorization': `Bearer ${token}` } });
+            const data = await response.json();
+            setInvoices(response.ok && Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error('Failed to fetch billing invoices', error);
+            setInvoices([]);
+        }
+    };
+
+    useEffect(() => {
+        fetchInvoices();
+    }, []);
+
+    const refreshAfterInvoiceChange = async () => {
+        await Promise.all([fetchReport(), fetchGlobalReport(), fetchInvoices()]);
+    };
+
+    const handleInvoice = async () => {
+        if (!reportData || !billing?.canInvoice || isInvoicing) return;
+        setIsInvoicing(true);
+        try {
+            const response = await fetch('/api/billing/invoices', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({
+                    year: reportData.period.year,
+                    month: reportData.period.month,
+                    ufValue: reportData.uf.value,
+                    ufSource: reportData.uf.source,
+                    // Lo que la persona está viendo: si los números cambiaron mientras tanto, el servidor lo rechaza y se muestran los nuevos.
+                    expectedPackages: reportData.summary.totalPackages,
+                    expectedGrossClp: combinedGross,
+                    documentNumber: invoiceDoc.trim() || undefined,
+                    notes: invoiceNotes.trim() || undefined,
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                showToast(data.message || 'No se pudo facturar.', 'error');
+                if (response.status === 409) {
+                    setIsInvoiceModalOpen(false);
+                    await refreshAfterInvoiceChange();
+                }
+                return;
+            }
+            showToast(`${monthYearLabel(data.year, data.month)} facturado: ${formatCLP(data.totalGrossClp)} (${data.packagesCount.toLocaleString('es-CL')} despachos).`, 'success');
+            setIsInvoiceModalOpen(false);
+            setInvoiceDoc('');
+            setInvoiceNotes('');
+            await refreshAfterInvoiceChange();
+        } catch (error) {
+            console.error('Failed to create invoice', error);
+            showToast('No se pudo facturar. Revisa tu conexión e inténtalo de nuevo.', 'error');
+        } finally {
+            setIsInvoicing(false);
+        }
+    };
+
+    const handleVoidInvoice = async () => {
+        const invoiceId = billing?.invoice?.id;
+        if (!invoiceId || isVoiding) return;
+        if (voidReason.trim().length < 5) {
+            showToast('Escribe el motivo de la anulación (mínimo 5 letras).', 'error');
+            return;
+        }
+        setIsVoiding(true);
+        try {
+            const response = await fetch(`/api/billing/invoices/${invoiceId}/void`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ reason: voidReason.trim() }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                showToast(data.message || 'No se pudo anular la factura.', 'error');
+                return;
+            }
+            showToast('Factura anulada. Sus envíos quedaron sin facturar y se cobrarán en la próxima.', 'success');
+            setIsVoidModalOpen(false);
+            setVoidReason('');
+            await refreshAfterInvoiceChange();
+        } catch (error) {
+            console.error('Failed to void invoice', error);
+            showToast('No se pudo anular la factura. Revisa tu conexión e inténtalo de nuevo.', 'error');
+        } finally {
+            setIsVoiding(false);
+        }
+    };
+
+    // «Ver» en el historial de facturas: abre ese mes en la vista de toda la plataforma.
+    const viewInvoicePeriod = (inv: any) => {
+        setActiveTab('client');
+        if (goDeliveryClientId) setSelectedClientId(goDeliveryClientId);
+        setUfOverride('');
+        setYear(String(inv.year));
+        setMonth(String(inv.month));
+    };
+
+    // Tarjeta de estado del mes: facturado (congelado) / listo para facturar / provisorio. Los colores salen de los tokens del tema (no usa variantes dark: de Tailwind).
+    const renderBillingBanner = () => {
+        if (!billing || !reportData) return null;
+        const monthName = monthYearLabel(reportData.period.year, reportData.period.month);
+        const inv = billing.invoice;
+        const box = 'rounded-lg border p-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between';
+        const primaryBtn = 'shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-bold rounded-md shadow-sm bg-[var(--brand-primary)] hover:bg-[var(--brand-secondary)] text-[var(--text-on-brand)] disabled:opacity-50';
+        if (billing.mode === 'INVOICED' && inv) {
+            return (
+                <div className={`${box} bg-[var(--success-bg)] border-[var(--success-border)] text-[var(--success-text)]`}>
+                    <div className="flex gap-3">
+                        <IconCheckCircle className="w-6 h-6 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                            <p className="font-black text-base">{monthName} · FACTURADO</p>
+                            <p className="text-sm">
+                                Registrada el {fmtDateTime(inv.invoicedAt)} por {inv.invoicedByName || 'Administrador'}
+                                {inv.documentNumber ? ` · Documento N° ${inv.documentNumber}` : ''}
+                                {inv.source === 'BASELINE' ? ' · Factura emitida antes de que existiera el botón (referencia)' : ''}
+                            </p>
+                            <p className="text-sm">
+                                Valores congelados: {Number(inv.packagesCount).toLocaleString('es-CL')} despachos
+                                {inv.packagesCarryOver > 0 ? ` (${Number(inv.packagesCarryOver).toLocaleString('es-CL')} rezagados de meses anteriores)` : ''}
+                                {' · '}UF {Number(inv.ufValue).toLocaleString('es-CL')} · Neto {formatCLP(inv.totalNetClp)} · IVA {formatCLP(inv.totalIvaClp)} · <strong>Total {formatCLP(inv.totalGrossClp)}</strong>
+                            </p>
+                            <p className="text-xs">
+                                Estos valores no cambian aunque después se despachen, cancelen o reasignen envíos. Los envíos de {monthName} que se despachen más tarde se cobran en el mes siguiente.
+                            </p>
+                            {inv.notes && <p className="text-xs">Nota: {inv.notes}</p>}
+                        </div>
+                    </div>
+                    {billing.canVoid && (
+                        <button
+                            onClick={() => { setVoidReason(''); setIsVoidModalOpen(true); }}
+                            className="shrink-0 px-4 py-2 text-sm font-bold rounded-md border border-[var(--error-border)] bg-[var(--background-secondary)] text-[var(--error-text)] hover:bg-[var(--error-bg)]"
+                        >
+                            Anular factura
+                        </button>
+                    )}
+                </div>
+            );
+        }
+        if (billing.canInvoice) {
+            return (
+                <div className={`${box} bg-[var(--status-intransit-bg)] border-[var(--status-intransit-border)] text-[var(--text-primary)]`}>
+                    <div className="flex gap-3">
+                        <IconFileInvoice className="w-6 h-6 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                            <p className="font-black text-base">{monthName} · LISTO PARA FACTURAR</p>
+                            <p className="text-sm">
+                                {Number(reportData.summary.totalPackages).toLocaleString('es-CL')} despachos
+                                {carryOver?.count > 0 ? ` (incluye ${Number(carryOver.count).toLocaleString('es-CL')} rezagados: ${carryOverText})` : ''}
+                                {' · '}Total bruto <strong>{formatCLP(combinedGross)}</strong>
+                            </p>
+                            <p className="text-xs">Al facturar se guardan estos valores y los envíos quedan marcados como facturados: ninguno se cobra dos veces.</p>
+                        </div>
+                    </div>
+                    <button onClick={() => { setInvoiceDoc(''); setInvoiceNotes(''); setIsInvoiceModalOpen(true); }} className={primaryBtn}>
+                        <IconFileInvoice className="w-4 h-4" /> Facturar {monthName}
+                    </button>
+                </div>
+            );
+        }
+        const provisional = billing.mode === 'CARRYOVER';
+        return (
+            <div className={`${box} bg-[var(--status-delayed-bg)] border-[var(--status-delayed-border)] text-[var(--text-primary)]`}>
+                <div className="flex gap-3">
+                    <IconAlertTriangle className="w-6 h-6 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                        <p className="font-black text-base">{monthName} · {provisional ? 'VALORES PROVISORIOS' : 'CÁLCULO EN VIVO'}</p>
+                        {billing.cannotInvoiceReason && <p className="text-sm">{billing.cannotInvoiceReason}</p>}
+                        {carryOver?.count > 0 && (
+                            <p className="text-sm">Incluye {Number(carryOver.count).toLocaleString('es-CL')} rezagados de meses anteriores ({carryOverText}): envíos que se despacharon después de la factura de su mes y que aquí se cobran por primera vez.</p>
+                        )}
+                        {!provisional && <p className="text-xs">Sin factura registrada, este mes se recalcula cada vez que se abre y puede variar si después se despachan envíos.</p>}
+                    </div>
+                </div>
+            </div>
+        );
+    };
 
     return (
         <>
@@ -969,7 +1172,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                     </div>
                     <div>
                         <label htmlFor="super-year-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Año</label>
-                        <select id="super-year-select" value={year} onChange={e => { setYear(e.target.value); setReportData(null); }} className={inputClasses}>
+                        <select id="super-year-select" value={year} onChange={e => { setYear(e.target.value); setUfOverride(''); setReportData(null); }} className={inputClasses}>
                             <option value="2024">2024</option>
                             <option value="2025">2025</option>
                             <option value="2026">2026</option>
@@ -978,7 +1181,7 @@ const SuperAdminBillingReportPage: React.FC = () => {
                     </div>
                     <div>
                         <label htmlFor="super-month-select" className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Mes</label>
-                        <select id="super-month-select" value={month} onChange={e => { setMonth(e.target.value); setReportData(null); }} className={inputClasses}>
+                        <select id="super-month-select" value={month} onChange={e => { setMonth(e.target.value); setUfOverride(''); setReportData(null); }} className={inputClasses}>
                             <option value="1">Enero</option>
                             <option value="2">Febrero</option>
                             <option value="3">Marzo</option>
@@ -1002,12 +1205,15 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 step="0.01"
                                 value={ufOverride}
                                 onChange={e => setUfOverride(e.target.value)}
-                                className={inputClasses}
+                                disabled={billing?.mode === 'INVOICED'}
+                                title={billing?.mode === 'INVOICED' ? 'Este mes ya está facturado: la UF quedó guardada con la factura.' : undefined}
+                                className={`${inputClasses} disabled:opacity-60 disabled:cursor-not-allowed`}
                                 placeholder="Valor UF..."
                             />
-                            <button 
+                            <button
                                 onClick={handleApplyUfOverride}
-                                className="px-3 py-2 text-sm font-medium bg-[var(--brand-primary)] hover:bg-[var(--brand-secondary)] text-[var(--text-on-brand)] rounded-md"
+                                disabled={billing?.mode === 'INVOICED'}
+                                className="px-3 py-2 text-sm font-medium bg-[var(--brand-primary)] hover:bg-[var(--brand-secondary)] text-[var(--text-on-brand)] rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Aplicar
                             </button>
@@ -1016,16 +1222,82 @@ const SuperAdminBillingReportPage: React.FC = () => {
                 </div>
             </div>
 
+            {invoices.length > 0 && (
+                <div className="bg-[var(--background-secondary)] shadow-md rounded-lg p-6">
+                    <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+                        <h3 className="text-lg font-semibold text-[var(--text-primary)]">Facturas registradas</h3>
+                        <span className="text-xs text-[var(--text-muted)]">Lo facturado queda guardado y no cambia aunque después se despachen o cancelen envíos.</span>
+                    </div>
+                    <div className="overflow-x-auto border border-[var(--border-primary)] rounded-lg">
+                        <table className="min-w-full divide-y divide-[var(--border-primary)] text-sm">
+                            <thead className="bg-[var(--background-muted)]">
+                                <tr>
+                                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Período</th>
+                                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Despachos</th>
+                                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">UF del 1º</th>
+                                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Neto</th>
+                                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">IVA</th>
+                                    <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Total</th>
+                                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Documento</th>
+                                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Registrada</th>
+                                    <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Estado</th>
+                                    <th scope="col" className="px-4 py-3"><span className="sr-only">Abrir</span></th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-[var(--background-secondary)] divide-y divide-[var(--border-primary)]">
+                                {invoices.map((inv: any) => (
+                                    <tr key={inv.id} className={inv.status === 'VOIDED' ? 'opacity-60' : ''}>
+                                        <td className="px-4 py-3 whitespace-nowrap font-semibold text-[var(--text-primary)]">
+                                            {monthYearLabel(inv.year, inv.month)}
+                                            {inv.source === 'BASELINE' && <span className="ml-2 text-[10px] font-bold uppercase text-[var(--text-muted)]" title="Factura emitida antes de que existiera el botón: se registró con sus valores oficiales">referencia</span>}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-center text-[var(--text-secondary)]">
+                                            {Number(inv.packagesCount).toLocaleString('es-CL')}
+                                            {inv.packagesCarryOver > 0 && <span className="block text-[10px] text-[var(--text-muted)]">{Number(inv.packagesCarryOver).toLocaleString('es-CL')} rezagados</span>}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-right font-mono text-[var(--text-secondary)]">{Number(inv.ufValue).toLocaleString('es-CL')}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-right text-[var(--text-secondary)]">{formatCLP(inv.totalNetClp)}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-right text-[var(--text-secondary)]">{formatCLP(inv.totalIvaClp)}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-right font-bold text-[var(--text-primary)]">{formatCLP(inv.totalGrossClp)}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-[var(--text-secondary)]">{inv.documentNumber || '—'}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-[var(--text-secondary)]">
+                                            {fmtDateTime(inv.invoicedAt)}
+                                            <span className="block text-[10px] text-[var(--text-muted)]">{inv.invoicedByName || ''}</span>
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-center">
+                                            {inv.status === 'VOIDED' ? (
+                                                <span
+                                                    className="inline-flex px-2 py-0.5 rounded-full text-xs font-bold border bg-[var(--error-bg)] border-[var(--error-border)] text-[var(--error-text)]"
+                                                    title={`Anulada el ${fmtDateTime(inv.voidedAt)}${inv.voidedByName ? ` por ${inv.voidedByName}` : ''}: ${inv.voidReason || ''}`}
+                                                >
+                                                    Anulada
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-bold border bg-[var(--success-bg)] border-[var(--success-border)] text-[var(--success-text)]">Vigente</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 whitespace-nowrap text-right">
+                                            <button onClick={() => viewInvoicePeriod(inv)} className="text-sm font-semibold text-[var(--brand-primary)] hover:underline">Ver</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
             {isLoading && <p className="text-center text-[var(--text-muted)] mt-6">Calculando reporte y consultando UF en mindicador.cl...</p>}
 
             {reportData && !isLoading && (
                 <div className="space-y-6">
+                    {renderBillingBanner()}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <KpiCard 
-                            icon={<IconPackage className="w-6 h-6 text-blue-800"/>} 
-                            title="Despachos Cobrados" 
-                            value={reportData.summary.totalPackages} 
-                            subtext={`Creados: ${reportData.summary.totalCreated} / Sin Procesar: ${reportData.summary.totalAssignedToBodega}`}
+                        <KpiCard
+                            icon={<IconPackage className="w-6 h-6 text-blue-800"/>}
+                            title="Despachos Cobrados"
+                            value={reportData.summary.totalPackages}
+                            subtext={`Creados: ${reportData.summary.totalCreated} / Sin Procesar: ${reportData.summary.totalAssignedToBodega}${carryOver?.count > 0 ? ` / Rezagados: ${carryOver.count}` : ''}`}
                             colorClass="bg-blue-100" 
                         />
                         <KpiCard 
@@ -1101,6 +1373,20 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                                 <td className="px-6 py-3 whitespace-nowrap text-sm text-right text-[var(--text-primary)] font-semibold">{formatCLP(day.costClp)}</td>
                                             </tr>
                                         ))
+                                    )}
+                                    {carryOver?.count > 0 && (
+                                        <tr className="bg-[var(--brand-muted)]">
+                                            <td className="px-6 py-3 text-sm text-[var(--brand-text)] font-semibold">
+                                                Rezagados de meses anteriores
+                                                <span className="block text-xs font-normal text-[var(--text-muted)]">{carryOverText} · se despacharon después de la factura de su mes</span>
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-center text-[var(--text-muted)]">—</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-center text-[var(--text-muted)]">—</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-center text-purple-600 font-semibold">{carryOver.reassigned || 0}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-center text-emerald-600 font-bold">{carryOver.count}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-right text-[var(--text-secondary)] font-mono">{carryOver.costUf.toFixed(6)}</td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-right text-[var(--text-primary)] font-semibold">{formatCLP(carryOver.costClp)}</td>
+                                        </tr>
                                     )}
                                 </tbody>
                                 <tfoot className="bg-[var(--background-muted)] font-semibold text-sm">
@@ -1253,6 +1539,12 @@ const SuperAdminBillingReportPage: React.FC = () => {
                             <p><span className="text-gray-500">Servicio 1:</span> <span className="font-semibold text-gray-800">Despacho de Envíos Mensuales</span></p>
                             <p><span className="text-gray-500">Tarifa Unitaria:</span> <span className="font-semibold text-gray-800">{reportData.summary.ratePerPackageUf} UF / envío</span></p>
                             <p><span className="text-gray-500">Envíos Cobrados:</span> <span className="font-semibold text-gray-800">{reportData.summary.totalPackages} despachos</span></p>
+                            {carryOver?.count > 0 && (
+                                <p><span className="text-gray-500">Incluye rezagados de meses anteriores:</span> <span className="font-semibold text-gray-800">{carryOver.count} ({carryOverText})</span></p>
+                            )}
+                            {billing?.invoice && (
+                                <p><span className="text-gray-500">Factura registrada:</span> <span className="font-semibold text-gray-800">{fmtDateTime(billing.invoice.invoicedAt)}{billing.invoice.documentNumber ? ` · N° ${billing.invoice.documentNumber}` : ''}</span></p>
+                            )}
                             <p><span className="text-gray-500">Costo Despachos (UF):</span> <span className="font-semibold text-gray-800">{reportData.summary.totalCostUf.toFixed(5)} UF</span></p>
                             
                             {excessCount > 0 && (
@@ -1306,6 +1598,17 @@ const SuperAdminBillingReportPage: React.FC = () => {
                                 <td className="p-2 text-right">{formatCLP(day.costClp)}</td>
                             </tr>
                         ))}
+                        {carryOver?.count > 0 && (
+                            <tr className="border-b border-gray-200 bg-gray-50">
+                                <td className="p-2">Rezagados de meses anteriores<span className="block text-[10px] font-normal text-gray-500">{carryOverText}</span></td>
+                                <td className="p-2 text-center text-gray-400">—</td>
+                                <td className="p-2 text-center text-gray-400">—</td>
+                                <td className="p-2 text-center text-purple-600 font-semibold">{carryOver.reassigned || 0}</td>
+                                <td className="p-2 text-center text-emerald-700 font-bold">{carryOver.count}</td>
+                                <td className="p-2 text-right font-mono">{carryOver.costUf.toFixed(6)}</td>
+                                <td className="p-2 text-right">{formatCLP(carryOver.costClp)}</td>
+                            </tr>
+                        )}
                     </tbody>
                     <tfoot className="bg-gray-50 font-bold text-xs">
                         <tr className="border-t-2 border-gray-400">
@@ -1327,6 +1630,81 @@ const SuperAdminBillingReportPage: React.FC = () => {
                         </tr>
                     </tfoot>
                 </table>
+            </div>
+        )}
+
+        {/* Modal: confirmar la factura del mes (guarda los valores y marca los envíos cobrados) */}
+        {isInvoiceModalOpen && reportData && billing?.canInvoice && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:hidden" onClick={() => { if (!isInvoicing) setIsInvoiceModalOpen(false); }}>
+                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="invoice-modal-title">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 id="invoice-modal-title" className="text-lg font-bold text-[var(--text-primary)]">Facturar {monthYearLabel(reportData.period.year, reportData.period.month)}</h3>
+                        <button onClick={() => setIsInvoiceModalOpen(false)} disabled={isInvoicing} aria-label="Cerrar" className="p-1.5 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-5 h-5" /></button>
+                    </div>
+                    <dl className="text-sm space-y-2 text-[var(--text-secondary)]">
+                        <div className="flex justify-between gap-4"><dt>Despachos a facturar</dt><dd className="font-bold text-[var(--text-primary)]">{Number(reportData.summary.totalPackages).toLocaleString('es-CL')}</dd></div>
+                        {carryOver?.count > 0 && (
+                            <>
+                                <div className="flex justify-between gap-4 text-xs"><dt className="pl-3">del mes</dt><dd>{Number(reportData.summary.packagesOfMonth).toLocaleString('es-CL')}</dd></div>
+                                <div className="flex justify-between gap-4 text-xs"><dt className="pl-3">rezagados de meses anteriores ({carryOverText})</dt><dd>{Number(carryOver.count).toLocaleString('es-CL')}</dd></div>
+                            </>
+                        )}
+                        <div className="flex justify-between gap-4"><dt>UF del {String(reportData.uf.date).split('-').reverse().join('-')} ({reportData.uf.source})</dt><dd className="font-bold text-[var(--text-primary)]">{reportData.uf.value ? `$${Number(reportData.uf.value).toLocaleString('es-CL')}` : '—'}</dd></div>
+                        <div className="flex justify-between gap-4"><dt>Neto despachos</dt><dd>{formatCLP(reportData.summary.totalCostClpNet)}</dd></div>
+                        {licenseCostClpNet > 0 && <div className="flex justify-between gap-4"><dt>Neto licencias en exceso</dt><dd>{formatCLP(licenseCostClpNet)}</dd></div>}
+                        <div className="flex justify-between gap-4"><dt>Neto total</dt><dd className="font-semibold text-[var(--text-primary)]">{formatCLP(combinedNet)}</dd></div>
+                        <div className="flex justify-between gap-4"><dt>IVA (19%)</dt><dd>{formatCLP(combinedIva)}</dd></div>
+                        <div className="flex justify-between gap-4 border-t border-[var(--border-primary)] pt-2 text-base font-black text-[var(--text-primary)]"><dt>Total a facturar</dt><dd>{formatCLP(combinedGross)}</dd></div>
+                    </dl>
+                    <div className="grid grid-cols-1 gap-3 mt-5">
+                        <div>
+                            <label htmlFor="invoice-doc-input" className="block text-sm font-bold text-[var(--text-primary)] mb-1">N° de documento / factura (opcional)</label>
+                            <input id="invoice-doc-input" type="text" value={invoiceDoc} onChange={e => setInvoiceDoc(e.target.value)} maxLength={60} placeholder="Ej: 1234" className={inputClasses} />
+                        </div>
+                        <div>
+                            <label htmlFor="invoice-notes-input" className="block text-sm font-bold text-[var(--text-primary)] mb-1">Notas (opcional)</label>
+                            <textarea id="invoice-notes-input" value={invoiceNotes} onChange={e => setInvoiceNotes(e.target.value)} maxLength={500} rows={2} className={inputClasses} />
+                        </div>
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)] mt-4">
+                        Al confirmar se guardan estos valores y los {Number(reportData.summary.totalPackages).toLocaleString('es-CL')} envíos quedan marcados como facturados: no se cobrarán otra vez. Los envíos que se despachen después se cobrarán en la factura del mes siguiente.
+                    </p>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={() => setIsInvoiceModalOpen(false)} disabled={isInvoicing} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)] disabled:opacity-50">
+                            Cancelar
+                        </button>
+                        <button onClick={handleInvoice} disabled={isInvoicing} className="px-6 py-2 text-sm font-bold text-[var(--text-on-brand)] bg-[var(--brand-primary)] rounded-md hover:bg-[var(--brand-secondary)] disabled:opacity-50">
+                            {isInvoicing ? 'Facturando...' : 'Confirmar y facturar'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Modal: anular la última factura registrada */}
+        {isVoidModalOpen && billing?.invoice && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:hidden" onClick={() => { if (!isVoiding) setIsVoidModalOpen(false); }}>
+                <div className="bg-[var(--background-secondary)] rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="void-modal-title">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 id="void-modal-title" className="text-lg font-bold text-[var(--text-primary)]">Anular factura de {monthYearLabel(billing.invoice.year, billing.invoice.month)}</h3>
+                        <button onClick={() => setIsVoidModalOpen(false)} disabled={isVoiding} aria-label="Cerrar" className="p-1.5 rounded-full text-[var(--text-muted)] hover:bg-[var(--background-hover)]"><IconX className="w-5 h-5" /></button>
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)]">
+                        Se anula la factura registrada de {Number(billing.invoice.packagesCount).toLocaleString('es-CL')} despachos ({formatCLP(billing.invoice.totalGrossClp)}). Sus envíos quedan sin facturar y se cobrarán en la próxima factura. La anulación queda en el historial.
+                    </p>
+                    <div className="mt-4">
+                        <label htmlFor="void-reason-input" className="block text-sm font-bold text-[var(--text-primary)] mb-1">Motivo de la anulación</label>
+                        <textarea id="void-reason-input" value={voidReason} onChange={e => setVoidReason(e.target.value)} rows={3} maxLength={300} placeholder="Ej: la UF estaba mal escrita" className={inputClasses} />
+                    </div>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={() => setIsVoidModalOpen(false)} disabled={isVoiding} className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-[var(--background-secondary)] border border-[var(--border-secondary)] rounded-md hover:bg-[var(--background-hover)] disabled:opacity-50">
+                            Cancelar
+                        </button>
+                        <button onClick={handleVoidInvoice} disabled={isVoiding || voidReason.trim().length < 5} className="px-6 py-2 text-sm font-bold text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50">
+                            {isVoiding ? 'Anulando...' : 'Anular factura'}
+                        </button>
+                    </div>
+                </div>
             </div>
         )}
 

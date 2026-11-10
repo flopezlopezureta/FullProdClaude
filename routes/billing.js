@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth');
+const billingInvoices = require('../services/billingInvoices');
+const { logAction } = require('../services/logger');
 
 /**
  * GET /api/billing/summary
@@ -95,6 +97,7 @@ function getUfValueFromApi(dateStr) {
  * GET /api/billing/superadmin-monthly-report
  * Exclusively for ADMIN_SISTEMAS. Returns daily detail of dispatches, costs in UF, and conversions to CLP using the UF value of the 1st day of the next month.
  * Subtracts packages that remained in warehouse (assigned to 'Bodega' driver user).
+ * La lógica (rezagados de meses anteriores y meses ya facturados, congelados) vive en services/billingInvoices.js.
  */
 router.get('/superadmin-monthly-report', authMiddleware, async (req, res) => {
     try {
@@ -103,342 +106,14 @@ router.get('/superadmin-monthly-report', authMiddleware, async (req, res) => {
             return res.status(403).json({ message: 'Acceso denegado. Exclusivo para el Administrador Principal.' });
         }
 
-    const { clientId, year, month, ufValue } = req.query;
+        const { clientId, year, month, ufValue } = req.query;
 
-    if (!clientId || !year || !month) {
-        return res.status(400).json({ message: 'Se requieren clientId, year y month.' });
-    }
-        // Calculate date ranges
-        const startMonthStr = `${year}-${String(month).padStart(2, '0')}-01 00:00:00`;
-        let nextMonth = parseInt(month) + 1;
-        let nextYear = parseInt(year);
-        if (nextMonth > 12) {
-            nextMonth = 1;
-            nextYear += 1;
-        }
-        const endMonthStr = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01 00:00:00`;
-
-        // Get UF value
-        const ufDateStr = `01-${String(nextMonth).padStart(2, '0')}-${nextYear}`;
-        let finalUfValue = ufValue ? parseFloat(ufValue) : null;
-        let ufSource = 'Manual';
-
-        if (!finalUfValue) {
-            finalUfValue = await getUfValueFromApi(ufDateStr);
-            ufSource = 'API (mindicador.cl)';
+        if (!clientId || !year || !month) {
+            return res.status(400).json({ message: 'Se requieren clientId, year y month.' });
         }
 
-        // Fetch daily count of packages, filtering out those assigned to driver 'Bodega', pending, cancelled, or never assigned
-        // If the selected client is Go Delivery Interno, we query globally for all packages processed on the platform
-        const isGoDelivery = clientId === 'user-ebe23460-0205-4e30-80b4-6d1ea42085b7';
-        let query;
-        let queryParams;
-
-        if (isGoDelivery) {
-            query = `
-                WITH bodega_user AS (
-                    SELECT id FROM users WHERE name = 'Bodega' OR name ILIKE '%bodega%' LIMIT 1
-                )
-                SELECT 
-                    DATE(p."createdAt" AT TIME ZONE 'America/Santiago') as date,
-                    COUNT(*) as total_created,
-                    COUNT(*) FILTER (
-                        WHERE p."driverId" = (SELECT id FROM bodega_user)
-                           OR p.status IN ('PENDIENTE', 'CANCELADO')
-                           OR p."driverId" IS NULL
-                    ) as assigned_to_bodega,
-                    COUNT(*) FILTER (
-                        WHERE p."isReassigned" = true
-                    ) as total_reassigned,
-                    COUNT(*) - COUNT(*) FILTER (
-                        WHERE p."driverId" = (SELECT id FROM bodega_user)
-                           OR p.status IN ('PENDIENTE', 'CANCELADO')
-                           OR p."driverId" IS NULL
-                    ) as net_dispatched
-                FROM packages p
-                WHERE p."createdAt" >= ($1::timestamp AT TIME ZONE 'America/Santiago')
-                  AND p."createdAt" < ($2::timestamp AT TIME ZONE 'America/Santiago')
-                GROUP BY DATE(p."createdAt" AT TIME ZONE 'America/Santiago')
-                ORDER BY date ASC;
-            `;
-            queryParams = [startMonthStr, endMonthStr];
-        } else {
-            query = `
-                WITH bodega_user AS (
-                    SELECT id FROM users WHERE name = 'Bodega' OR name ILIKE '%bodega%' LIMIT 1
-                )
-                SELECT 
-                    DATE(p."createdAt" AT TIME ZONE 'America/Santiago') as date,
-                    COUNT(*) as total_created,
-                    COUNT(*) FILTER (
-                        WHERE p."driverId" = (SELECT id FROM bodega_user)
-                           OR p.status IN ('PENDIENTE', 'CANCELADO')
-                           OR p."driverId" IS NULL
-                    ) as assigned_to_bodega,
-                    COUNT(*) FILTER (
-                        WHERE p."isReassigned" = true
-                    ) as total_reassigned,
-                    COUNT(*) - COUNT(*) FILTER (
-                        WHERE p."driverId" = (SELECT id FROM bodega_user)
-                           OR p.status IN ('PENDIENTE', 'CANCELADO')
-                           OR p."driverId" IS NULL
-                    ) as net_dispatched
-                FROM packages p
-                WHERE p."creatorId" = $1 
-                  AND p."createdAt" >= ($2::timestamp AT TIME ZONE 'America/Santiago')
-                  AND p."createdAt" < ($3::timestamp AT TIME ZONE 'America/Santiago')
-                GROUP BY DATE(p."createdAt" AT TIME ZONE 'America/Santiago')
-                ORDER BY date ASC;
-            `;
-            queryParams = [clientId, startMonthStr, endMonthStr];
-        }
-
-        const { rows } = await db.query(query, queryParams);
-
-        // Fetch client details
-        const { rows: clientRows } = await db.query('SELECT name, "companyName", email FROM users WHERE id = $1', [clientId]);
-        const clientName = clientRows.length > 0 ? clientRows[0].name : 'Cliente desconocido';
-        const companyName = clientRows.length > 0 ? clientRows[0].companyName : '';
-
-        // Calculate values
-        const ratePerPackageUf = 0.00099667;
-        let totalPackages = 0; // Net billed packages (Dispatched)
-        let totalCreated = 0;
-        let totalAssignedToBodega = 0;
-        let totalReassigned = 0;
-        const dailyDetails = [];
-
-        rows.forEach(row => {
-            const count = parseInt(row.net_dispatched, 10);
-            const created = parseInt(row.total_created, 10);
-            const bodega = parseInt(row.assigned_to_bodega, 10);
-            const reassigned = parseInt(row.total_reassigned || 0, 10);
-
-            totalPackages += count;
-            totalCreated += created;
-            totalAssignedToBodega += bodega;
-            totalReassigned += reassigned;
-
-            const costUf = count * ratePerPackageUf;
-            const costClp = finalUfValue ? costUf * finalUfValue : null;
-
-            dailyDetails.push({
-                date: row.date.toISOString().split('T')[0],
-                totalCreated: created,
-                assignedToBodega: bodega,
-                reassignedCount: reassigned,
-                packagesCount: count, // Net dispatched
-                costUf: parseFloat(costUf.toFixed(8)),
-                costClp: costClp ? Math.round(costClp) : null
-            });
-        });
-
-        const totalCostUf = totalPackages * ratePerPackageUf;
-        const totalCostClp = finalUfValue ? totalCostUf * finalUfValue : null;
-
-        // Fetch detailed packages for Excel export
-        let detailQuery;
-        let detailParams;
-
-        if (isGoDelivery) {
-            detailQuery = `
-                WITH bodega_user AS (
-                    SELECT id FROM users WHERE name = 'Bodega' OR name ILIKE '%bodega%' LIMIT 1
-                )
-                SELECT 
-                    p.id,
-                    COALESCE(p."meliOrderId", p."shopifyOrderId", p."wooOrderId", p."jumpsellerOrderId", p.id) as "orderId",
-                    p."trackingId",
-                    p."recipientName",
-                    p."recipientPhone",
-                    p."recipientAddress",
-                    p."recipientCommune",
-                    p.status,
-                    TO_CHAR(p."createdAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "createdAt",
-                    TO_CHAR(p."updatedAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "updatedAt",
-                    TO_CHAR(p."assignedAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "assignedAt",
-                    p."driverId",
-                    u.name as "driverName",
-                    p."isReassigned",
-                    TO_CHAR(p."createdAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') as "date",
-                    CASE 
-                        WHEN p."driverId" = (SELECT id FROM bodega_user)
-                          OR p.status IN ('PENDIENTE', 'CANCELADO')
-                          OR p."driverId" IS NULL THEN false
-                        ELSE true
-                    END as "isCharged",
-                    CASE
-                        WHEN p."driverId" = (SELECT id FROM bodega_user) THEN 'En Bodega'
-                        WHEN p.status = 'PENDIENTE' THEN 'Pendiente'
-                        WHEN p.status = 'CANCELADO' THEN 'Cancelado'
-                        WHEN p."driverId" IS NULL THEN 'Sin Conductor Asignado'
-                        ELSE ''
-                    END as "exclusionReason"
-                FROM packages p
-                LEFT JOIN users u ON p."driverId" = u.id
-                WHERE p."createdAt" >= ($1::timestamp AT TIME ZONE 'America/Santiago')
-                  AND p."createdAt" < ($2::timestamp AT TIME ZONE 'America/Santiago')
-                ORDER BY p."createdAt" ASC;
-            `;
-            detailParams = [startMonthStr, endMonthStr];
-        } else {
-            detailQuery = `
-                WITH bodega_user AS (
-                    SELECT id FROM users WHERE name = 'Bodega' OR name ILIKE '%bodega%' LIMIT 1
-                )
-                SELECT 
-                    p.id,
-                    COALESCE(p."meliOrderId", p."shopifyOrderId", p."wooOrderId", p."jumpsellerOrderId", p.id) as "orderId",
-                    p."trackingId",
-                    p."recipientName",
-                    p."recipientPhone",
-                    p."recipientAddress",
-                    p."recipientCommune",
-                    p.status,
-                    TO_CHAR(p."createdAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "createdAt",
-                    TO_CHAR(p."updatedAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "updatedAt",
-                    TO_CHAR(p."assignedAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS') as "assignedAt",
-                    p."driverId",
-                    u.name as "driverName",
-                    p."isReassigned",
-                    TO_CHAR(p."createdAt" AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') as "date",
-                    CASE 
-                        WHEN p."driverId" = (SELECT id FROM bodega_user)
-                          OR p.status IN ('PENDIENTE', 'CANCELADO')
-                          OR p."driverId" IS NULL THEN false
-                        ELSE true
-                    END as "isCharged",
-                    CASE
-                        WHEN p."driverId" = (SELECT id FROM bodega_user) THEN 'En Bodega'
-                        WHEN p.status = 'PENDIENTE' THEN 'Pendiente'
-                        WHEN p.status = 'CANCELADO' THEN 'Cancelado'
-                        WHEN p."driverId" IS NULL THEN 'Sin Conductor Asignado'
-                        ELSE ''
-                    END as "exclusionReason"
-                FROM packages p
-                LEFT JOIN users u ON p."driverId" = u.id
-                WHERE p."creatorId" = $1
-                  AND p."createdAt" >= ($2::timestamp AT TIME ZONE 'America/Santiago')
-                  AND p."createdAt" < ($3::timestamp AT TIME ZONE 'America/Santiago')
-                ORDER BY p."createdAt" ASC;
-            `;
-            detailParams = [clientId, startMonthStr, endMonthStr];
-        }
-
-        const { rows: detailRows } = await db.query(detailQuery, detailParams);
-
-        // Retrieve license limits and fee
-        const { rows: settingsRows } = await db.query('SELECT "licenseLimit", "licenseOverageFee" FROM system_settings WHERE id = 1');
-        const limit = settingsRows.length > 0 ? settingsRows[0].licenseLimit : 70;
-        const overageFee = settingsRows.length > 0 ? parseFloat(settingsRows[0].licenseOverageFee || 0.1) : 0.1;
-
-        // Count active non-drivers (excluding superuser)
-        const { rows: nonDriversRes } = await db.query(
-            `SELECT role, COUNT(*)::int as count 
-             FROM users 
-             WHERE role NOT IN ('DRIVER', 'CONDUCTOR', 'CHOFER') 
-               AND status != 'ELIMINADO'
-               AND email NOT IN ('admin', 'admin@admin.cl')
-             GROUP BY role`
-        );
-        let nonDriversCount = 0;
-        const rolesSummary = {
-            ADMIN: 0,
-            CLIENT: 0,
-            DRIVER: 0,
-            AUXILIAR: 0,
-            OTHER: 0
-        };
-
-        nonDriversRes.forEach(r => {
-            const role = String(r.role || '').toUpperCase();
-            
-            // Clients do not count towards the license total
-            if (!['CLIENT', 'CLIENTE'].includes(role)) {
-                nonDriversCount += r.count;
-            }
-
-            if (['ADMIN', 'ADMIN_SISTEMAS', 'ADMINISTRADOR'].includes(role)) {
-                rolesSummary.ADMIN += r.count;
-            } else if (['CLIENT', 'CLIENTE'].includes(role)) {
-                rolesSummary.CLIENT += r.count;
-            } else if (['AUXILIAR', 'AUX'].includes(role)) {
-                rolesSummary.AUXILIAR += r.count;
-            } else {
-                rolesSummary.OTHER += r.count;
-            }
-        });
-
-        // Count active drivers for selected period (excluding superuser)
-        const { rows: activeDriversRes } = await db.query(
-            `SELECT COUNT(DISTINCT u.id)::int as count
-             FROM users u
-             WHERE u.role IN ('DRIVER', 'CONDUCTOR', 'CHOFER')
-               AND u.status != 'ELIMINADO'
-               AND u.email NOT IN ('admin', 'admin@admin.cl')
-               AND EXISTS (
-                   SELECT 1 FROM packages p
-                   WHERE p."driverId" = u.id
-                     AND (
-                         (p."assignedAt" >= $1 AND p."assignedAt" < $2)
-                         OR (p."updatedAt" >= $1 AND p."updatedAt" < $2 AND p.status IN ('ENTREGADO', 'DEVUELTO', 'EN_RUTA', 'ASIGNADO'))
-                     )
-               )`,
-            [startMonthStr, endMonthStr]
-        );
-        const driversCount = activeDriversRes[0].count;
-        rolesSummary.DRIVER = driversCount;
-
-        const totalActiveCount = nonDriversCount + driversCount;
-        const excessCount = Math.max(0, totalActiveCount - limit);
-        const licenseCostUf = excessCount * overageFee;
-        const licenseCostClpNet = finalUfValue ? Math.round(licenseCostUf * finalUfValue) : 0;
-        const licenseCostClpIva = Math.round(licenseCostClpNet * 0.19);
-        const licenseCostClpGross = Math.round(licenseCostClpNet * 1.19);
-
-        const licenseBilling = {
-            limit,
-            active: totalActiveCount,
-            excess: excessCount,
-            overageFee,
-            costUf: licenseCostUf,
-            costClpNet: licenseCostClpNet,
-            costClpIva: licenseCostClpIva,
-            costClpGross: licenseCostClpGross,
-            rolesSummary
-        };
-
-        res.json({
-            client: {
-                id: clientId,
-                name: clientName,
-                companyName: companyName
-            },
-            period: {
-                year: parseInt(year),
-                month: parseInt(month)
-            },
-            uf: {
-                date: `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`,
-                value: finalUfValue,
-                source: ufSource
-            },
-            summary: {
-                totalCreated,
-                totalAssignedToBodega,
-                totalReassigned,
-                totalPackages, // net dispatched
-                ratePerPackageUf,
-                totalCostUf: parseFloat(totalCostUf.toFixed(8)),
-                totalCostClpNet: totalCostClp ? Math.round(totalCostClp) : null,
-                ivaRate: 0.19,
-                totalCostClpIva: totalCostClp ? Math.round(totalCostClp * 0.19) : null,
-                totalCostClpGross: totalCostClp ? Math.round(totalCostClp * 1.19) : null
-            },
-            dailyDetails,
-            packagesDetail: detailRows,
-            licenseBilling
-        });
+        const report = await billingInvoices.buildMonthlyReport(db, { clientId, year, month, ufValue, getUfValue: getUfValueFromApi });
+        res.json(report);
 
     } catch (err) {
         console.error('Error generating superadmin billing report:', err);
@@ -529,6 +204,75 @@ router.delete('/expenses/:id', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Error deleting Full Envíos expense:', err);
         res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+/**
+ * Facturas del Reporte de Cobro UF (exclusivo del Administrador Principal). Ver services/billingInvoices.js.
+ *   GET  /api/billing/invoices            → facturas registradas (vigentes y anuladas)
+ *   POST /api/billing/invoices            → factura el mes pedido (guarda los valores y marca los envíos cobrados)
+ *   POST /api/billing/invoices/:id/void   → anula la ÚLTIMA factura registrada
+ */
+async function loadSuperAdmin(req, res) {
+    const { rows } = await db.query('SELECT email, name FROM users WHERE id = $1', [req.user.id]);
+    if (rows.length === 0 || rows[0].email !== 'admin') {
+        res.status(403).json({ message: 'Acceso denegado. Exclusivo para el Administrador Principal.' });
+        return null;
+    }
+    return { id: req.user.id, name: rows[0].name || 'Administrador' };
+}
+
+function sendBillingError(res, err, fallback) {
+    if (err instanceof billingInvoices.BillingError) {
+        return res.status(err.status).json({ message: err.message, ...(err.extra || {}) });
+    }
+    console.error(fallback, err);
+    return res.status(500).json({ message: 'Error interno del servidor.' });
+}
+
+router.get('/invoices', authMiddleware, async (req, res) => {
+    try {
+        if (!(await loadSuperAdmin(req, res))) return;
+        let invoices = [];
+        try { invoices = await billingInvoices.listInvoices(db); } catch (err) { if (!err || err.code !== '42P01') throw err; }
+        res.json(invoices);
+    } catch (err) {
+        sendBillingError(res, err, 'Error listing billing invoices:');
+    }
+});
+
+router.post('/invoices', authMiddleware, async (req, res) => {
+    let client;
+    try {
+        const admin = await loadSuperAdmin(req, res);
+        if (!admin) return;
+        client = await db.getClient();
+        const invoice = await billingInvoices.createInvoice(client, req.body || {}, { userId: admin.id, userName: admin.name });
+        await logAction(admin.id, admin.name, 'BILLING_INVOICE_CREATED', {
+            invoiceId: invoice.id, period: `${invoice.year}-${String(invoice.month).padStart(2, '0')}`, packages: invoice.packagesCount, carryOver: invoice.packagesCarryOver,
+            ufValue: invoice.ufValue, totalGrossClp: invoice.totalGrossClp, documentNumber: invoice.documentNumber,
+        });
+        res.status(201).json(invoice);
+    } catch (err) {
+        sendBillingError(res, err, 'Error creating billing invoice:');
+    } finally {
+        if (client) client.release();
+    }
+});
+
+router.post('/invoices/:id/void', authMiddleware, async (req, res) => {
+    let client;
+    try {
+        const admin = await loadSuperAdmin(req, res);
+        if (!admin) return;
+        client = await db.getClient();
+        const result = await billingInvoices.voidInvoice(client, req.params.id, { reason: (req.body || {}).reason, userId: admin.id, userName: admin.name });
+        await logAction(admin.id, admin.name, 'BILLING_INVOICE_VOIDED', { invoiceId: req.params.id, reason: String((req.body || {}).reason || '').trim(), releasedPackages: result.releasedPackages });
+        res.json(result);
+    } catch (err) {
+        sendBillingError(res, err, 'Error voiding billing invoice:');
+    } finally {
+        if (client) client.release();
     }
 });
 

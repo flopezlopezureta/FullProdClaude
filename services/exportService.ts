@@ -205,10 +205,14 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
     summarySheet.addRow(['', 'UF de Referencia:', reportData.uf.value]);
     summarySheet.addRow(['', 'Fecha UF:', reportData.uf.date]);
     summarySheet.addRow(['', 'Fuente UF:', reportData.uf.source]);
+    const invoiceInfo = reportData.billing?.invoice;
+    summarySheet.addRow(['', 'Facturación:', invoiceInfo
+        ? `Facturado el ${new Date(invoiceInfo.invoicedAt).toLocaleString('es-CL', { timeZone: 'America/Santiago' })}${invoiceInfo.documentNumber ? ` · Documento N° ${invoiceInfo.documentNumber}` : ''} (valores congelados)`
+        : 'Sin facturar: valores provisorios']);
     summarySheet.addRow([]);
 
     // Style Metadata labels
-    for (let r = 4; r <= 8; r++) {
+    for (let r = 4; r <= 9; r++) {
         const row = summarySheet.getRow(r);
         row.getCell(2).font = { bold: true };
         row.getCell(3).alignment = { horizontal: 'left' };
@@ -349,6 +353,18 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
         row.getCell(8).numFmt = '$#,##0';
     });
 
+    // Rezagados de meses anteriores: envíos despachados después de la factura de su mes, que se cobran por primera vez en este
+    if (reportData.carryOver && reportData.carryOver.count > 0) {
+        const co = reportData.carryOver;
+        const coRow = summarySheet.addRow(['', `Rezagados de meses anteriores (${co.byMonth.map((b: any) => `${b.label}: ${b.count}`).join(' · ')})`, '', '', co.reassigned || 0, co.count, co.costUf, co.costClp || 0]);
+        coRow.getCell(2).font = { italic: true };
+        [3, 4, 5, 6].forEach((c) => { coRow.getCell(c).alignment = { horizontal: 'center' }; });
+        coRow.getCell(7).alignment = { horizontal: 'right' };
+        coRow.getCell(8).alignment = { horizontal: 'right' };
+        coRow.getCell(7).numFmt = '0.00000000';
+        coRow.getCell(8).numFmt = '$#,##0';
+    }
+
     // Add total daily details row
     const totalRow = summarySheet.addRow([
         '',
@@ -377,7 +393,7 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
 
     // Set widths for Summary Sheet columns
     summarySheet.getColumn(1).width = 4;
-    summarySheet.getColumn(2).width = 25;
+    summarySheet.getColumn(2).width = 44;
     summarySheet.getColumn(3).width = 20;
     summarySheet.getColumn(4).width = 18;
     summarySheet.getColumn(5).width = 18; // Reasignados
@@ -390,10 +406,11 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
     const packagesByDate: { [date: string]: any[] } = {};
     if (reportData.packagesDetail && Array.isArray(reportData.packagesDetail)) {
         reportData.packagesDetail.forEach((pkg: any) => {
-            if (!packagesByDate[pkg.date]) {
-                packagesByDate[pkg.date] = [];
+            const key = pkg.carryOver ? 'Rezagados' : pkg.date;
+            if (!packagesByDate[key]) {
+                packagesByDate[key] = [];
             }
-            packagesByDate[pkg.date].push(pkg);
+            packagesByDate[key].push(pkg);
         });
     }
 
@@ -407,6 +424,7 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
         const unchargedPkgs = datePkgs.filter(p => !p.isCharged);
 
         // Sheet name is just the date (e.g. 2026-07-01), which is 10 chars
+        const isCarry = dateStr === 'Rezagados';
         const sheet = workbook.addWorksheet(dateStr);
         sheet.views = [{ showGridLines: true }];
 
@@ -433,7 +451,7 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
         setupColumns(sheet);
 
         // Date Title at the top
-        const pageTitleRow = sheet.addRow([`DETALLE DE ENVÍOS - DÍA: ${dateStr}`]);
+        const pageTitleRow = sheet.addRow([isCarry ? 'DETALLE DE ENVÍOS REZAGADOS (creados en meses anteriores y despachados después de la factura de su mes)' : `DETALLE DE ENVÍOS - DÍA: ${dateStr}`]);
         pageTitleRow.getCell(1).font = { size: 14, bold: true, color: { argb: 'FF1F497D' } };
         sheet.addRow([]);
 
@@ -500,6 +518,8 @@ export const exportSuperAdminBillingToExcel = async (reportData: any, filename: 
         sumRow1.getCell(1).border = { top: { style: 'thin' }, bottom: { style: 'medium' } };
         sumRow1.getCell(15).border = { top: { style: 'thin' }, bottom: { style: 'medium' } };
         sumRow1.getCell(16).border = { top: { style: 'thin' }, bottom: { style: 'medium' } };
+
+        if (isCarry) return;   // los rezagados siempre están cobrados: no hay tabla de excluidos
 
         sheet.addRow([]);
         sheet.addRow([]);

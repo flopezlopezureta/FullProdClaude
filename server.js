@@ -1575,6 +1575,10 @@ async function initializeDatabase() {
         await db.query('CREATE INDEX IF NOT EXISTS idx_closure_photo_prints_scannedat ON closure_photo_prints ("scannedAt")');
         console.log('Table "closure_photo_prints" is ready.');
 
+        // Facturas del «Reporte de Cobro UF»: qué se facturó cada mes y qué envíos cobró cada factura (un envío solo se factura una vez). Ver services/billingInvoices.js.
+        for (const statement of require('./services/billingInvoices').BILLING_SCHEMA_SQL) await db.query(statement);
+        console.log('Tables "billing_invoices" and "billing_invoice_packages" are ready.');
+
         // --- INDEXES FOR PERFORMANCE OPTIMIZATION ---
         console.log('Ensuring database indexes exist...');
         try {
