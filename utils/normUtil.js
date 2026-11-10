@@ -192,6 +192,27 @@ const resolveKnownCommune = (raw) => {
 };
 
 /**
+ * Como resolveKnownCommune, pero dice además si la comuna salió SOLO por la tolerancia a errores de tipeo (fuzzy): { commune, fuzzy, distance }.
+ * «fuzzy = false» cuando el texto (o una de sus partes) es la comuna exacta, una abreviatura conocida o «Santiago Centro»; con «fuzzy = true», «distance» son las
+ * correcciones (letras cambiadas, de más o de menos, o juntas) que hubo que hacerle al texto. Sirve a quien necesita más certeza que «parece una comuna»
+ * (p. ej. «Rengo» queda a 2 correcciones de «Renca»: es otra ciudad). No cambia el comportamiento de resolveKnownCommune.
+ */
+const resolveKnownCommuneDetailed = (raw) => {
+    const commune = resolveKnownCommune(raw);
+    if (!commune) return { commune: null, fuzzy: false, distance: 0 };
+    const texts = [raw, ...raw.split(/[,;/()|]+/)].map(t => t.trim()).filter(Boolean);
+    const exact = texts.some(t => COMMUNE_ABBREVIATIONS[abbreviationKey(t)] === commune
+        || resolveExactCommune(t) === commune
+        || resolveExactCommune(t.split('-')[0]) === commune
+        || (commune === 'SANTIAGO' && ['SANTIAGO CENTRO', 'STGO CENTRO', 'STGO'].includes(abbreviationKey(t))));
+    if (exact) return { commune, fuzzy: false, distance: 0 };
+    const key = (text) => text.toUpperCase().split('').map(char => ACCENT_MAP[char] || char).join('').replace(/[-_s]+/g, '');
+    const target = key(commune);
+    const distance = Math.min(...texts.map(t => editDistance(key(t), target)));
+    return { commune, fuzzy: true, distance };
+};
+
+/**
  * ¿Debe entrar un pedido externo (Shopify, WooCommerce, Jumpseller) según las comunas HABILITADAS en el setup?
  * rawTexts: textos candidatos de comuna/ciudad del pedido, en orden de preferencia.
  * validCommunes: comunas habilitadas (el resultado de normalizeCommune(...).toLowerCase() de active_communes); si viene
@@ -217,6 +238,8 @@ module.exports = {
     normalizeCommune,
     normalizeCity,
     resolveKnownCommune,
+    resolveKnownCommuneDetailed,
+    resolveExactCommune,
     checkOrderCommune,
     SHOPIFY_INCOMPLETE_DATA_CLIENTS,
     allowsIncompleteShopifyData

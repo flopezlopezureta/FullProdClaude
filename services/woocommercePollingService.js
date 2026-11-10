@@ -1,7 +1,8 @@
 const db = require('../db');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { normalizeCommune, normalizeCity, checkOrderCommune } = require('../utils/normUtil');
+const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
+const { getStateMap, resolveWooCommune, communeForPackage } = require('./wooCommune');
 const { triggerBackgroundGeocoding } = require('./geocodingService');
 const { withCacheBuster } = require('../utils/wooCacheBuster');
 
@@ -63,6 +64,7 @@ const makeWooCommerceRequest = (wooUrl, consumerKey, consumerSecret, path, metho
     });
 };
 
+const skippedNotRM = new Set();   // pedidos ya avisados como «fuera de la RM» (para no repetir el aviso en cada ciclo)
 let isPolling = false;
 let pollingStartTime = null;
 let lastPollTime = Date.now();
@@ -204,6 +206,9 @@ async function autoImportWooCommercePackages(activeCommunes = []) {
 
                             console.log(`[WooCommercePolling] Found ${ordersData.length} orders (processing/completed) for client ${clientId} (${account.nickname})`);
 
+                            // La tienda pide la comuna en una lista (el «estado» del pedido, p. ej. CL_287 = Ñuñoa): se traduce con la lista de la propia tienda (ver services/wooCommune.js).
+                            const stateMap = await getStateMap((p) => makeWooCommerceRequest(woo.wooUrl, woo.wooConsumerKey, woo.wooConsumerSecret, p), woo.wooUrl, 'CL');
+
                             for (const order of ordersData) {
                                 try {
                                     const orderId = order.id.toString();
@@ -222,30 +227,21 @@ async function autoImportWooCommercePackages(activeCommunes = []) {
 
                                     const address = order.shipping || order.billing || {};
                                     const billing = order.billing || {};
-                                    
-                                    const city = (address.city || '').toLowerCase();
-                                    const state = (address.state || '').toLowerCase();
 
-                                    // Comuna reconocida y NO habilitada en el setup → el pedido no entra (antes solo se revisaba la
-                                    // región y entraba cualquier comuna de la RM, también las que el setup tiene desactivadas). Si el
-                                    // texto no identifica ninguna comuna ("Región Metropolitana", vacío...) se mantiene el criterio de
-                                    // región de más abajo.
-                                    const zone = checkOrderCommune([address.city, billing.city], validCommunes, { strict: false });
-                                    if (!zone.allow) {
-                                        console.log(`[WooCommercePolling] Skipping order ${order.number || orderId} - comuna "${zone.commune}" NO habilitada (${account.nickname}).`);
+                                    // Comuna del pedido (el estado de la tienda manda; la ciudad escrita a mano se acepta si es una comuna, una abreviatura o un error de tipeo de una letra)
+                                    // y si entra: de la Región Metropolitana y con la comuna habilitada en el setup. Antes solo se miraba el texto de la ciudad: un «San Tiago» o un
+                                    // «Condominio La Siembra» se saltaba sin avisar y casi todos los paquetes quedaban con comuna SANTIAGO.
+                                    const resolved = resolveWooCommune(order, { stateMap, validCommunes });
+                                    if (!resolved.allow) {
+                                        const label = order.number || orderId;
+                                        if (resolved.reason === 'inactive') {
+                                            console.log(`[WooCommercePolling] Skipping order ${label} - comuna "${resolved.commune}" NO habilitada (${account.nickname}).`);
+                                        } else if (!skippedNotRM.has(orderId)) {
+                                            skippedNotRM.add(orderId);   // una sola vez por pedido: el listado se vuelve a leer en cada ciclo
+                                            console.log(`[WooCommercePolling] Skipping order ${label} - no se ubica en la Región Metropolitana (ciudad "${resolved.cityText}", estado "${resolved.stateName}") (${account.nickname}).`);
+                                        }
                                         continue;
                                     }
-                                    
-                                    const isRM = state.includes('metropolitana') || 
-                                                 state.includes('santiago') || 
-                                                 state.includes('rm') ||
-                                                 state.includes('r.m.') ||
-                                                 city.includes('santiago') ||
-                                                 city.includes('metropolitana') ||
-                                                 city.includes('rm') ||
-                                                 validCommunes.includes(city);
-                                    
-                                    if (!isRM) continue;
 
                                     const nowImport = new Date();
                                     const newPackage = {
@@ -257,7 +253,7 @@ async function autoImportWooCommercePackages(activeCommunes = []) {
                                         shippingType: 'SAME_DAY',
                                         origin: 'Centro de Distribución',
                                         recipientAddress: `${address.address_1 || ''} ${address.address_2 || ''}`.trim() || billing.address_1 || 'N/A',
-                                        recipientCommune: zone.commune || normalizeCommune(address.city || billing.city || 'N/A'),
+                                        recipientCommune: communeForPackage(resolved, order),
                                         recipientCity: normalizeCity('Región Metropolitana'),
                                         notes: `Auto-Import WooCommerce Order: ${order.number || orderId}`,
                                         estimatedDelivery: nowImport,

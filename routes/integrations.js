@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const meliPollingService = require('../services/meliPollingService');
 const { normalizeCommune } = require('../utils/normUtil');
 const { withCacheBuster } = require('../utils/wooCacheBuster');
+const wooCommune = require('../services/wooCommune');
 const shopifyOrders = require('../services/shopifyOrders');
 
 // --- MULTI-ACCOUNT HELPERS ---
@@ -1741,17 +1742,23 @@ router.get('/:clientId/woocommerce/orders', authMiddleware, async (req, res) => 
                         return orderDate.getTime() >= (connectionDate.getTime() - buffer);
                     });
 
-                    const mapped = filtered.map(order => ({
-                        id: order.id.toString(),
-                        recipientName: `${order.shipping?.first_name || ''} ${order.shipping?.last_name || ''}`.trim() || `${order.billing?.first_name || ''} ${order.billing?.last_name || ''}`.trim() || 'N/A',
-                        recipientPhone: order.billing?.phone || 'N/A',
-                        address: `${order.shipping?.address_1 || ''} ${order.shipping?.address_2 || ''}`.trim() || order.billing?.address_1 || 'N/A',
-                        commune: normalizeCommune(order.shipping?.city || order.billing?.city || 'N/A'),
-                        city: order.shipping?.state || order.billing?.state || 'N/A',
-                        notes: `Woo Order: ${order.number || order.id} (${account.nickname})`,
-                        sourceAccountId: account.id,
-                        sourceAccountName: account.nickname
-                    }));
+                    // La tienda pide la comuna en una lista (el «estado» del pedido, p. ej. CL_287 = Ñuñoa): se muestra la comuna real y no el código ni la ciudad escrita a mano
+                    // (antes el importador manual guardaba «CL_287» como ciudad y «SANTIAGO» como comuna en casi todos). Ver services/wooCommune.js.
+                    const stateMap = await wooCommune.getStateMap((p) => makeWooCommerceRequest(account.credentials.wooUrl, account.credentials.wooConsumerKey, account.credentials.wooConsumerSecret, p), account.credentials.wooUrl, 'CL');
+                    const mapped = filtered.map(order => {
+                        const resolved = wooCommune.resolveWooCommune(order, { stateMap, validCommunes: [] });
+                        return {
+                            id: order.id.toString(),
+                            recipientName: `${order.shipping?.first_name || ''} ${order.shipping?.last_name || ''}`.trim() || `${order.billing?.first_name || ''} ${order.billing?.last_name || ''}`.trim() || 'N/A',
+                            recipientPhone: order.billing?.phone || 'N/A',
+                            address: `${order.shipping?.address_1 || ''} ${order.shipping?.address_2 || ''}`.trim() || order.billing?.address_1 || 'N/A',
+                            commune: wooCommune.communeForPackage(resolved, order),
+                            city: resolved.isRM ? 'REGIÓN METROPOLITANA' : (resolved.stateName || order.shipping?.state || order.billing?.state || 'N/A'),
+                            notes: `Woo Order: ${order.number || order.id} (${account.nickname})`,
+                            sourceAccountId: account.id,
+                            sourceAccountName: account.nickname
+                        };
+                    });
                     allOrders = [...allOrders, ...mapped];
                 }
             } catch (err) {
