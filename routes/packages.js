@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { normalizeCommune, normalizeCity } = require('../utils/normUtil');
 const authMiddleware = require('../middleware/auth');
 const timeService = require('../services/timeService');
+const packageDateFilters = require('../services/packageDateFilters');
 const https = require('https');
 const NotificationService = require('../services/notificationService');
 const { logAction } = require('../services/logger');
@@ -197,6 +198,7 @@ async function buildPackageQuery(req) {
     
     if (startDate && endDate && !isHistoricalSearch) {
         const { start, nextDayStart } = await timeService.getLogicalRange(startDate, endDate);
+        let rangeStart = start, rangeEnd = nextDayStart;   // dateType=closed los cambia por días de calendario
         
         if (dateType === 'egress') {
             whereClauses.push(`p."assignedAt" >= $${paramIndex} AND p."assignedAt" < $${paramIndex + 1}`);
@@ -208,6 +210,14 @@ async function buildPackageQuery(req) {
             } else {
                 whereClauses.push(`p."updatedAt" >= $${paramIndex} AND p."updatedAt" < $${paramIndex + 1}`);
             }
+        } else if (dateType === 'closed') {
+            // Paquetes CERRADOS (entregado / problema / devuelto) dentro del rango de días de calendario: lo pide el «Rendimiento por Conductor» del panel.
+            // Sin esto, un administrador recibe solo los paquetes CREADOS en el rango (rama final) y se pierden las entregas de paquetes creados antes.
+            // Se activa solo si se pide; las demás pantallas y la rama del conductor no cambian. Ver services/packageDateFilters.js.
+            const calendar = packageDateFilters.calendarRange(startDate, endDate);
+            rangeStart = calendar.start;
+            rangeEnd = calendar.nextDayStart;
+            whereClauses.push(packageDateFilters.closedInRangeClause(paramIndex, paramIndex + 1));
         } else if (driverFilter && req.user.role === 'DRIVER') {
             // [v2.6.5] Separar lógica: El Dashboard (hoy) usa filtro estricto, el Historial (rango de fechas) usa el filtro laxo original.
             if (startDate === endDate) {
@@ -238,7 +248,7 @@ async function buildPackageQuery(req) {
                 p."estimatedDelivery" >= $${paramIndex} AND p."estimatedDelivery" < $${paramIndex + 1}
             )`);
         }
-        queryParams.push(start, nextDayStart);
+        queryParams.push(rangeStart, rangeEnd);
         paramIndex += 2;
     } else if (!isHistoricalSearch) {
         if (startDate) {

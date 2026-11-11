@@ -104,7 +104,10 @@ export const DriverPerformanceReportPage: React.FC<DriverPerformanceReportPagePr
                         driverFilter: targetDriverId,
                         startDate,
                         endDate,
-                        statusFilter: [PackageStatus.Delivered, PackageStatus.Problem, PackageStatus.Returned].join(',')
+                        statusFilter: [PackageStatus.Delivered, PackageStatus.Problem, PackageStatus.Returned].join(','),
+                        // Panel de administración: pedir por fecha de CIERRE. Sin esto el servidor filtra a los administradores por fecha de CREACIÓN y se pierden
+                        // las entregas de paquetes creados antes del rango. El teléfono del conductor (driverIdProp) no manda esto: ya recibía el número correcto.
+                        ...(driverIdProp ? {} : { dateType: 'closed' })
                     }),
                     api.getAssignmentHistory(),
                     api.getPickupRuns({ startDate, endDate })
