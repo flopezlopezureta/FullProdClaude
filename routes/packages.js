@@ -16,6 +16,7 @@ const gisService = require('../services/gisService');
 const { buildSellerNameSql } = require('../services/falabellaDirectSellers');
 const rutValidator = require('../services/rutValidator');
 const cancelled = require('../services/cancelledPackages');
+const falabellaDirectCopies = require('../services/falabellaDirectCopies');
 const closedChange = require('../services/closedStatusChange');
 const bcrypt = require('bcryptjs');
 const shopifyOrders = require('../services/shopifyOrders');
@@ -726,6 +727,17 @@ async function addTrackingEvent(packageId, status, location, details) {
     );
 }
 
+// ¿Alguna de estas copias de Seller Center es de un pedido de Falabella Directo? (ver services/falabellaDirectCopies.js)
+// Ante cualquier fallo deja pasar: nunca se frena una asignación por no poder consultar a Falabella.
+async function directoCopiesIn(ids) {
+    try {
+        return await falabellaDirectCopies.findDirectoCopies((text, params) => db.query(text, params), ids);
+    } catch (e) {
+        console.error('[FalabellaDirectoCopies] No se pudo revisar:', e.message);
+        return { blocked: [], unchecked: ids.length };
+    }
+}
+
 // GET /api/packages/reports/flex-discrepancies
 router.get('/reports/flex-discrepancies', authMiddleware, async (req, res) => {
     if (req.user.role !== 'ADMIN') {
@@ -1130,6 +1142,16 @@ router.post('/batch-assign-driver', authMiddleware, async (req, res) => {
         return res.status(400).json({ message: 'IDs de paquetes y fecha son requeridos.' });
     }
 
+    // Las copias de Seller Center de pedidos de Falabella Directo no se asignan: su etiqueta se escanea en el escáner de Falabella Directo.
+    // Se revisa antes de abrir la transacción (la consulta a Falabella no debe mantenerla abierta) y no se asigna nada hasta quitarlas de la selección.
+    if (driverId && driverId !== 'none') {
+        const directoCopies = await directoCopiesIn(packageIds);
+        if (directoCopies.blocked.length > 0) {
+            logAction(req.user.id, req.user.name, 'BATCH_ASSIGN_FALABELLA_DIRECTO_BLOCKED', { count: directoCopies.blocked.length, packageIds: directoCopies.blocked.map(b => b.id).slice(0, 50), driverId });
+            return res.status(400).json({ code: falabellaDirectCopies.CODE, message: falabellaDirectCopies.MESSAGES.batch(directoCopies.blocked), blocked: directoCopies.blocked });
+        }
+    }
+
     const client = await db.getClient();
     try {
         await client.query('BEGIN');
@@ -1531,6 +1553,15 @@ router.post('/:id/assign-driver', authMiddleware, async (req, res) => {
             return res.json(warehousePkg[0]);
         }
 
+        // La copia de Seller Center de un pedido de Falabella Directo no se asigna: se escanea su etiqueta en el escáner de Falabella Directo.
+        if (!isUnassigning && currentPkgRows[0].source === 'FALABELLA') {
+            const directoCopies = await directoCopiesIn([id]);
+            if (directoCopies.blocked.length > 0) {
+                logAction(req.user.id, req.user.name, 'ASSIGN_FALABELLA_DIRECTO_BLOCKED', { packageId: id, driverId });
+                return res.status(400).json({ code: falabellaDirectCopies.CODE, message: falabellaDirectCopies.MESSAGES.one(directoCopies.blocked[0]) });
+            }
+        }
+
         // Force status to ASIGNADO only if driverId is provided, otherwise RETIRADO (Available)
         const targetStatus = driverId ? 'ASIGNADO' : 'RETIRADO';
         const { rows } = await db.query(
@@ -1626,6 +1657,15 @@ router.post('/:id/dispatch', authMiddleware, dispatchAllowed, async (req, res) =
             delete moved.flexLabelPhotoBase64;
             delete moved.deliveryPhotosBase64;
             return res.json({ message: `Paquete cancelado ${realId} devuelto a ${targetName}.`, package: moved });
+        }
+
+        // La copia de Seller Center de un pedido de Falabella Directo no sale a ruta por aquí: se escanea su etiqueta en el escáner de Falabella Directo.
+        if (currentPkg.source === 'FALABELLA') {
+            const directoCopies = await directoCopiesIn([realId]);
+            if (directoCopies.blocked.length > 0) {
+                logAction(req.user.id, req.user.name, 'DISPATCH_FALABELLA_DIRECTO_BLOCKED', { packageId: realId, driverId });
+                return res.status(400).json({ code: falabellaDirectCopies.CODE, message: falabellaDirectCopies.MESSAGES.one(directoCopies.blocked[0]) });
+            }
         }
 
         // Falabella Directo requires real GPS coordinates with every status push (this route
@@ -2195,7 +2235,7 @@ async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
 
         // 1. Intentar obtener credenciales de la cuenta específica del usuario (Multi-Account)
         const { rows: pkgRows } = await db.query(
-            'SELECT p."sourceAccountId", p."falabellaOrderId", p."falabellaTrackingId", u.integrations FROM packages p JOIN users u ON p."creatorId" = u.id WHERE p.id = $1',
+            'SELECT p."sourceAccountId", p."falabellaOrderId", p."falabellaTrackingId", p."falabellaDirectLpn", u.integrations FROM packages p JOIN users u ON p."creatorId" = u.id WHERE p.id = $1',
             [packageId]
         );
 
@@ -2319,6 +2359,24 @@ async function syncDeliveryToFalabella(packageId, trackingId, attempts = 1) {
             [packageId, 'FALABELLA_ESTADO_CONSULTADO', 'Falabella API', `Estado real en Falabella: ${statusSummary} (Items: ${orderItemIds.join(', ')}). No se modifica: "enviado"/"entregado" los define Falabella automáticamente según el transportista, no el vendedor.`, new Date()]
         );
         console.log(`[FalabellaSync] Package ${packageId} — Falabella item status: ${statusSummary}. No write attempted (not a valid seller action).`);
+
+        // Un pedido de Falabella Directo que se cerró desde la copia de Seller Center (sin escanear su etiqueta) nunca le avisó la entrega a Falabella: queda dicho en el historial.
+        // Se guarda una sola vez por paquete (esta función también la reintenta la cola de sincronización).
+        // Si guardar el aviso falla no se da por fallida la sincronización (se reintentaría y acabaría en la cola): solo se anota en el log.
+        try {
+            const directoInfo = falabellaDirectCopies.classifyItems(items);
+            if (directoInfo.isDirecto && !(pkgRows.length > 0 && pkgRows[0].falabellaDirectLpn)) {
+                const { rows: alreadyWarned } = await db.query('SELECT 1 FROM tracking_events WHERE "packageId" = $1 AND status = $2 LIMIT 1', [packageId, falabellaDirectCopies.CLOSED_WITHOUT_SCAN_EVENT]);
+                if (alreadyWarned.length === 0) {
+                    await db.query(
+                        'INSERT INTO tracking_events ("packageId", status, location, details, timestamp) VALUES ($1, $2, $3, $4, $5)',
+                        [packageId, falabellaDirectCopies.CLOSED_WITHOUT_SCAN_EVENT, 'Falabella API', falabellaDirectCopies.closedWithoutScanDetails(directoInfo), new Date()]
+                    );
+                }
+            }
+        } catch (warnError) {
+            console.error(`[FalabellaSync] No se pudo guardar el aviso de pedido de Directo sin escanear para ${packageId}:`, warnError.message);
+        }
 
     } catch (error) {
         console.error(`[FalabellaSync] Fallo en intento ${attempts}/${MAX_ATTEMPTS} para paquete ${packageId}:`, error.message);
@@ -2689,10 +2747,9 @@ async function handleDeliver(req, res) {
         }
         // --- NEW FALABELLA NOTIFICATION ---
         if (updatedPackage.source === 'FALABELLA' && updatedPackage.falabellaTrackingId) {
+            // Aquí ya no se avisa a Envíame: esa llave nunca estuvo configurada y cada cierre solo dejaba un error en el historial.
             syncDeliveryToFalabella(updatedPackage.id, updatedPackage.falabellaTrackingId)
                 .catch(err => console.error(`[Deliver] Falabella sync trigger error:`, err));
-            syncDeliveryToEnviame(updatedPackage.id, updatedPackage.falabellaTrackingId)
-                .catch(err => console.error(`[Deliver] Envíame sync trigger error for Falabella order:`, err));
         }
         // --- END FALABELLA NOTIFICATION ---
 
