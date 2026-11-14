@@ -321,7 +321,7 @@ const AccountManagement: React.FC = () => {
                                 <IconShopify className="w-7 h-7 text-white" />
                             </div>
                             <h3 className="text-xl font-bold">Vincular Tienda Shopify</h3>
-                            <p className="text-indigo-100 text-sm mt-1">Ingresa el dominio de tu tienda para comenzar.</p>
+                            <p className="text-indigo-100 text-sm mt-1">Conecta tu tienda en dos pasos.</p>
                         </div>
                         
                         <div className="p-8 space-y-4">
@@ -337,15 +337,34 @@ const AccountManagement: React.FC = () => {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Admin API Access Token (shpat_...)</label>
-                                <input 
-                                    type="password" 
-                                    placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (!shopifyUrl.trim()) {
+                                            alert("Por favor ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
+                                            return;
+                                        }
+                                        const shopClean = shopifyUrl.trim().replace(/^https?:\/\//, '').split('/')[0];
+                                        // Ruta pública (no pide sesión): lleva a Shopify a autorizar la app y termina en una página con el token para copiarlo.
+                                        window.open(`/api/integrations/shopify/install?shop=${encodeURIComponent(shopClean)}`, '_blank');
+                                    }}
+                                    className="w-full py-4 text-sm font-bold text-green-700 hover:bg-green-50 rounded-2xl transition-all flex items-center justify-center gap-2 border-2 border-green-200"
+                                >
+                                    <IconShopify className="w-5 h-5" />
+                                    1. Autorizar en Shopify y obtener el token
+                                </button>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">2. Token de acceso</label>
+                                <input
+                                    type="password"
+                                    placeholder="Pega aquí el token de la página «Conexión exitosa»"
                                     value={shopifyAccessToken}
                                     onChange={(e) => setShopifyAccessToken(e.target.value)}
                                     className="w-full px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:bg-white outline-none transition-all text-gray-800 font-medium placeholder:text-gray-300"
                                 />
-                                <p className="text-[10px] text-gray-400 mt-1 italic">Este token se genera creando una "App Personalizada" en el panel de Shopify.</p>
+                                <p className="text-[10px] text-gray-400 mt-1 italic">Al autorizar, Shopify te lleva a una página con tu token: cópialo y pégalo aquí. Si usas una app personalizada propia, pega su token (shpat_…).</p>
                             </div>
                             
                             {shopifyTestResult && (
@@ -355,14 +374,7 @@ const AccountManagement: React.FC = () => {
                                 </div>
                             )}
 
-                            {!shopifyAccessToken && (
-                                <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex gap-3">
-                                    <IconAlertTriangle className="w-5 h-5 text-blue-500 shrink-0" />
-                                    <p className="text-[11px] text-blue-700 leading-relaxed">
-                                        Si prefieres el método de un clic, deja el Token vacío y haz clic en el botón de abajo.
-                                    </p>
-                                </div>
-                            )}
+                            
                             
                             <div className="grid grid-cols-1 gap-3 pt-4">
                                 <button 
@@ -391,26 +403,10 @@ const AccountManagement: React.FC = () => {
                                     className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                                 >
                                     {isTestingShopify ? <IconLoader className="w-5 h-5 animate-spin" /> : <IconPlugConnected className="w-5 h-5" />}
-                                    Vincular con Token (Manual)
+                                    Vincular tienda
                                 </button>
 
-                                {!shopifyAccessToken && (
-                                    <button 
-                                        onClick={() => {
-                                            if (!shopifyUrl.trim()) {
-                                                alert("Por favor ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
-                                                return;
-                                            }
-                                            const shopClean = shopifyUrl.trim().replace(/^https?:\/\//, '').split('/')[0];
-                                            const authUrl = `/api/integrations/shopify/auth?shop=${encodeURIComponent(shopClean)}`;
-                                            window.open(authUrl, 'shopify-auth', 'width=600,height=700');
-                                        }}
-                                        className="w-full py-4 text-sm font-bold text-green-600 hover:bg-green-50 rounded-2xl transition-all flex items-center justify-center gap-2 border-2 border-dashed border-green-100 mt-2"
-                                    >
-                                        <IconShopify className="w-5 h-5" />
-                                        O usar conexión un-clic (Recomendado)
-                                    </button>
-                                )}
+                                
                             </div>
                         </div>
                     </div>

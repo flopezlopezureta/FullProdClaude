@@ -268,13 +268,6 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onUpdate, 
             const redirectUri = `${window.location.origin}/api/integrations/meli/callback`;
             const authUrl = `https://auth.mercadolibre.com/authorization?response_type=code&client_id=${integrationSettings.meliAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${user.id}`;
             window.location.href = authUrl;
-        } else if (type === 'shopify') {
-            const shopUrl = prompt("Introduce la URL de la tienda Shopify (ej: mi-tienda.myshopify.com):", clientShopifyUrl);
-            if (!shopUrl) return;
-            
-            const authUrl = `${window.location.origin}/api/integrations/shopify/auth?shop=${encodeURIComponent(shopUrl)}`;
-            // Abrimos en una ventana nueva para no perder el estado del modal
-            window.open(authUrl, 'shopify-auth', 'width=600,height=700');
         } else {
             alert(`La conexión con ${type} aún no está implementada.`);
         }
@@ -577,25 +570,9 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onUpdate, 
                                             <h5 className="font-medium text-[var(--text-primary)]">Shopify</h5>
                                         </div>
 
-                                        <div className="mb-4">
-                                            <button 
-                                                type="button" 
-                                                onClick={() => handleConnectIntegration('shopify')} 
-                                                className="w-full flex items-center justify-center gap-2 p-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md shadow-sm transition-all"
-                                            >
-                                                <IconShopify className="w-4 h-4" />
-                                                Conectar Shopify (Un solo clic)
-                                            </button>
-                                            <p className="text-[10px] text-[var(--text-muted)] mt-1 text-center">
-                                                Recomendado: Conexión automática oficial de Shopify.
-                                            </p>
-                                        </div>
-
-                                        <div className="relative py-2 flex items-center">
-                                            <div className="flex-grow border-t border-gray-200"></div>
-                                            <span className="flex-shrink mx-4 text-gray-400 text-[10px] uppercase font-bold">O usar configuración manual</span>
-                                            <div className="flex-grow border-t border-gray-200"></div>
-                                        </div>
+                                        <p className="text-[10px] text-[var(--text-muted)] mb-3">
+                                            Para conectar con la app de Full Envíos, el cliente lo hace desde su portal: Configuración → Cuentas Vinculadas → Shopify. Aquí puedes pegar el token de una app personalizada.
+                                        </p>
 
                                         <div className="space-y-3 mt-2">
                                             <div>

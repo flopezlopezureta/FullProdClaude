@@ -216,44 +216,44 @@
             <strong>REQUISITO CRÍTICO:</strong> Antes de iniciar, asegúrese de estar <strong>logueado en su panel de administración de Shopify</strong> en el mismo navegador donde tiene abierta la plataforma de Full Envios. Esto es indispensable para que la conexión automática funcione correctamente.
         </div>
 
-        <h2>1. Conexión Automática (Recomendado)</h2>
+        <h2>1. Conexión con la app de Full Envios (Recomendado)</h2>
         <div class="step">
             <div class="step-number">1</div>
             <div>
-                <strong>Ingrese la URL:</strong> En la pestaña "Conexión", escriba el subdominio de su tienda (ej: <code>mi-tienda.myshopify.com</code>).
+                <strong>Abra el formulario:</strong> En Full Envios vaya a <strong>Configuración → Cuentas Vinculadas</strong> y presione el ícono de Shopify. Se abre "Vincular Tienda Shopify".
             </div>
         </div>
         <div class="step">
             <div class="step-number">2</div>
             <div>
-                <strong>Conectar:</strong> Haga clic en el botón verde <strong>"Conectar automáticamente"</strong>. Si ya está logueado en Shopify, se abrirá una ventana de autorización.
+                <strong>Escriba su tienda y autorice:</strong> Escriba el dominio de su tienda (ej: <code>mi-tienda.myshopify.com</code>) y presione <strong>"1. Autorizar en Shopify y obtener el token"</strong>. Se abre una pestaña nueva de Shopify.
             </div>
         </div>
         <div class="step">
             <div class="step-number">3</div>
             <div>
-                <strong>Instalar App:</strong> Revise los permisos y haga clic en <strong>"Instalar App"</strong>. El sistema lo regresará automáticamente a Full Envios con la conexión lista.
+                <strong>Instalar App:</strong> Revise los permisos y presione <strong>"Instalar"</strong>. Shopify lo lleva a una página <strong>"Conexión Exitosa"</strong> que muestra su token.
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-number">4</div>
+            <div>
+                <strong>Pegue el token:</strong> Presione "Copiar Token", vuelva a Full Envios, péguelo en <strong>"2. Token de acceso"</strong> y presione <strong>"Vincular tienda"</strong>.
             </div>
         </div>
 
-        <h2>2. Conexión Manual (App Privada)</h2>
-        <p>Si prefiere no usar el flujo automático, puede configurar una App Personalizada en Shopify y obtener un "Access Token".</p>
+        <h2>2. Conexión con una app propia (avanzado)</h2>
+        <p>Si su tienda ya tiene una app personalizada con permiso de lectura de pedidos (<code>read_orders</code>), puede usar su propio token.</p>
         <div class="step">
             <div class="step-number">1</div>
             <div>
-                <strong>Pestaña Manual:</strong> Diríjase a la pestaña "Modo Manual" en la configuración de Shopify.
+                <strong>Mismo formulario:</strong> En "Vincular Tienda Shopify" escriba el dominio de su tienda.
             </div>
         </div>
         <div class="step">
             <div class="step-number">2</div>
             <div>
-                <strong>Ingrese el Token:</strong> Pegue su token que comienza con <span class="token-box">shpat_...</span>.
-            </div>
-        </div>
-        <div class="step">
-            <div class="step-number">3</div>
-            <div>
-                <strong>Probar:</strong> Use el botón "Probar Conexión Manual" para validar que las credenciales son funcionales.
+                <strong>Ingrese el token:</strong> Pegue su token, que comienza con <span class="token-box">shpat_...</span>, en <strong>"2. Token de acceso"</strong> y presione <strong>"Vincular tienda"</strong>.
             </div>
         </div>
 
