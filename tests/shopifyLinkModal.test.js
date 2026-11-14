@@ -6,6 +6,9 @@
  *   B. la ficha del administrador tampoco lo ofrece (y conserva el ingreso manual del token)
  *   C. el manual del cliente describe los pasos que sí funcionan
  *   D. la ruta pública que usa el botón nuevo (GET /api/integrations/shopify/install) con el servidor real contra una base falsa; la ruta que exige sesión sigue exigiéndola
+ *   E. la tarjeta «Vincular Nueva Cuenta» del portal del cliente. Antecedente: la tarjeta ENTERA tenía un clic que arrancaba el inicio de sesión de Mercado Libre; el revisor de Shopify hizo
+ *      clic en ella (no en los iconos chicos de abajo), terminó en el login de Mercado Libre y dio por fallido el vínculo de Shopify. Ahora la tarjeta no hace nada por sí sola y cada
+ *      plataforma es un botón con su nombre.
  * No toca ninguna base ni servicio real; todos los datos son inventados.
  *
  * Uso:   node tests/shopifyLinkModal.test.js
@@ -146,6 +149,51 @@ t('D5 la ruta /shopify/auth sigue exigiendo sesión (401): por eso ya no se usa 
     reset();
     const r = await get('/api/integrations/shopify/auth?shop=mi-tienda.myshopify.com');
     assert.strictEqual(r.status, 401, r.body.slice(0, 200));
+});
+
+// ═════════════ E. tarjeta «Vincular Nueva Cuenta» ═════════════
+// La tarjeta: desde su comentario hasta el modal de Shopify. «Cascarón» = la tarjeta sin sus botones (raíz, adornos, título y texto).
+const cardOf = (src) => { const a = src.indexOf('{/* Add Account Card */}'); const b = src.indexOf('{/* Shopify Installation Modal */}'); assert.ok(a >= 0 && b > a, 'no encuentro la tarjeta «Vincular Nueva Cuenta»'); return src.slice(a, b); };
+const buttonsOf = (card) => [...card.matchAll(/<button\b[\s\S]*?<\/button>/g)].map((m) => m[0]);
+const shellOf = (card) => card.replace(/<button\b[\s\S]*?<\/button>/g, '');
+const PLATFORMS = ['Mercado Libre', 'Shopify', 'WooCommerce', 'Falabella', 'Jumpseller'];
+const buttonOf = (card, nombre) => { const b = buttonsOf(card).find((x) => x.includes('title="Vincular ' + nombre + '"')); assert.ok(b, 'falta el botón de ' + nombre); return b; };
+
+t('E1 hacer clic en la tarjeta (título, «+», texto, fondo) no hace nada: el cascarón no tiene clic, no navega y no se ve como un botón', () => {
+    const shell = shellOf(cardOf(read(CLIENT_MODAL)));
+    assert.ok(!/onClick/.test(shell), 'la tarjeta tiene un onClick propio');
+    assert.ok(!/window\.location/.test(shell), 'la tarjeta navega fuera de la página');
+    assert.ok(!/meli\/auth/.test(shell), 'la tarjeta arranca el inicio de sesión de Mercado Libre');
+    assert.ok(!/cursor-pointer/.test(shell), 'la tarjeta se ve como un botón (cursor-pointer)');
+    assert.ok(!/stopPropagation/.test(shell), 'quedó un stopPropagation que solo tenía sentido con el clic de la tarjeta');
+});
+t('E2 lo ÚNICO de la tarjeta que va a Mercado Libre es su propio botón; Shopify, WooCommerce, Falabella y Jumpseller abren su formulario sin salir de la página', () => {
+    const card = cardOf(read(CLIENT_MODAL));
+    const botones = buttonsOf(card);
+    assert.strictEqual(botones.length, 5, 'deben ser 5 plataformas, hay ' + botones.length);
+    const aML = botones.filter((b) => /meli\/auth/.test(b));
+    assert.strictEqual(aML.length, 1, 'más de un botón va a Mercado Libre');
+    assert.ok(aML[0].includes('title="Vincular Mercado Libre"'), 'el que va a Mercado Libre no es el de Mercado Libre');
+    const abre = { Shopify: 'setShowShopifyModal(true)', WooCommerce: 'setShowWooModal(true)', Falabella: 'setShowFalabellaModal(true)', Jumpseller: 'setShowJumpsellerModal(true)' };
+    for (const [nombre, llamada] of Object.entries(abre)) {
+        const b = buttonOf(card, nombre);
+        assert.ok(b.includes(llamada), nombre + ' no abre su formulario (' + llamada + ')');
+        assert.ok(!/window\.location|meli\/auth/.test(b), nombre + ' navega fuera de la página');
+    }
+});
+t('E3 cada plataforma es un botón con su NOMBRE visible (no solo un icono sin texto)', () => {
+    const card = cardOf(read(CLIENT_MODAL));
+    for (const nombre of PLATFORMS) assert.ok(new RegExp('<span[^>]*>' + nombre + '</span>').test(buttonOf(card, nombre)), 'el botón de ' + nombre + ' no muestra su nombre');
+});
+t('E4 el texto de la tarjeta pide elegir una plataforma y ya no presenta a Mercado Libre como lo único (ni como lo que pasa al hacer clic)', () => {
+    const card = cardOf(read(CLIENT_MODAL));
+    assert.ok(/Vincular Nueva Cuenta/.test(card), 'se perdió el título de la tarjeta');
+    assert.ok(/Elige la plataforma que quieres conectar/.test(card), 'falta la indicación de elegir una plataforma');
+    assert.ok(!/Sincroniza tus ventas automáticamente desde Mercado Libre o Shopify/.test(card), 'quedó el texto antiguo');
+});
+t('E5 el manual de Mercado Libre ya no dice que basta pulsar la tarjeta: pide elegir el botón de Mercado Libre', () => {
+    const html = read('public/manuals/meli_guide.html');
+    assert.ok(/pulse nuevamente "Vincular Nueva Cuenta", seleccione el botón de Mercado Libre/.test(html), 'el paso «Repetir» no pide elegir el botón de Mercado Libre');
 });
 
 // ───────────── ejecución ─────────────

@@ -250,12 +250,8 @@ const AccountManagement: React.FC = () => {
                     </div>
                 ))}
                                {/* Add Account Card */}
-                <div 
-                    onClick={() => {
-                        const token = localStorage.getItem('token');
-                        window.location.href = `/api/integrations/meli/auth?token=${token}`;
-                    }}
-                    className="group relative overflow-hidden bg-white border-2 border-dashed border-gray-200 rounded-2xl p-8 flex flex-col items-center justify-center text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all duration-300 cursor-pointer shadow-sm hover:shadow-xl"
+                <div
+                    className="group relative overflow-hidden bg-white border-2 border-dashed border-gray-200 rounded-2xl p-8 flex flex-col items-center justify-center text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all duration-300 shadow-sm hover:shadow-xl"
                 >
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                     
@@ -264,46 +260,51 @@ const AccountManagement: React.FC = () => {
                     </div>
                     
                     <h3 className="relative font-bold text-gray-800 text-lg mb-2">Vincular Nueva Cuenta</h3>
-                    <p className="relative text-sm text-gray-500 mb-6 max-w-[220px]">Sincroniza tus ventas automáticamente desde Mercado Libre o Shopify.</p>
+                    <p className="relative text-sm text-gray-500 mb-6 max-w-[260px]">Elige la plataforma que quieres conectar:</p>
                     
-                    <div className="relative flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="relative flex flex-wrap items-stretch justify-center gap-3">
                         <button 
                             onClick={() => {
                                 const token = localStorage.getItem('token');
                                 window.location.href = `/api/integrations/meli/auth?token=${token}`;
                             }}
-                            className="p-3 bg-white border border-gray-200 rounded-xl hover:border-yellow-500 hover:text-yellow-600 hover:shadow-md transition-all active:scale-95"
+                            className="flex flex-col items-center gap-1 px-3 py-2 min-w-[88px] bg-white border border-gray-200 rounded-xl hover:border-yellow-500 hover:text-yellow-600 hover:shadow-md transition-all active:scale-95"
                             title="Vincular Mercado Libre"
                         >
                             <IconMercadoLibre className="w-6 h-6" />
+                            <span className="text-[10px] font-bold text-gray-600">Mercado Libre</span>
                         </button>
                         <button 
                             onClick={() => setShowShopifyModal(true)}
-                            className="p-3 bg-white border border-gray-200 rounded-xl hover:border-green-500 hover:text-green-600 hover:shadow-md transition-all active:scale-95"
+                            className="flex flex-col items-center gap-1 px-3 py-2 min-w-[88px] bg-white border border-gray-200 rounded-xl hover:border-green-500 hover:text-green-600 hover:shadow-md transition-all active:scale-95"
                             title="Vincular Shopify"
                         >
                             <IconShopify className="w-6 h-6" />
+                            <span className="text-[10px] font-bold text-gray-600">Shopify</span>
                         </button>
                         <button 
                             onClick={() => setShowWooModal(true)}
-                            className="p-3 bg-white border border-gray-200 rounded-xl hover:border-purple-500 hover:text-purple-600 hover:shadow-md transition-all active:scale-95"
+                            className="flex flex-col items-center gap-1 px-3 py-2 min-w-[88px] bg-white border border-gray-200 rounded-xl hover:border-purple-500 hover:text-purple-600 hover:shadow-md transition-all active:scale-95"
                             title="Vincular WooCommerce"
                         >
                             <IconWoocommerce className="w-6 h-6" />
+                            <span className="text-[10px] font-bold text-gray-600">WooCommerce</span>
                         </button>
                         <button 
                             onClick={() => setShowFalabellaModal(true)}
-                            className="p-3 bg-white border border-gray-200 rounded-xl hover:border-lime-500 hover:text-lime-600 hover:shadow-md transition-all active:scale-95"
+                            className="flex flex-col items-center gap-1 px-3 py-2 min-w-[88px] bg-white border border-gray-200 rounded-xl hover:border-lime-500 hover:text-lime-600 hover:shadow-md transition-all active:scale-95"
                             title="Vincular Falabella"
                         >
                             <IconFalabella className="w-6 h-6" />
+                            <span className="text-[10px] font-bold text-gray-600">Falabella</span>
                         </button>
                         <button 
                             onClick={() => setShowJumpsellerModal(true)}
-                            className="p-3 bg-white border border-gray-200 rounded-xl hover:border-sky-500 hover:text-sky-600 hover:shadow-md transition-all active:scale-95"
+                            className="flex flex-col items-center gap-1 px-3 py-2 min-w-[88px] bg-white border border-gray-200 rounded-xl hover:border-sky-500 hover:text-sky-600 hover:shadow-md transition-all active:scale-95"
                             title="Vincular Jumpseller"
                         >
                             <IconJumpseller className="w-6 h-6" />
+                            <span className="text-[10px] font-bold text-gray-600">Jumpseller</span>
                         </button>
                     </div>
                 </div>
